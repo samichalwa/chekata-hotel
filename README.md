@@ -1,1 +1,0 @@
-# Chekata Hotel Management System

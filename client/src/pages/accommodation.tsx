@@ -1,0 +1,551 @@
+import { useMemo, useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { z } from "zod";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Plus, Pencil, Trash2, LogIn, LogOut, BedDouble, MessageCircle } from "lucide-react";
+import { PageHeader, StatCard } from "@/components/stat-card";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { formatKES, formatDate, nightsBetween, nowTs, titleCase } from "@/lib/format";
+import { buildWhatsAppLink } from "@/lib/whatsapp";
+import type { Room, AccommodationBooking } from "@shared/schema";
+
+const roomFormSchema = z.object({
+  name: z.string().min(1, "Room name is required"),
+  type: z.string().min(1, "Room type is required"),
+  rate: z.coerce.number().positive("Rate must be greater than 0"),
+  status: z.string().min(1),
+  notes: z.string().optional().nullable(),
+});
+
+const bookingFormSchema = z.object({
+  roomId: z.coerce.number().int().positive("Select a room"),
+  guestName: z.string().min(1, "Guest name is required"),
+  guestPhone: z.string().optional().nullable(),
+  guestEmail: z.string().optional().nullable().refine((v) => !v || /\S+@\S+\.\S+/.test(v), { message: "Enter a valid email" }),
+  checkIn: z.string().min(1, "Check-in date is required"),
+  checkOut: z.string().min(1, "Check-out date is required"),
+  rate: z.coerce.number().nonnegative(),
+  amountPaid: z.coerce.number().nonnegative().default(0),
+  status: z.string().min(1),
+  notes: z.string().optional().nullable(),
+});
+
+function RoomFormDialog({ room, rooms, trigger }: { room?: Room; rooms: Room[]; trigger: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const { toast } = useToast();
+  const form = useForm<z.infer<typeof roomFormSchema>>({
+    resolver: zodResolver(roomFormSchema),
+    defaultValues: room
+      ? { name: room.name, type: room.type, rate: room.rate, status: room.status, notes: room.notes ?? "" }
+      : { name: "", type: "standard", rate: 4500, status: "available", notes: "" },
+  });
+
+  const mutation = useMutation({
+    mutationFn: async (values: z.infer<typeof roomFormSchema>) => {
+      if (room) {
+        return apiRequest("PATCH", `/api/rooms/${room.id}`, values);
+      }
+      return apiRequest("POST", "/api/rooms", values);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/rooms"] });
+      toast({ title: room ? "Room updated" : "Room added" });
+      setOpen(false);
+      form.reset();
+    },
+    onError: (err: Error) => toast({ title: "Something went wrong", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{room ? "Edit room" : "Add room"}</DialogTitle>
+        </DialogHeader>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
+            <FormField control={form.control} name="name" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Room name</FormLabel>
+                <FormControl><Input placeholder="e.g. Standard 9" {...field} data-testid="input-room-name" /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <div className="grid grid-cols-2 gap-4">
+              <FormField control={form.control} name="type" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Room type</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl><SelectTrigger data-testid="select-room-type"><SelectValue /></SelectTrigger></FormControl>
+                    <SelectContent>
+                      <SelectItem value="standard">Standard</SelectItem>
+                      <SelectItem value="executive">Executive</SelectItem>
+                      <SelectItem value="suite">Suite</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="rate" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Rate per night (KES)</FormLabel>
+                  <FormControl><Input type="number" step="1" {...field} data-testid="input-room-rate" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            </div>
+            <FormField control={form.control} name="status" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Status</FormLabel>
+                <Select onValueChange={field.onChange} value={field.value}>
+                  <FormControl><SelectTrigger data-testid="select-room-status"><SelectValue /></SelectTrigger></FormControl>
+                  <SelectContent>
+                    <SelectItem value="available">Available</SelectItem>
+                    <SelectItem value="occupied">Occupied</SelectItem>
+                    <SelectItem value="maintenance">Under maintenance</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <FormField control={form.control} name="notes" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Notes (optional)</FormLabel>
+                <FormControl><Textarea {...field} value={field.value ?? ""} data-testid="input-room-notes" /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <DialogFooter>
+              <Button type="submit" disabled={mutation.isPending} data-testid="button-save-room">
+                {mutation.isPending ? "Saving..." : "Save room"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BookingFormDialog({ booking, rooms, trigger }: { booking?: AccommodationBooking; rooms: Room[]; trigger: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const { toast } = useToast();
+  const form = useForm<z.infer<typeof bookingFormSchema>>({
+    resolver: zodResolver(bookingFormSchema),
+    defaultValues: booking
+      ? {
+          roomId: booking.roomId, guestName: booking.guestName, guestPhone: booking.guestPhone ?? "",
+          guestEmail: booking.guestEmail ?? "",
+          checkIn: booking.checkIn, checkOut: booking.checkOut, rate: booking.rate,
+          amountPaid: booking.amountPaid, status: booking.status, notes: booking.notes ?? "",
+        }
+      : {
+          roomId: rooms[0]?.id ?? 0, guestName: "", guestPhone: "", guestEmail: "", checkIn: "", checkOut: "",
+          rate: rooms[0]?.rate ?? 0, amountPaid: 0, status: "confirmed", notes: "",
+        },
+  });
+
+  const selectedRoomId = form.watch("roomId");
+  const checkIn = form.watch("checkIn");
+  const checkOut = form.watch("checkOut");
+  const rate = form.watch("rate");
+  const nights = nightsBetween(checkIn, checkOut);
+  const total = nights * (rate || 0);
+  const guestName = form.watch("guestName");
+  const guestPhone = form.watch("guestPhone");
+  const status = form.watch("status");
+  const selectedRoom = rooms.find((r) => r.id === selectedRoomId);
+
+  const mutation = useMutation({
+    mutationFn: async (values: z.infer<typeof bookingFormSchema>) => {
+      const payload = { ...values, totalAmount: nightsBetween(values.checkIn, values.checkOut) * values.rate, createdAt: booking?.createdAt ?? nowTs() };
+      const res = booking
+        ? await apiRequest("PATCH", `/api/accommodation-bookings/${booking.id}`, payload)
+        : await apiRequest("POST", "/api/accommodation-bookings", payload);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/accommodation-bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/documents"] });
+      toast({ title: booking ? "Booking updated" : "Booking created" });
+      const doc = data?._document;
+      if (doc?.status === "skipped" && !booking) {
+        toast({ title: "No email on file", description: "Add a guest email to send an invoice automatically." });
+      } else if (doc?.status === "sent") {
+        toast({ title: booking ? "Receipt emailed" : "Invoice emailed", description: "Sent to the guest's email address." });
+      } else if (doc?.status === "failed") {
+        toast({ title: "Email not sent", description: doc.errorMessage ?? "Check your Settings.", variant: "destructive" });
+      }
+      setOpen(false);
+      form.reset();
+    },
+    onError: (err: Error) => toast({ title: "Something went wrong", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{booking ? "Edit booking" : "New accommodation booking"}</DialogTitle>
+        </DialogHeader>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
+            <FormField control={form.control} name="roomId" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Room</FormLabel>
+                <Select
+                  onValueChange={(v) => {
+                    field.onChange(Number(v));
+                    const r = rooms.find((rm) => rm.id === Number(v));
+                    if (r) form.setValue("rate", r.rate);
+                  }}
+                  value={String(field.value)}
+                >
+                  <FormControl><SelectTrigger data-testid="select-booking-room"><SelectValue /></SelectTrigger></FormControl>
+                  <SelectContent>
+                    {rooms.map((r) => (
+                      <SelectItem key={r.id} value={String(r.id)}>{r.name} — {titleCase(r.type)} ({formatKES(r.rate)}/night)</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <div className="grid grid-cols-2 gap-4">
+              <FormField control={form.control} name="guestName" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Guest name</FormLabel>
+                  <FormControl><Input {...field} data-testid="input-guest-name" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="guestPhone" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Phone (optional)</FormLabel>
+                  <FormControl><Input {...field} value={field.value ?? ""} data-testid="input-guest-phone" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            </div>
+            <FormField control={form.control} name="guestEmail" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Email (optional — invoice/receipt is emailed here)</FormLabel>
+                <FormControl><Input type="email" placeholder="guest@example.com" {...field} value={field.value ?? ""} data-testid="input-guest-email" /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <div className="grid grid-cols-2 gap-4">
+              <FormField control={form.control} name="checkIn" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Check-in</FormLabel>
+                  <FormControl><Input type="date" {...field} data-testid="input-check-in" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="checkOut" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Check-out</FormLabel>
+                  <FormControl><Input type="date" {...field} data-testid="input-check-out" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <FormField control={form.control} name="rate" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Rate per night (KES)</FormLabel>
+                  <FormControl><Input type="number" {...field} data-testid="input-booking-rate" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="amountPaid" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Amount paid (KES)</FormLabel>
+                  <FormControl><Input type="number" {...field} data-testid="input-amount-paid" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            </div>
+            <div className="rounded-md bg-muted p-3 text-sm flex items-center justify-between">
+              <span className="text-muted-foreground">{nights} night{nights === 1 ? "" : "s"}</span>
+              <span className="font-semibold tabular-nums">{formatKES(total)}</span>
+            </div>
+            <FormField control={form.control} name="status" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Status</FormLabel>
+                <Select onValueChange={field.onChange} value={field.value}>
+                  <FormControl><SelectTrigger data-testid="select-booking-status"><SelectValue /></SelectTrigger></FormControl>
+                  <SelectContent>
+                    <SelectItem value="confirmed">Confirmed</SelectItem>
+                    <SelectItem value="checked_in">Checked in</SelectItem>
+                    <SelectItem value="checked_out">Checked out</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <FormField control={form.control} name="notes" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Notes (optional)</FormLabel>
+                <FormControl><Textarea {...field} value={field.value ?? ""} data-testid="input-booking-notes" /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <DialogFooter className="gap-2 sm:justify-between">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!buildWhatsAppLink(guestPhone, "x")}
+                onClick={() => {
+                  const message = `Hi ${guestName || "there"}, this confirms your stay at The Chekata in ${selectedRoom?.name || "your room"}${nights ? ` for ${nights} night${nights === 1 ? "" : "s"}` : ""}. Total: ${formatKES(total)}${status === "checked_out" ? " — Paid in full." : " — Balance may be due."} We look forward to hosting you.`;
+                  const link = buildWhatsAppLink(guestPhone, message);
+                  if (link) window.open(link, "_blank");
+                }}
+                data-testid="button-send-whatsapp-accommodation"
+              >
+                <MessageCircle className="h-4 w-4 mr-1.5" /> WhatsApp
+              </Button>
+              <Button type="submit" disabled={mutation.isPending} data-testid="button-save-booking">
+                {mutation.isPending ? "Saving..." : "Save booking"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const statusVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+  confirmed: "secondary",
+  checked_in: "default",
+  checked_out: "outline",
+  cancelled: "destructive",
+  available: "secondary",
+  occupied: "default",
+  maintenance: "destructive",
+};
+
+export default function Accommodation() {
+  const { toast } = useToast();
+  const { data: rooms = [], isLoading: roomsLoading } = useQuery<Room[]>({ queryKey: ["/api/rooms"] });
+  const { data: bookings = [], isLoading: bookingsLoading } = useQuery<AccommodationBooking[]>({ queryKey: ["/api/accommodation-bookings"] });
+
+  const roomById = useMemo(() => new Map(rooms.map((r) => [r.id, r])), [rooms]);
+
+  const deleteRoom = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/rooms/${id}`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/rooms"] }); toast({ title: "Room removed" }); },
+  });
+  const deleteBooking = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/accommodation-bookings/${id}`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/accommodation-bookings"] }); toast({ title: "Booking removed" }); },
+  });
+  const setBookingStatus = useMutation({
+    mutationFn: async ({ id, status, roomId }: { id: number; status: string; roomId: number }) => {
+      await apiRequest("PATCH", `/api/accommodation-bookings/${id}`, { status });
+      if (status === "checked_in") {
+        await apiRequest("PATCH", `/api/rooms/${roomId}`, { status: "occupied" });
+      } else if (status === "checked_out") {
+        await apiRequest("PATCH", `/api/rooms/${roomId}`, { status: "available" });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/accommodation-bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/rooms"] });
+    },
+  });
+
+  const occupied = rooms.filter((r) => r.status === "occupied").length;
+  const activeBookings = bookings.filter((b) => b.status === "confirmed" || b.status === "checked_in");
+  const outstanding = bookings.reduce((s, b) => s + Math.max(0, b.totalAmount - b.amountPaid), 0);
+  const totalRevenue = bookings.filter((b) => b.status !== "cancelled").reduce((s, b) => s + b.totalAmount, 0);
+
+  const sortedBookings = [...bookings].sort((a, b) => b.createdAt - a.createdAt);
+  const sortedRooms = [...rooms].sort((a, b) => a.name.localeCompare(b.name));
+
+  return (
+    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      <PageHeader
+        title="Accommodation"
+        description="Manage rooms and guest bookings for the 8 standard and 2 executive rooms."
+      />
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard label="Total rooms" value={String(rooms.length)} icon={BedDouble} hint={`${occupied} occupied now`} testId="stat-total-rooms" />
+        <StatCard label="Active bookings" value={String(activeBookings.length)} icon={LogIn} testId="stat-active-bookings" />
+        <StatCard label="Accommodation revenue" value={formatKES(totalRevenue)} icon={BedDouble} accent="success" testId="stat-accommodation-revenue" />
+        <StatCard label="Outstanding balance" value={formatKES(outstanding)} icon={LogOut} accent="warning" testId="stat-outstanding-balance" />
+      </div>
+
+      <Tabs defaultValue="bookings">
+        <div className="flex items-center justify-between">
+          <TabsList>
+            <TabsTrigger value="bookings" data-testid="tab-bookings">Bookings</TabsTrigger>
+            <TabsTrigger value="rooms" data-testid="tab-rooms">Rooms</TabsTrigger>
+          </TabsList>
+        </div>
+
+        <TabsContent value="bookings" className="mt-4">
+          <Card>
+            <div className="flex items-center justify-between p-4 border-b border-card-border">
+              <h2 className="text-lg font-semibold">Bookings</h2>
+              <BookingFormDialog rooms={rooms} trigger={
+                <Button size="sm" data-testid="button-new-booking" disabled={rooms.length === 0}>
+                  <Plus className="h-4 w-4 mr-1" /> New booking
+                </Button>
+              } />
+            </div>
+            {bookingsLoading ? (
+              <div className="p-6 text-sm text-muted-foreground">Loading bookings…</div>
+            ) : sortedBookings.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">No bookings yet. Create the first one.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Guest</TableHead>
+                      <TableHead>Room</TableHead>
+                      <TableHead>Check-in</TableHead>
+                      <TableHead>Check-out</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-right">Balance</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sortedBookings.map((b) => {
+                      const room = roomById.get(b.roomId);
+                      const balance = b.totalAmount - b.amountPaid;
+                      return (
+                        <TableRow key={b.id} data-testid={`row-booking-${b.id}`}>
+                          <TableCell className="font-medium">{b.guestName}</TableCell>
+                          <TableCell>{room?.name ?? "—"}</TableCell>
+                          <TableCell>{formatDate(b.checkIn)}</TableCell>
+                          <TableCell>{formatDate(b.checkOut)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatKES(b.totalAmount)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{balance > 0 ? formatKES(balance) : "Paid"}</TableCell>
+                          <TableCell><Badge variant={statusVariant[b.status]}>{titleCase(b.status)}</Badge></TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-1">
+                              {b.status === "confirmed" && (
+                                <Button size="icon" variant="ghost" title="Check in" onClick={() => setBookingStatus.mutate({ id: b.id, status: "checked_in", roomId: b.roomId })} data-testid={`button-checkin-${b.id}`}>
+                                  <LogIn className="h-4 w-4" />
+                                </Button>
+                              )}
+                              {b.status === "checked_in" && (
+                                <Button size="icon" variant="ghost" title="Check out" onClick={() => setBookingStatus.mutate({ id: b.id, status: "checked_out", roomId: b.roomId })} data-testid={`button-checkout-${b.id}`}>
+                                  <LogOut className="h-4 w-4" />
+                                </Button>
+                              )}
+                              <BookingFormDialog booking={b} rooms={rooms} trigger={
+                                <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-booking-${b.id}`}><Pencil className="h-4 w-4" /></Button>
+                              } />
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button size="icon" variant="ghost" title="Delete" data-testid={`button-delete-booking-${b.id}`}><Trash2 className="h-4 w-4" /></Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete this booking?</AlertDialogTitle>
+                                    <AlertDialogDescription>This removes {b.guestName}'s booking permanently.</AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => deleteBooking.mutate(b.id)}>Delete</AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="rooms" className="mt-4">
+          <Card>
+            <div className="flex items-center justify-between p-4 border-b border-card-border">
+              <h2 className="text-lg font-semibold">Rooms</h2>
+              <RoomFormDialog rooms={rooms} trigger={
+                <Button size="sm" data-testid="button-new-room"><Plus className="h-4 w-4 mr-1" /> Add room</Button>
+              } />
+            </div>
+            {roomsLoading ? (
+              <div className="p-6 text-sm text-muted-foreground">Loading rooms…</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Room</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead className="text-right">Rate / night</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sortedRooms.map((r) => (
+                      <TableRow key={r.id} data-testid={`row-room-${r.id}`}>
+                        <TableCell className="font-medium">{r.name}</TableCell>
+                        <TableCell>{titleCase(r.type)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatKES(r.rate)}</TableCell>
+                        <TableCell><Badge variant={statusVariant[r.status]}>{titleCase(r.status)}</Badge></TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <RoomFormDialog room={r} rooms={rooms} trigger={
+                              <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-room-${r.id}`}><Pencil className="h-4 w-4" /></Button>
+                            } />
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button size="icon" variant="ghost" title="Delete" data-testid={`button-delete-room-${r.id}`}><Trash2 className="h-4 w-4" /></Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Remove {r.name}?</AlertDialogTitle>
+                                  <AlertDialogDescription>Existing bookings for this room will keep their history, but it will no longer appear as bookable.</AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction onClick={() => deleteRoom.mutate(r.id)}>Remove</AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
