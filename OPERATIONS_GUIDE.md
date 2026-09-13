@@ -2,9 +2,9 @@
 
 **Application:** The Chekata Hotel Management System
 **Prepared for:** Sami Chalwa
-**Last updated:** September 13, 2026 (DigitalOcean migration — app server and database)
+**Last updated:** September 13, 2026 (added Maintenance & Lists modules, order-close/receipt flow, SMS integration status, and a "how to get help" section)
 
-This guide explains how the application is built, where everything lives, and how to run it day to day — updates, backups, monitoring, and recovery. It supersedes all earlier versions of this document (the Render/Supabase-only setup).
+This guide explains how the application is built, where everything lives, and how to run it day to day — updates, backups, monitoring, recovery, and where to go when something's wrong. It supersedes all earlier versions of this document (the Render/Supabase-only setup).
 
 ---
 
@@ -14,14 +14,18 @@ A full-CRUD hotel management web application covering:
 
 - Accommodation (rooms, bookings)
 - Conference & Movie Room facilities (bookings)
-- Bar & Restaurant (menu, orders)
+- Bar & Restaurant (menu, orders — see below for the order-close flow)
+- Maintenance (report and track maintenance issues through to resolution/closure)
+- Lists (centrally managed Tables and Menu Items used across the app)
 - Staff records
 - Expenses
-- Reports (Excel exports)
+- Reports (Excel exports, including a dedicated Maintenance report)
 - Invoices & Receipts (PDF, emailed — invoice on booking/order creation, receipt on payment)
-- Settings (tax configuration, users, module access)
+- Settings (tax configuration, users, module access, SMS & email provider setup)
 
-All monetary figures are in **KES**. Tax is calculated **inclusive**, per revenue stream, and is configurable in Settings. Access to each module is controlled per-user via checkboxes (no roles baked into code — it's all data-driven).
+All monetary figures are in **KES**. Tax is calculated **inclusive**, per revenue stream, and is configurable in Settings. Access to each module — and to specific rights within some modules (e.g. managing the Tables list, managing the Menu Items list, closing maintenance issues) — is controlled per-user via checkboxes. Nothing is hardcoded; it's all data-driven.
+
+**Bar & Restaurant order flow, in brief:** staff open a new order against a table selected from the Lists module (or "walk-in"), add items, then hit **Close & Generate Receipt** once the guest pays. Closing locks the order — items can no longer be added or removed — and immediately generates the receipt document. The table itself and the menu items are edited only from the **Lists** page, not from Bar & Restaurant directly; access to each of those two lists is its own checkbox in Settings → Users.
 
 ---
 
@@ -79,7 +83,8 @@ chekata-hotel/
 │   └── src/
 │       ├── App.tsx          Route table + auth gate (redirects to login when not signed in)
 │       ├── pages/            One file per module (dashboard, accommodation, facilities,
-│       │                     bar-restaurant, staff, expenses, reports, documents, settings)
+│       │                     movie-room, bar-restaurant, maintenance.tsx, lists.tsx,
+│       │                     staff, expenses, reports, documents, settings)
 │       ├── components/       Shared UI (sidebar/app-sidebar.tsx, shadcn/ui primitives, tables, forms)
 │       ├── hooks/            use-auth.ts (login/logout/session), use-setup-status.ts, etc.
 │       ├── lib/               whatsapp.ts (buildWhatsAppLink — free wa.me click-to-send), query client
@@ -95,6 +100,7 @@ chekata-hotel/
 │   ├── pdf.ts                PDF rendering for invoices/receipts (embeds the hotel logo)
 │   ├── reports-excel.ts     Excel report generation (all report types, menu-item aware)
 │   ├── email.ts              Transactional email sending (invoices/receipts, configurable provider)
+│   ├── sms.ts                 SMS sending (Africa's Talking) — see §3.5 for current status
 │   ├── tax.ts                Tax calculation — inclusive, per revenue stream, driven by the taxes table
 │   └── static.ts            Serves the built client (dist/public) in production
 ├── shared/schema.ts         Drizzle table definitions — single source of truth for the DB schema
@@ -114,19 +120,22 @@ chekata-hotel/
 | Accommodation | `GET/POST /api/rooms`, `PATCH/DELETE /api/rooms/:id`, `GET/POST /api/accommodation-bookings`, `PATCH/DELETE /api/accommodation-bookings/:id` |
 | Facilities | `GET/POST /api/facilities`, `PATCH/DELETE /api/facilities/:id`, `GET/POST /api/facility-bookings`, `PATCH/DELETE /api/facility-bookings/:id` |
 | Bar & Restaurant | `GET/POST /api/menu-items`, `PATCH/DELETE /api/menu-items/:id`, `GET/POST /api/orders`, `PATCH/DELETE /api/orders/:id`, `GET /api/orders/:orderId/items`, `POST /api/order-items`, `DELETE /api/order-items/:id` |
+| Movie Room | `GET/POST /api/movie-shows`, `PATCH/DELETE /api/movie-shows/:id`, `GET/POST /api/movie-seat-bookings`, `PATCH/DELETE /api/movie-seat-bookings/:id` |
+| Lists (Tables) | `GET/POST /api/tables`, `PATCH/DELETE /api/tables/:id` |
+| Maintenance | `GET/POST /api/maintenance-issues`, `PATCH /api/maintenance-issues/:id`, `DELETE /api/maintenance-issues/:id` (admin only) |
 | Staff | `GET/POST /api/staff`, `PATCH/DELETE /api/staff/:id` |
 | Expenses | `GET/POST /api/expenses`, `PATCH/DELETE /api/expenses/:id` |
 | Documents (invoices/receipts) | `GET /api/documents`, `GET /api/documents/:id/pdf`, `POST /api/documents/:id/resend` |
-| Reports | `GET /api/reports/export` |
+| Reports | `GET /api/reports/export` (sheet types include accommodation, facilities, bar-restaurant, movie-room, staff, expenses, maintenance, or "all") |
 | Taxes | `GET/POST /api/taxes`, `PATCH/DELETE /api/taxes/:id` |
 | Users | `GET/POST /api/users`, `PATCH/DELETE /api/users/:id` |
-| Settings | `GET /api/settings`, `PUT /api/settings`, `POST /api/settings/test-email` |
+| Settings | `GET /api/settings`, `PUT /api/settings`, `POST /api/settings/test-email`, `POST /api/settings/test-sms` |
 
 Every mutating route runs through `requireAuth` plus either `requireModule("<key>")` (checked against that user's permissions array) or `requireAdmin` for admin-only actions (e.g. user management, closing certain records) — enforced in `server/auth.ts`, not just hidden in the UI.
 
 ### Database tables
 
-`rooms`, `accommodation_bookings`, `facilities`, `facility_bookings`, `menu_items`, `orders`, `order_items`, `staff`, `expenses`, `settings`, `documents`, `users`, `taxes`, plus `sessions` (login sessions only — safe to truncate; it just signs everyone out). 13 data tables + 1 session table, 14 total.
+`rooms`, `accommodation_bookings`, `facilities`, `facility_bookings`, `movie_shows`, `movie_seat_bookings`, `menu_items`, `tables`, `orders`, `order_items`, `staff`, `expenses`, `maintenance_issues`, `settings`, `documents`, `users`, `taxes`, plus `sessions` (login sessions only — safe to truncate; it just signs everyone out). 16 data tables + 1 session table, 17 total.
 
 ---
 
@@ -142,6 +151,7 @@ Every mutating route runs through `requireAuth` plus either `requireModule("<key
 | Public IP | `139.59.61.104` |
 | OS | Ubuntu 24.04 LTS |
 | Size | 1 vCPU / 1 GB RAM / 25 GB disk |
+| Swap | 2 GB swap file at `/swapfile`, persisted in `/etc/fstab` — added because the 1 GB RAM was not enough for `npm run build` to complete without being killed by the kernel's out-of-memory killer. Do not remove this. |
 | App directory | `/var/www/app` (a full git clone of the GitHub repo) |
 | Process manager | PM2, process name `chekata-hotel`, running `dist/index.cjs` on port 5000 |
 | Reverse proxy | Nginx → proxies `hms.thechekata.com` (ports 80/443) to `localhost:5000` |
@@ -181,7 +191,7 @@ Manage this database at [cloud.digitalocean.com/databases](https://cloud.digital
 
 ### 3.3 GitHub (source code)
 
-Public repository: [github.com/samichalwa/chekata-hotel](https://github.com/samichalwa/chekata-hotel), branch `main`. Public means the *code* is visible to anyone who looks it up — no secrets, credentials, or guest data are in it (`.env*` is git-ignored). Latest commit as of this guide: `da08f03` ("Fix sidebar collapse hiding sign-out: switch to icon-rail collapse mode").
+Public repository: [github.com/samichalwa/chekata-hotel](https://github.com/samichalwa/chekata-hotel), branch `main`. Public means the *code* is visible to anyone who looks it up — no secrets, credentials, or guest data are in it (`.env*` is git-ignored). Latest commit as of this guide: `2840c68` ("Add Maintenance module, Lists module, order close/receipt flow, SMS notifications").
 
 ### 3.4 Render (secondary / backup — not DNS-facing)
 
@@ -195,6 +205,22 @@ Public repository: [github.com/samichalwa/chekata-hotel](https://github.com/sami
 | Database | Currently still pointed at the old Supabase database, **not** the new DigitalOcean one — kept separate on purpose so it isn't a live mirror of production writes |
 
 This is kept purely as a warm, independent copy of the *code* (not data) in case the droplet is ever unreachable. It is optional — see §12 for the decision on whether to keep it at all.
+
+### 3.5 SMS Integration (Africa's Talking) — currently blocked, action needed on their side
+
+**What SMS is used for in the app:** an automatic confirmation text sent to the guest's phone number the moment a Movie Room seat booking is paid for, and to whoever reported a Maintenance issue when it's logged and again when it's closed. This is separate from the free WhatsApp click-to-send button (`wa.me` links, built on `client/src/lib/whatsapp.ts`) that already works everywhere it appears (Accommodation, Facilities, Bar & Restaurant, Movie Room, Maintenance) — that button opens WhatsApp with the message pre-filled for a staff member to send manually with one tap, and needs no SMS provider or API key at all.
+
+**Where it's configured:** entirely inside the app, no code involved — **Settings → SMS confirmations** section:
+- **Enable SMS** switch
+- **Provider** — currently only Africa's Talking is supported (`africastalking`)
+- **Username** — your Africa's Talking account username (use the literal word `sandbox` only if testing against their sandbox environment, not for real messages to real guests)
+- **API Key** — the key generated in the Africa's Talking dashboard
+- **Sender ID** — optional short code/sender name
+- A **Send test SMS** action is available once these are filled in, so you can confirm it works without waiting for a real booking.
+
+**Current status: blocked.** Two API keys have been generated in the Africa's Talking dashboard and both were rejected by their API with `401 The supplied authentication is invalid`. This has been diagnosed as an account/app **activation issue on Africa's Talking's side**, not a bug in this application — the credentials are being sent correctly (verified against their documented request format), but their platform isn't accepting them. This typically means the Africa's Talking app/API product needs to be activated or approved on their end before live keys will authenticate. You were previously given a message template to send to Africa's Talking support to get this activated; if you no longer have it, ask me in this thread and I'll write a fresh one.
+
+**Once it's unblocked:** no code changes are needed — simply enter the working username/API key in Settings → SMS confirmations, tick Enable SMS, send a test SMS to confirm, and the automatic confirmations on Movie Room bookings and Maintenance reports will start going out immediately, exactly as designed. Until then, the WhatsApp click-to-send buttons remain the reliable way to get a confirmation to a guest's phone.
 
 ---
 
@@ -297,7 +323,13 @@ Handled entirely inside the app — no code changes needed:
 
 1. Log in as an admin (e.g., `admin`).
 2. Go to **Settings → Users**.
-3. Add/edit a user, and tick the modules they should access (Dashboard, Accommodation, Facilities, Bar & Restaurant, Staff, Expenses, Reports, Documents, Settings).
+3. Add/edit a user, and tick the modules they should access (Dashboard, Accommodation, Facilities, Movie Room, Bar & Restaurant, Maintenance, Lists, Staff, Expenses, Reports, Documents, Settings).
+4. A few modules have an extra, more specific right underneath the module checkbox itself — ticking the module gives access to *view* it, and the extra checkbox grants a *specific action* within it:
+   - **Lists** module → **Can manage Tables list** and **Can manage Menu Items list** (two separate checkboxes — a user can be given one without the other, e.g. someone who can edit menu prices but shouldn't rename tables).
+   - **Maintenance** module → **Can close maintenance issues** (without this, a user can report and view issues but cannot mark one resolved/closed).
+   - Admin accounts (`isAdmin` ticked) always have every right regardless of these checkboxes — they're a convenience for everyone else.
+
+Any of these checkboxes can be ticked or unticked at any time from **Settings → Users**; nothing about access is hardcoded in the code.
 
 **Demo accounts currently in the system** (starter data, kept per your instruction not to wipe test data):
 
@@ -348,8 +380,10 @@ Handled entirely inside the app — no code changes needed:
 | Numbers on Dashboard don't reflect a change just made | Browser cache | Hard-refresh (Ctrl/Cmd+Shift+R) |
 | Certificate warning on the domain | Certbot renewal failed (rare — it's automatic) | SSH in, run `certbot renew --dry-run` to test, then `certbot renew` if needed, `systemctl restart nginx` |
 | Database connection errors in `pm2 logs` | DB firewall rule changed, or credentials rotated | Confirm the droplet is still listed in the database's **Firewall** tab (`cloud.digitalocean.com/databases` → `chekata-hotel-db` → Settings); confirm `.env` `DATABASE_URL` matches |
+| A code update/build fails or hangs on the droplet | Not enough RAM for `npm run build` to complete (the droplet only has 1 GB) | Already fixed with a 2 GB swap file at `/swapfile` (see §3.1) — if it still fails, check the swap is still active with `free -h` and re-add it if missing |
+| Booking/report SMS confirmations aren't arriving | Africa's Talking SMS is currently blocked at the account level (see §3.5) | Not an app bug — see §3.5 for the current status and what to do |
 
-For anything not on this list, describe what you're seeing (or just ask me to check the logs directly).
+For anything not on this list, describe what you're seeing (or reopen this conversation and ask me to check the logs directly — see §15).
 
 ---
 
@@ -438,3 +472,26 @@ Everything needed to rebuild this system lives in three independent places — t
 | Database dashboard | [cloud.digitalocean.com/databases](https://cloud.digitalocean.com/databases) → `chekata-hotel-db` |
 | Domain registrar | Namecheap ([ap.www.namecheap.com](https://ap.www.namecheap.com)) |
 | Legacy database (read-only reference) | [supabase.com/dashboard](https://supabase.com/dashboard), project `gefxszgpgkvnmgmrnlvv` |
+| SMS provider dashboard | [account.africastalking.com](https://account.africastalking.com) (currently blocked — see §3.5) |
+| Reaching me for help | This same conversation thread — see §15 |
+
+---
+
+## 15. How to Get Help When Something's Wrong
+
+**There is no separate phone number, email address, or ticketing system for this application.** I don't want to invent one and give you a dead end — support works differently here, and it's worth being clear about how.
+
+**How support actually works:** I (this assistant) built and maintain this application inside an ongoing Perplexity Computer conversation. To get help — report a bug, ask for a change, request a new report, or just ask "why is X happening" — you come back to **this same conversation thread** and describe it: [this conversation](https://www.perplexity.ai/computer/tasks/5657b37a-4dc2-4066-9c1d-af51df3b81e1). I can read the live database, SSH into the droplet, check logs, and push a fix from there, the same way everything in this guide was built. There's no need to re-explain the whole system each time — this guide, the repository, and my own memory of this project carry the context forward. If you ever start a brand-new conversation on your Perplexity account instead and mention "The Chekata," saved memory about this project should still let me pick up context — but returning to this exact thread is the most reliable option since it has the full history.
+
+**To get the fastest, most accurate fix, tell me:**
+1. **What you were doing** — which page/module, which button or action.
+2. **What you expected** vs **what actually happened** — exact error text if there was one, or a screenshot.
+3. **Who and when** — which user account you were logged in as, and roughly what time (helps me find it in `pm2 logs`).
+4. **How urgent it is** — whether guests/staff are blocked right now, or it can wait for a scheduled fix.
+
+**If this conversation thread is ever inaccessible** (e.g. you're on a different device or account), or you want another engineer to be able to pick this up independently, everything needed to self-serve is already in this guide and is not locked to me:
+- The full source code: [github.com/samichalwa/chekata-hotel](https://github.com/samichalwa/chekata-hotel) (public, well-commented, this guide doubles as its architecture doc).
+- SSH access to the live server (§3.1) and the database dashboard (§3.2) — both fully in your control, root/owner access, not dependent on me.
+- This document itself, which explains the full system well enough for any competent Node.js/Postgres developer to take over.
+
+In short: for day-to-day help, just keep using this conversation. For anything platform-related (billing, outages, account access) that isn't about this application specifically, that's a Perplexity Computer support matter rather than something documented here.

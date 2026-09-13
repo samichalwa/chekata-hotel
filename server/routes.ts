@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { storage } from "./storage";
 import {
   insertRoomSchema, insertAccommodationBookingSchema,
@@ -21,6 +22,8 @@ import {
   requireAnyModule, requireCanManageTablesList, requireCanManageMenuItemsList, requireCanCloseMaintenanceIssues,
   hashPassword, verifyPassword, toSafeUser, parsePermissions, resolveUserIdFromHeaderToken,
 } from "./auth";
+
+const STAFF_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@thechekata\.com$/i;
 
 function handleZodError(res: any, err: any) {
   res.status(400).json({ error: err?.message ?? "Invalid request" });
@@ -94,6 +97,74 @@ export async function registerRoutes(
     res.json(toSafeUser(user));
   });
 
+  const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+  const GENERIC_RESET_RESPONSE = { message: "If that account has an email on file, a password reset link has been sent to it." };
+
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { username } = req.body as { username?: string };
+      if (!username) return res.json(GENERIC_RESET_RESPONSE);
+      const uname = username.trim().toLowerCase();
+      const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(uname);
+      const user = await storage.getUserByUsername(uname);
+      // Only accounts whose username IS an email address can receive a reset link this way
+      // (e.g. the initial administrator account created during setup may not have one).
+      if (user && user.active && isEmail) {
+        const token = randomBytes(32).toString("hex");
+        await storage.createPasswordResetToken({
+          userId: user.id,
+          token,
+          expiresAt: Date.now() + RESET_TOKEN_TTL_MS,
+          usedAt: null,
+          createdAt: Date.now(),
+        });
+        const settings = await storage.getSettings();
+        const proto = (req.headers["x-forwarded-proto"] as string | undefined)?.split(",")[0]?.trim() || req.protocol;
+        const origin = `${proto}://${req.get("host")}`;
+        const resetLink = `${origin}/#/reset-password?token=${token}`;
+        const hotelName = settings.hotelName || "The Chekata";
+        const html = `
+          <p>Hello ${user.fullName || ""},</p>
+          <p>We received a request to reset the password for your ${hotelName} account.</p>
+          <p><a href="${resetLink}" style="display:inline-block;background:#0f172a;color:#ffffff;padding:10px 18px;border-radius:6px;text-decoration:none;">Reset your password</a></p>
+          <p>Or copy and paste this link into your browser:<br/>${resetLink}</p>
+          <p>This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
+        `;
+        const result = await sendTransactionalEmail({
+          settings,
+          to: uname,
+          toName: user.fullName,
+          subject: `Reset your password — ${hotelName}`,
+          html,
+        });
+        if (!result.ok) console.error("Failed to send password reset email:", result.error);
+      }
+      // Always return the same generic response so we never reveal whether an account exists.
+      res.json(GENERIC_RESET_RESPONSE);
+    } catch (err: any) {
+      console.error("forgot-password error:", err);
+      res.json(GENERIC_RESET_RESPONSE);
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { token, password } = req.body as { token?: string; password?: string };
+      if (!token || !password) return res.status(400).json({ error: "Token and new password are required." });
+      if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
+      const record = await storage.getPasswordResetToken(token);
+      if (!record || record.usedAt || record.expiresAt < Date.now()) {
+        return res.status(400).json({ error: "This reset link is invalid or has expired. Request a new one." });
+      }
+      const passwordHash = await hashPassword(password);
+      await storage.updateUser(record.userId, { passwordHash });
+      await storage.markPasswordResetTokenUsed(token);
+      res.json({ message: "Your password has been updated. You can now sign in." });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Failed to reset password" });
+    }
+  });
+
   // ---------- Everything below requires a signed-in, active user ----------
   app.use("/api", requireAuth);
 
@@ -110,6 +181,9 @@ export async function registerRoutes(
       };
       if (!username || !password || !fullName) return res.status(400).json({ error: "Username, password and full name are required." });
       if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
+      if (!isAdmin && !STAFF_EMAIL_REGEX.test(username.trim())) {
+        return res.status(400).json({ error: "Staff accounts must use a @thechekata.com email address as their username." });
+      }
       const passwordHash = await hashPassword(password);
       const validPerms = Array.isArray(permissions) ? permissions.filter((p) => (MODULE_KEYS as readonly string[]).includes(p)) : [];
       const user = await storage.createUser({
@@ -146,6 +220,10 @@ export async function registerRoutes(
       }
       if (currentUserId === id && active === false) {
         return res.status(400).json({ error: "You can't deactivate your own account." });
+      }
+      const willBeAdmin = typeof isAdmin === "boolean" ? isAdmin : !!target.isAdmin;
+      if (username && !willBeAdmin && !STAFF_EMAIL_REGEX.test(username.trim())) {
+        return res.status(400).json({ error: "Staff accounts must use a @thechekata.com email address as their username." });
       }
       const patch: Record<string, any> = {};
       if (username) patch.username = username.trim().toLowerCase();

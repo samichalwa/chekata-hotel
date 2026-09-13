@@ -115,6 +115,9 @@ export function AppSidebar() {
         <div className="px-2 pb-1.5 text-[11px] text-sidebar-foreground/40 group-data-[collapsible=icon]:hidden" data-testid="text-copyright">
           © {copyrightYear} {hotelName}. All rights reserved.
         </div>
+        <div className="px-2 pb-2 text-[11px] text-sidebar-foreground/40 group-data-[collapsible=icon]:hidden" data-testid="text-developer-credit">
+          Owned &amp; developed by Sami Chalwa
+        </div>
       </SidebarFooter>
     </Sidebar>
   );

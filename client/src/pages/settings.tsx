@@ -539,9 +539,11 @@ function TaxesTab() {
 // Users & Access tab
 // ---------------------------------------------------------------------------
 
+const STAFF_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@thechekata\.com$/i;
+
 const userFormSchema = z.object({
   fullName: z.string().min(1, "Full name is required"),
-  username: z.string().min(3, "At least 3 characters").regex(/^[a-zA-Z0-9._-]+$/, "Letters, numbers, dots, dashes and underscores only"),
+  username: z.string().min(1, "Email address is required").regex(/^[a-zA-Z0-9._%+-]+@?[a-zA-Z0-9.-]*$/, "Letters, numbers, dots, dashes and underscores only"),
   password: z.string().optional(),
   isAdmin: z.boolean(),
   active: z.boolean(),
@@ -550,6 +552,9 @@ const userFormSchema = z.object({
   canManageTablesList: z.boolean(),
   canManageMenuItemsList: z.boolean(),
   canCloseMaintenanceIssues: z.boolean(),
+}).refine((v) => v.isAdmin || STAFF_EMAIL_REGEX.test(v.username), {
+  message: "Staff accounts must use a @thechekata.com email address",
+  path: ["username"],
 });
 
 type UserFormValues = z.infer<typeof userFormSchema>;
@@ -612,8 +617,9 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
               )} />
               <FormField control={form.control} name="username" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Username</FormLabel>
-                  <FormControl><Input {...field} data-testid="input-user-username" /></FormControl>
+                  <FormLabel>{isAdminWatch ? "Username or email" : "Email address"}</FormLabel>
+                  <FormControl><Input type={isAdminWatch ? "text" : "email"} placeholder={isAdminWatch ? undefined : "name@thechekata.com"} {...field} data-testid="input-user-username" /></FormControl>
+                  {!isAdminWatch && <FormDescription>Staff sign in with their @thechekata.com email address.</FormDescription>}
                   <FormMessage />
                 </FormItem>
               )} />
@@ -749,7 +755,7 @@ function UsersTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Create an account for each person who needs to sign in, and tick exactly which modules they can access. Administrators always have full access.
+          Create an account for each employee who needs to sign in — using their @thechekata.com email address as the username — and tick exactly which modules they can access. Administrators always have full access.
         </p>
         <UserFormDialog trigger={<Button size="sm" data-testid="button-new-user"><Plus className="h-4 w-4 mr-1" /> Add user</Button>} />
       </div>
@@ -764,7 +770,7 @@ function UsersTab() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Username</TableHead>
+                  <TableHead>Email address</TableHead>
                   <TableHead>Access</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>

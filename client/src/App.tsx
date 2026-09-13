@@ -1,5 +1,7 @@
+import { useState, useEffect } from "react";
 import { Switch, Route, Router } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
+import { Button } from "@/components/ui/button";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -8,7 +10,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Loader2, ShieldOff } from "lucide-react";
+import { Loader2, ShieldOff, Home } from "lucide-react";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Accommodation from "@/pages/accommodation";
@@ -24,6 +26,7 @@ import Documents from "@/pages/documents";
 import SettingsPage from "@/pages/settings";
 import LoginPage from "@/pages/login";
 import SetupPage from "@/pages/setup";
+import ResetPasswordPage from "@/pages/reset-password";
 import { useCurrentUser, useSetupStatus, canAccess } from "@/hooks/use-auth";
 import type { ModuleKey } from "@shared/schema";
 
@@ -60,9 +63,33 @@ function AppRouter() {
   );
 }
 
+function getResetToken(hash: string): string | null {
+  const m = hash.match(/^#?\/?reset-password(?:\?(.*))?$/);
+  if (!m) return null;
+  const params = new URLSearchParams(m[1] ?? "");
+  return params.get("token");
+}
+
+function useHashChangeTick(): string {
+  const [hash, setHash] = useState(window.location.hash);
+  useEffect(() => {
+    const onHashChange = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+  return hash;
+}
+
 function AuthGate({ children }: { children: React.ReactNode }) {
+  const hash = useHashChangeTick();
+  const resetToken = getResetToken(hash);
   const { data: setupStatus, isLoading: setupLoading } = useSetupStatus();
   const { data: user, isLoading: userLoading } = useCurrentUser();
+
+  // Password reset via an emailed link is reachable regardless of sign-in state.
+  if (hash.replace(/^#\/?/, "").split("?")[0] === "reset-password") {
+    return <ResetPasswordPage token={resetToken} />;
+  }
 
   if (setupLoading || userLoading) {
     return (
@@ -100,7 +127,18 @@ function App() {
                   <AppSidebar />
                   <div className="flex flex-col flex-1 overflow-hidden">
                     <header className="flex items-center justify-between gap-2 border-b border-border bg-background px-3 py-2 shrink-0">
-                      <SidebarTrigger data-testid="button-sidebar-toggle" />
+                      <div className="flex items-center gap-1">
+                        <SidebarTrigger data-testid="button-sidebar-toggle" />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Home"
+                          onClick={() => { window.location.hash = "/"; }}
+                          data-testid="button-home"
+                        >
+                          <Home className="h-4 w-4" />
+                        </Button>
+                      </div>
                       <ThemeToggle />
                     </header>
                     <main className="flex-1 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>

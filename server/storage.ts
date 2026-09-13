@@ -2,7 +2,7 @@ import {
   rooms, accommodationBookings, facilities, facilityBookings,
   movieShows, movieSeatBookings,
   menuItems, orders, orderItems, staff, expenses, settings, documents,
-  users, taxes, tables, maintenanceIssues, MODULE_KEYS,
+  users, passwordResetTokens, taxes, tables, maintenanceIssues, MODULE_KEYS,
 } from '@shared/schema';
 import type {
   Room, InsertRoom,
@@ -19,6 +19,7 @@ import type {
   Settings, InsertSettings,
   DocumentRecord, InsertDocument,
   User, InsertUser,
+  PasswordResetToken, InsertPasswordResetToken,
   Tax, InsertTax,
   TableRow, InsertTableRow,
   MaintenanceIssue, InsertMaintenanceIssue,
@@ -248,6 +249,14 @@ CREATE TABLE IF NOT EXISTS maintenance_issues (
   closed_at BIGINT,
   closed_by TEXT
 );
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  token TEXT NOT NULL UNIQUE,
+  expires_at BIGINT NOT NULL,
+  used_at BIGINT,
+  created_at BIGINT NOT NULL
+);
 `);
 
   // ---- Idempotent column additions for installs upgraded from an earlier version ----
@@ -414,6 +423,9 @@ export interface IStorage {
   createUser(data: InsertUser): Promise<User>;
   updateUser(id: number, data: Partial<InsertUser>): Promise<User | undefined>;
   deleteUser(id: number): Promise<{ changes: number }>;
+  createPasswordResetToken(data: InsertPasswordResetToken): Promise<PasswordResetToken>;
+  getPasswordResetToken(token: string): Promise<PasswordResetToken | undefined>;
+  markPasswordResetTokenUsed(token: string): Promise<void>;
 
   // Taxes
   listTaxes(): Promise<Tax[]>;
@@ -670,6 +682,17 @@ export class DatabaseStorage implements IStorage {
   async deleteUser(id: number) {
     const result = await db.delete(users).where(eq(users.id, id));
     return { changes: result.count ?? 0 };
+  }
+
+  // Password reset tokens
+  async createPasswordResetToken(data: InsertPasswordResetToken) {
+    return (await db.insert(passwordResetTokens).values(data).returning())[0];
+  }
+  async getPasswordResetToken(token: string) {
+    return (await db.select().from(passwordResetTokens).where(eq(passwordResetTokens.token, token)))[0];
+  }
+  async markPasswordResetTokenUsed(token: string) {
+    await db.update(passwordResetTokens).set({ usedAt: Date.now() }).where(eq(passwordResetTokens.token, token));
   }
 
   // Taxes

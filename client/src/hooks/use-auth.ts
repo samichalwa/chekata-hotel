@@ -44,6 +44,24 @@ export function useSetup() {
   });
 }
 
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: async (data: { username: string }) => {
+      const res = await apiRequest("POST", "/api/auth/forgot-password", data);
+      return (await res.json()) as { message: string };
+    },
+  });
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: async (data: { token: string; password: string }) => {
+      const res = await apiRequest("POST", "/api/auth/reset-password", data);
+      return (await res.json()) as { message: string };
+    },
+  });
+}
+
 export function useLogout() {
   const qc = useQueryClient();
   return useMutation({
