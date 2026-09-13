@@ -250,6 +250,8 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
   const [guestPhone, setGuestPhone] = useState("");
   const [guestEmail, setGuestEmail] = useState("");
   const [amountPaid, setAmountPaid] = useState<string>("");
+  const [paymentMethod, setPaymentMethod] = useState<string>("");
+  const [paymentReference, setPaymentReference] = useState<string>("");
   const [notes, setNotes] = useState("");
   const [lastConfirmation, setLastConfirmation] = useState<{ message: string; phone: string } | null>(null);
 
@@ -273,7 +275,7 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
 
   const resetForm = () => {
     setShowId1(null); setSeats1(new Set()); setAddSecond(false); setShowId2(null); setSeats2(new Set());
-    setGuestName(""); setGuestPhone(""); setGuestEmail(""); setAmountPaid(""); setNotes("");
+    setGuestName(""); setGuestPhone(""); setGuestEmail(""); setAmountPaid(""); setPaymentMethod(""); setPaymentReference(""); setNotes("");
   };
 
   const mutation = useMutation({
@@ -284,7 +286,8 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
       ];
       const res = await apiRequest("POST", "/api/movie-seat-bookings", {
         guestName, guestPhone: guestPhone || null, guestEmail: guestEmail || null,
-        amountPaid: Number(amountPaid) || 0, notes: notes || null, legs,
+        amountPaid: Number(amountPaid) || 0, paymentMethod: paymentMethod || null, paymentReference: paymentReference || null,
+        notes: notes || null, legs,
       });
       return res.json();
     },
@@ -306,7 +309,11 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
       if (addSecond && show2) {
         message += `\n${show2.name} — ${showTimeLabel(show2)} — Seat(s): ${seatList2}`;
       }
-      message += `\n\nTotal: ${formatKES(total)}. See you there!`;
+      message += `\n\nTotal: ${formatKES(total)}.`;
+      if (paymentMethod || paymentReference) {
+        message += ` Payment: ${[paymentMethod, paymentReference].filter(Boolean).join(" / ")}.`;
+      }
+      message += " See you there!";
       setLastConfirmation({ message, phone: guestPhone });
       resetForm();
     },
@@ -387,6 +394,24 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
             <span className="font-semibold tabular-nums">{formatKES(total)}</span>
           </div>
         </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label>Payment method</Label>
+            <Select onValueChange={setPaymentMethod} value={paymentMethod}>
+              <SelectTrigger data-testid="select-booking-payment-method"><SelectValue placeholder="Select method" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cash">Cash</SelectItem>
+                <SelectItem value="mpesa">M-Pesa</SelectItem>
+                <SelectItem value="card">Card</SelectItem>
+                <SelectItem value="bank_transfer">Bank transfer</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Payment reference (optional)</Label>
+            <Input placeholder="M-Pesa code, slip #, etc." value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} data-testid="input-booking-payment-reference" />
+          </div>
+        </div>
         <div className="space-y-1.5">
           <Label>Notes (optional)</Label>
           <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} data-testid="input-booking-notes" />
@@ -425,6 +450,8 @@ const editBookingSchema = z.object({
   guestPhone: z.string().optional().nullable(),
   guestEmail: z.string().optional().nullable().refine((v) => !v || /\S+@\S+\.\S+/.test(v), { message: "Enter a valid email" }),
   amountPaid: z.coerce.number().nonnegative(),
+  paymentMethod: z.string().optional().nullable(),
+  paymentReference: z.string().optional().nullable(),
   status: z.string().min(1),
   notes: z.string().optional().nullable(),
 });
@@ -436,7 +463,8 @@ function EditBookingDialog({ booking, show, trigger }: { booking: MovieSeatBooki
     resolver: zodResolver(editBookingSchema),
     defaultValues: {
       guestName: booking.guestName, guestPhone: booking.guestPhone ?? "", guestEmail: booking.guestEmail ?? "",
-      amountPaid: booking.amountPaid, status: booking.status, notes: booking.notes ?? "",
+      amountPaid: booking.amountPaid, paymentMethod: booking.paymentMethod ?? "", paymentReference: booking.paymentReference ?? "",
+      status: booking.status, notes: booking.notes ?? "",
     },
   });
 
@@ -475,6 +503,26 @@ function EditBookingDialog({ booking, show, trigger }: { booking: MovieSeatBooki
                 <FormItem><FormLabel>Amount paid (KES)</FormLabel><FormControl><Input type="number" {...field} data-testid="input-edit-amount-paid" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <FormField control={form.control} name="paymentMethod" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Payment method</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                    <FormControl><SelectTrigger data-testid="select-edit-payment-method"><SelectValue placeholder="Select method" /></SelectTrigger></FormControl>
+                    <SelectContent>
+                      <SelectItem value="cash">Cash</SelectItem>
+                      <SelectItem value="mpesa">M-Pesa</SelectItem>
+                      <SelectItem value="card">Card</SelectItem>
+                      <SelectItem value="bank_transfer">Bank transfer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="paymentReference" render={({ field }) => (
+                <FormItem><FormLabel>Payment reference</FormLabel><FormControl><Input placeholder="M-Pesa code, slip #, etc." {...field} value={field.value ?? ""} data-testid="input-edit-payment-reference" /></FormControl><FormMessage /></FormItem>
+              )} />
+            </div>
             <FormField control={form.control} name="guestEmail" render={({ field }) => (
               <FormItem><FormLabel>Email</FormLabel><FormControl><Input type="email" {...field} value={field.value ?? ""} data-testid="input-edit-guest-email" /></FormControl><FormMessage /></FormItem>
             )} />
@@ -494,7 +542,24 @@ function EditBookingDialog({ booking, show, trigger }: { booking: MovieSeatBooki
             <FormField control={form.control} name="notes" render={({ field }) => (
               <FormItem><FormLabel>Notes</FormLabel><FormControl><Textarea {...field} value={field.value ?? ""} data-testid="input-edit-booking-notes" /></FormControl><FormMessage /></FormItem>
             )} />
-            <DialogFooter>
+            <DialogFooter className="gap-2 sm:justify-between">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!buildWhatsAppLink(form.watch("guestPhone"), "x")}
+                onClick={() => {
+                  const pm = form.watch("paymentMethod");
+                  const pr = form.watch("paymentReference");
+                  const paid = form.watch("amountPaid");
+                  const paymentDetail = (pm || pr) ? ` Payment: ${[pm, pr].filter(Boolean).join(" / ")}.` : "";
+                  const message = `Hi ${form.watch("guestName") || booking.guestName}, payment received for your Movie Room booking at The Chekata \u2014 Seat ${booking.seatRow}${booking.seatNumber}. Paid KES ${Number(paid || 0).toLocaleString()}.${paymentDetail} Enjoy the show!`;
+                  const link = buildWhatsAppLink(form.watch("guestPhone"), message);
+                  if (link) window.open(link, "_blank");
+                }}
+                data-testid="button-send-whatsapp-edit-booking"
+              >
+                <MessageCircle className="h-4 w-4 mr-1.5" /> WhatsApp
+              </Button>
               <Button type="submit" disabled={mutation.isPending} data-testid="button-save-edit-booking">
                 {mutation.isPending ? "Saving..." : "Save changes"}
               </Button>

@@ -326,6 +326,8 @@ export async function registerRoutes(
         totalAmount: booking.totalAmount,
         amountPaid: booking.amountPaid,
         balance: booking.totalAmount - booking.amountPaid,
+        paymentMethod: booking.paymentMethod,
+        paymentReference: booking.paymentReference,
       });
       res.status(201).json({ ...booking, _document: { status: doc.status, errorMessage: doc.errorMessage } });
     } catch (err) { handleZodError(res, err); }
@@ -354,6 +356,8 @@ export async function registerRoutes(
           amountPaid: updated.amountPaid,
           balance: updated.totalAmount - updated.amountPaid,
           paymentAmount: paymentDelta,
+          paymentMethod: updated.paymentMethod,
+          paymentReference: updated.paymentReference,
         });
         docResult = { status: doc.status, errorMessage: doc.errorMessage };
       }
@@ -412,6 +416,8 @@ export async function registerRoutes(
         totalAmount: booking.totalAmount,
         amountPaid: booking.amountPaid,
         balance: booking.totalAmount - booking.amountPaid,
+        paymentMethod: booking.paymentMethod,
+        paymentReference: booking.paymentReference,
       });
       res.status(201).json({ ...booking, _document: { status: doc.status, errorMessage: doc.errorMessage } });
     } catch (err) { handleZodError(res, err); }
@@ -440,6 +446,8 @@ export async function registerRoutes(
           amountPaid: updated.amountPaid,
           balance: updated.totalAmount - updated.amountPaid,
           paymentAmount: paymentDelta,
+          paymentMethod: updated.paymentMethod,
+          paymentReference: updated.paymentReference,
         });
         docResult = { status: doc.status, errorMessage: doc.errorMessage };
       }
@@ -492,7 +500,7 @@ export async function registerRoutes(
     try {
       const body = req.body as {
         guestName?: string; guestPhone?: string; guestEmail?: string;
-        amountPaid?: number; notes?: string;
+        amountPaid?: number; notes?: string; paymentMethod?: string; paymentReference?: string;
         legs?: { showId: number; seats: { row: string; number: number }[] }[];
       };
       const guestName = (body.guestName ?? "").trim();
@@ -557,6 +565,8 @@ export async function registerRoutes(
             guestEmail: body.guestEmail || null,
             ticketPrice: show.ticketPrice,
             amountPaid: pay,
+            paymentMethod: body.paymentMethod || null,
+            paymentReference: body.paymentReference || null,
             status: "booked",
             bookingRef,
             notes: body.notes || null,
@@ -584,11 +594,16 @@ export async function registerRoutes(
         totalAmount,
         amountPaid,
         balance: totalAmount - amountPaid,
+        paymentMethod: body.paymentMethod || null,
+        paymentReference: body.paymentReference || null,
       });
 
       let smsResult: { status: "sent" | "skipped"; errorMessage?: string } | null = null;
       if (amountPaid > 0 && body.guestPhone) {
-        const message = `Hi ${guestName}, your Movie Room booking at The Chekata is confirmed:\n${smsLegLines.join("\n")}\nTotal paid: KES ${amountPaid.toLocaleString()}. Enjoy the show!`;
+        const paymentDetailLine = (body.paymentMethod || body.paymentReference)
+          ? `\nPayment: ${[body.paymentMethod, body.paymentReference].filter(Boolean).join(" / ")}`
+          : "";
+        const message = `Hi ${guestName}, your Movie Room booking at The Chekata is confirmed:\n${smsLegLines.join("\n")}\nTotal paid: KES ${amountPaid.toLocaleString()}.${paymentDetailLine}\nEnjoy the show!`;
         const sms = await sendSms({ settings: await storage.getSettings(), to: body.guestPhone, message });
         smsResult = sms.ok ? { status: "sent" } : { status: "skipped", errorMessage: sms.error };
       }
@@ -634,11 +649,16 @@ export async function registerRoutes(
           amountPaid: updated.amountPaid,
           balance: updated.ticketPrice - updated.amountPaid,
           paymentAmount: paymentDelta,
+          paymentMethod: updated.paymentMethod,
+          paymentReference: updated.paymentReference,
         });
         docResult = { status: doc.status, errorMessage: doc.errorMessage };
         if (updated.guestPhone) {
           const balance = updated.ticketPrice - updated.amountPaid;
-          const message = `Hi ${updated.guestName}, payment received for your Movie Room booking at The Chekata: ${show?.name ?? "Movie Room"} \u2014 Seat ${updated.seatRow}${updated.seatNumber}. Paid KES ${paymentDelta.toLocaleString()}${balance > 0 ? `, balance KES ${balance.toLocaleString()}` : ""}. Enjoy the show!`;
+          const paymentDetailLine = (updated.paymentMethod || updated.paymentReference)
+            ? ` Payment: ${[updated.paymentMethod, updated.paymentReference].filter(Boolean).join(" / ")}.`
+            : "";
+          const message = `Hi ${updated.guestName}, payment received for your Movie Room booking at The Chekata: ${show?.name ?? "Movie Room"} \u2014 Seat ${updated.seatRow}${updated.seatNumber}. Paid KES ${paymentDelta.toLocaleString()}${balance > 0 ? `, balance KES ${balance.toLocaleString()}` : ""}.${paymentDetailLine} Enjoy the show!`;
           await sendSms({ settings: await storage.getSettings(), to: updated.guestPhone, message });
         }
       }
@@ -731,6 +751,7 @@ export async function registerRoutes(
           balance: 0,
           paymentAmount: updated.totalAmount,
           paymentMethod: updated.paymentMethod,
+          paymentReference: updated.paymentReference,
         });
         docResult = { status: doc.status, errorMessage: doc.errorMessage, documentId: doc.id };
       }

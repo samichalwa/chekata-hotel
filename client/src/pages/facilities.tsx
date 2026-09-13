@@ -41,6 +41,8 @@ const bookingFormSchema = z.object({
   endTime: z.string().optional().nullable(),
   rate: z.coerce.number().nonnegative(),
   amountPaid: z.coerce.number().nonnegative().default(0),
+  paymentMethod: z.string().optional().nullable(),
+  paymentReference: z.string().optional().nullable(),
   status: z.string().min(1),
   notes: z.string().optional().nullable(),
 });
@@ -147,8 +149,8 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
   const form = useForm<z.infer<typeof bookingFormSchema>>({
     resolver: zodResolver(bookingFormSchema),
     defaultValues: booking
-      ? { facilityId: booking.facilityId, clientName: booking.clientName, clientPhone: booking.clientPhone ?? "", clientEmail: booking.clientEmail ?? "", eventDate: booking.eventDate, startTime: booking.startTime ?? "", endTime: booking.endTime ?? "", rate: booking.rate, amountPaid: booking.amountPaid, status: booking.status, notes: booking.notes ?? "" }
-      : { facilityId: facilities[0]?.id ?? 0, clientName: "", clientPhone: "", clientEmail: "", eventDate: "", startTime: "", endTime: "", rate: facilities[0]?.rate ?? 0, amountPaid: 0, status: "confirmed", notes: "" },
+      ? { facilityId: booking.facilityId, clientName: booking.clientName, clientPhone: booking.clientPhone ?? "", clientEmail: booking.clientEmail ?? "", eventDate: booking.eventDate, startTime: booking.startTime ?? "", endTime: booking.endTime ?? "", rate: booking.rate, amountPaid: booking.amountPaid, paymentMethod: booking.paymentMethod ?? "", paymentReference: booking.paymentReference ?? "", status: booking.status, notes: booking.notes ?? "" }
+      : { facilityId: facilities[0]?.id ?? 0, clientName: "", clientPhone: "", clientEmail: "", eventDate: "", startTime: "", endTime: "", rate: facilities[0]?.rate ?? 0, amountPaid: 0, paymentMethod: "", paymentReference: "", status: "confirmed", notes: "" },
   });
 
   const facilityId = form.watch("facilityId");
@@ -160,6 +162,9 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
   const clientName = form.watch("clientName");
   const clientPhone = form.watch("clientPhone");
   const status = form.watch("status");
+  const amountPaidWatch = form.watch("amountPaid");
+  const paymentMethodWatch = form.watch("paymentMethod");
+  const paymentReferenceWatch = form.watch("paymentReference");
 
   const mutation = useMutation({
     mutationFn: async (values: z.infer<typeof bookingFormSchema>) => {
@@ -280,6 +285,30 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
                 </FormItem>
               )} />
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <FormField control={form.control} name="paymentMethod" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Payment method</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                    <FormControl><SelectTrigger data-testid="select-facility-payment-method"><SelectValue placeholder="Select method" /></SelectTrigger></FormControl>
+                    <SelectContent>
+                      <SelectItem value="cash">Cash</SelectItem>
+                      <SelectItem value="mpesa">M-Pesa</SelectItem>
+                      <SelectItem value="card">Card</SelectItem>
+                      <SelectItem value="bank_transfer">Bank transfer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="paymentReference" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Payment reference (optional)</FormLabel>
+                  <FormControl><Input placeholder="M-Pesa code, slip #, etc." {...field} value={field.value ?? ""} data-testid="input-facility-payment-reference" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            </div>
             <div className="rounded-md bg-muted p-3 text-sm flex items-center justify-between">
               <span className="text-muted-foreground">Estimated total</span>
               <span className="font-semibold tabular-nums">{formatKES(total)}</span>
@@ -311,7 +340,10 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
                 variant="outline"
                 disabled={!buildWhatsAppLink(clientPhone, "x")}
                 onClick={() => {
-                  const message = `Hi ${clientName || "there"}, this confirms your booking for ${facility?.name || "the facility"} at The Chekata. Total: ${formatKES(total)}${status === "completed" ? " — Paid in full." : " — Balance may be due."} We look forward to hosting you.`;
+                  const paymentDetail = amountPaidWatch > 0 && (paymentMethodWatch || paymentReferenceWatch)
+                    ? ` Payment: ${[paymentMethodWatch, paymentReferenceWatch].filter(Boolean).join(" / ")}.`
+                    : "";
+                  const message = `Hi ${clientName || "there"}, this confirms your booking for ${facility?.name || "the facility"} at The Chekata. Total: ${formatKES(total)}${status === "completed" ? " — Paid in full." : " — Balance may be due."}${paymentDetail} We look forward to hosting you.`;
                   const link = buildWhatsAppLink(clientPhone, message);
                   if (link) window.open(link, "_blank");
                 }}

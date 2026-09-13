@@ -32,6 +32,7 @@ export interface DocPayload {
   balance: number;
   paymentAmount?: number; // for receipts: the specific payment this receipt covers
   paymentMethod?: string | null;
+  paymentReference?: string | null;
   notes?: string;
   taxBreakdown?: { preTaxBase: number; totalTax: number; lines: { name: string; ratePercent: number; amount: number }[] };
 }
@@ -159,10 +160,14 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
       doc.font("Helvetica").fillColor(muted).text("This payment", totalsX, y, { width: 90 });
       doc.fillColor(accent).font("Helvetica-Bold").text(fmtKES(payload.paymentAmount), totalsX + 90, y, { width: 105, align: "right" });
       y += 16;
-      if (payload.paymentMethod) {
-        doc.font("Helvetica").fillColor(muted).fontSize(9).text(`Method: ${payload.paymentMethod}`, totalsX, y, { width: 195, align: "right" });
-        y += 14;
-      }
+    }
+    if (payload.paymentMethod) {
+      doc.font("Helvetica").fillColor(muted).fontSize(9).text(`Method: ${payload.paymentMethod}`, totalsX, y, { width: 195, align: "right" });
+      y += 14;
+    }
+    if (payload.paymentReference) {
+      doc.font("Helvetica").fillColor(muted).fontSize(9).text(`Reference: ${payload.paymentReference}`, totalsX, y, { width: 195, align: "right" });
+      y += 14;
     }
 
     doc.moveTo(totalsX, y).lineTo(545, y).strokeColor("#d9d0c4").lineWidth(1).stroke();

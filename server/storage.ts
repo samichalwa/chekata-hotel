@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS accommodation_bookings (
   rate REAL NOT NULL,
   total_amount REAL NOT NULL,
   amount_paid REAL NOT NULL DEFAULT 0,
+  payment_method TEXT,
+  payment_reference TEXT,
   status TEXT NOT NULL DEFAULT 'confirmed',
   notes TEXT,
   created_at BIGINT NOT NULL
@@ -88,6 +90,8 @@ CREATE TABLE IF NOT EXISTS facility_bookings (
   rate REAL NOT NULL,
   total_amount REAL NOT NULL,
   amount_paid REAL NOT NULL DEFAULT 0,
+  payment_method TEXT,
+  payment_reference TEXT,
   status TEXT NOT NULL DEFAULT 'confirmed',
   notes TEXT,
   created_at BIGINT NOT NULL
@@ -113,6 +117,8 @@ CREATE TABLE IF NOT EXISTS movie_seat_bookings (
   guest_email TEXT,
   ticket_price REAL NOT NULL,
   amount_paid REAL NOT NULL DEFAULT 0,
+  payment_method TEXT,
+  payment_reference TEXT,
   status TEXT NOT NULL DEFAULT 'booked',
   booking_ref TEXT NOT NULL,
   notes TEXT,
@@ -135,6 +141,7 @@ CREATE TABLE IF NOT EXISTS orders (
   order_date TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open',
   payment_method TEXT,
+  payment_reference TEXT,
   total_amount REAL NOT NULL DEFAULT 0,
   notes TEXT,
   created_at BIGINT NOT NULL
@@ -281,6 +288,13 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   await ensureColumn("settings", "sms_api_key", "TEXT");
   await ensureColumn("settings", "sms_sender_id", "TEXT");
   await ensureColumn("settings", "sms_enabled", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("accommodation_bookings", "payment_method", "TEXT");
+  await ensureColumn("accommodation_bookings", "payment_reference", "TEXT");
+  await ensureColumn("facility_bookings", "payment_method", "TEXT");
+  await ensureColumn("facility_bookings", "payment_reference", "TEXT");
+  await ensureColumn("movie_seat_bookings", "payment_method", "TEXT");
+  await ensureColumn("movie_seat_bookings", "payment_reference", "TEXT");
+  await ensureColumn("orders", "payment_reference", "TEXT");
 
   // ---- Seed a default settings row (idempotent) ----
   async function seedSettings() {

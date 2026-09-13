@@ -39,6 +39,8 @@ const bookingFormSchema = z.object({
   checkOut: z.string().min(1, "Check-out date is required"),
   rate: z.coerce.number().nonnegative(),
   amountPaid: z.coerce.number().nonnegative().default(0),
+  paymentMethod: z.string().optional().nullable(),
+  paymentReference: z.string().optional().nullable(),
   status: z.string().min(1),
   notes: z.string().optional().nullable(),
 });
@@ -151,11 +153,12 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
           roomId: booking.roomId, guestName: booking.guestName, guestPhone: booking.guestPhone ?? "",
           guestEmail: booking.guestEmail ?? "",
           checkIn: booking.checkIn, checkOut: booking.checkOut, rate: booking.rate,
-          amountPaid: booking.amountPaid, status: booking.status, notes: booking.notes ?? "",
+          amountPaid: booking.amountPaid, paymentMethod: booking.paymentMethod ?? "", paymentReference: booking.paymentReference ?? "",
+          status: booking.status, notes: booking.notes ?? "",
         }
       : {
           roomId: rooms[0]?.id ?? 0, guestName: "", guestPhone: "", guestEmail: "", checkIn: "", checkOut: "",
-          rate: rooms[0]?.rate ?? 0, amountPaid: 0, status: "confirmed", notes: "",
+          rate: rooms[0]?.rate ?? 0, amountPaid: 0, paymentMethod: "", paymentReference: "", status: "confirmed", notes: "",
         },
   });
 
@@ -168,6 +171,9 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
   const guestName = form.watch("guestName");
   const guestPhone = form.watch("guestPhone");
   const status = form.watch("status");
+  const amountPaidWatch = form.watch("amountPaid");
+  const paymentMethodWatch = form.watch("paymentMethod");
+  const paymentReferenceWatch = form.watch("paymentReference");
   const selectedRoom = rooms.find((r) => r.id === selectedRoomId);
 
   const mutation = useMutation({
@@ -281,6 +287,30 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                 </FormItem>
               )} />
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <FormField control={form.control} name="paymentMethod" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Payment method</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                    <FormControl><SelectTrigger data-testid="select-payment-method"><SelectValue placeholder="Select method" /></SelectTrigger></FormControl>
+                    <SelectContent>
+                      <SelectItem value="cash">Cash</SelectItem>
+                      <SelectItem value="mpesa">M-Pesa</SelectItem>
+                      <SelectItem value="card">Card</SelectItem>
+                      <SelectItem value="bank_transfer">Bank transfer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="paymentReference" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Payment reference (optional)</FormLabel>
+                  <FormControl><Input placeholder="M-Pesa code, slip #, etc." {...field} value={field.value ?? ""} data-testid="input-payment-reference" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            </div>
             <div className="rounded-md bg-muted p-3 text-sm flex items-center justify-between">
               <span className="text-muted-foreground">{nights} night{nights === 1 ? "" : "s"}</span>
               <span className="font-semibold tabular-nums">{formatKES(total)}</span>
@@ -313,7 +343,10 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                 variant="outline"
                 disabled={!buildWhatsAppLink(guestPhone, "x")}
                 onClick={() => {
-                  const message = `Hi ${guestName || "there"}, this confirms your stay at The Chekata in ${selectedRoom?.name || "your room"}${nights ? ` for ${nights} night${nights === 1 ? "" : "s"}` : ""}. Total: ${formatKES(total)}${status === "checked_out" ? " — Paid in full." : " — Balance may be due."} We look forward to hosting you.`;
+                  const paymentDetail = amountPaidWatch > 0 && (paymentMethodWatch || paymentReferenceWatch)
+                    ? ` Payment: ${[paymentMethodWatch, paymentReferenceWatch].filter(Boolean).join(" / ")}.`
+                    : "";
+                  const message = `Hi ${guestName || "there"}, this confirms your stay at The Chekata in ${selectedRoom?.name || "your room"}${nights ? ` for ${nights} night${nights === 1 ? "" : "s"}` : ""}. Total: ${formatKES(total)}${status === "checked_out" ? " — Paid in full." : " — Balance may be due."}${paymentDetail} We look forward to hosting you.`;
                   const link = buildWhatsAppLink(guestPhone, message);
                   if (link) window.open(link, "_blank");
                 }}

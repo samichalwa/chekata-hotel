@@ -25,6 +25,7 @@ export interface IssueDocumentInput {
   balance: number;
   paymentAmount?: number;
   paymentMethod?: string | null;
+  paymentReference?: string | null;
   notes?: string;
 }
 
@@ -94,6 +95,7 @@ export async function issueDocument(storage: IStorage, input: IssueDocumentInput
       balance: input.balance,
       paymentAmount: input.paymentAmount,
       paymentMethod: input.paymentMethod,
+      paymentReference: input.paymentReference,
       notes: input.notes,
       taxBreakdown,
     });
@@ -120,6 +122,7 @@ export async function issueDocument(storage: IStorage, input: IssueDocumentInput
       <p>Please find attached your ${title.toLowerCase()} from ${escapeHtml(settings.hotelName || "The Chekata")}.</p>
       <p><strong>Total:</strong> KES ${Math.round(input.totalAmount).toLocaleString("en-KE")}<br/>
       <strong>Balance:</strong> KES ${Math.round(Math.max(0, input.balance)).toLocaleString("en-KE")}</p>
+      ${(input.paymentMethod || input.paymentReference) ? `<p>${input.paymentMethod ? `<strong>Payment method:</strong> ${escapeHtml(input.paymentMethod)}<br/>` : ""}${input.paymentReference ? `<strong>Payment reference:</strong> ${escapeHtml(input.paymentReference)}` : ""}</p>` : ""}
       <p>Thank you for choosing us.</p>
       <p>${escapeHtml(settings.hotelName || "The Chekata")}</p>
     </div>`;

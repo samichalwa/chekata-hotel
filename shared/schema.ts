@@ -28,6 +28,8 @@ export const accommodationBookings = pgTable("accommodation_bookings", {
   rate: real("rate").notNull(),
   totalAmount: real("total_amount").notNull(),
   amountPaid: real("amount_paid").notNull().default(0),
+  paymentMethod: text("payment_method"), // cash | mpesa | card | bank_transfer
+  paymentReference: text("payment_reference"), // M-Pesa code, card slip #, bank ref, etc.
   status: text("status").notNull().default("confirmed"), // confirmed | checked_in | checked_out | cancelled
   notes: text("notes"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
@@ -65,6 +67,8 @@ export const facilityBookings = pgTable("facility_bookings", {
   rate: real("rate").notNull(),
   totalAmount: real("total_amount").notNull(),
   amountPaid: real("amount_paid").notNull().default(0),
+  paymentMethod: text("payment_method"), // cash | mpesa | card | bank_transfer
+  paymentReference: text("payment_reference"), // M-Pesa code, card slip #, bank ref, etc.
   status: text("status").notNull().default("confirmed"), // confirmed | completed | cancelled
   notes: text("notes"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
@@ -107,6 +111,8 @@ export const movieSeatBookings = pgTable("movie_seat_bookings", {
   guestEmail: text("guest_email"),
   ticketPrice: real("ticket_price").notNull(), // snapshot of the show's price at booking time
   amountPaid: real("amount_paid").notNull().default(0),
+  paymentMethod: text("payment_method"), // cash | mpesa | card | bank_transfer
+  paymentReference: text("payment_reference"), // M-Pesa code, card slip #, bank ref, etc.
   status: text("status").notNull().default("booked"), // booked | cancelled
   bookingRef: text("booking_ref").notNull(), // groups seats/shows purchased together into one transaction/receipt
   notes: text("notes"),
@@ -141,6 +147,7 @@ export const orders = pgTable("orders", {
   orderDate: text("order_date").notNull(), // YYYY-MM-DD
   status: text("status").notNull().default("open"), // open | paid | cancelled
   paymentMethod: text("payment_method"), // cash | mpesa | card | room_charge
+  paymentReference: text("payment_reference"), // M-Pesa code, card slip #, bank ref, etc.
   totalAmount: real("total_amount").notNull().default(0),
   notes: text("notes"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),

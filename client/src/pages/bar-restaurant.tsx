@@ -185,6 +185,7 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
   const [customerEmail, setCustomerEmail] = useState(order.customerEmail ?? "");
   const [customerPhone, setCustomerPhone] = useState(order.customerPhone ?? "");
   const [closePaymentMethod, setClosePaymentMethod] = useState(order.paymentMethod ?? "");
+  const [closePaymentReference, setClosePaymentReference] = useState(order.paymentReference ?? "");
   const isOpen = order.status === "open";
 
   const updateOrder = useMutation({
@@ -209,7 +210,7 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
 
   const closeOrder = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("PATCH", `/api/orders/${order.id}`, { status: "paid", paymentMethod: closePaymentMethod });
+      const res = await apiRequest("PATCH", `/api/orders/${order.id}`, { status: "paid", paymentMethod: closePaymentMethod, paymentReference: closePaymentReference || null });
       return res.json();
     },
     onSuccess: (data: any) => {
@@ -329,7 +330,10 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
                 variant="outline"
                 disabled={!buildWhatsAppLink(customerPhone, "x")}
                 onClick={() => {
-                  const message = `Hi ${customerName || "there"}, thank you for your ${titleCase(order.outlet)} order at The Chekata${order.reference ? ` (${order.reference})` : ""}. Total: ${formatKES(order.totalAmount)}${order.status === "paid" ? " — Paid in full." : " — Balance due."} We appreciate your visit!`;
+                  const paymentDetail = order.status === "paid" && (order.paymentMethod || order.paymentReference)
+                    ? ` Payment: ${[order.paymentMethod, order.paymentReference].filter(Boolean).join(" / ")}.`
+                    : "";
+                  const message = `Hi ${customerName || "there"}, thank you for your ${titleCase(order.outlet)} order at The Chekata${order.reference ? ` (${order.reference})` : ""}. Total: ${formatKES(order.totalAmount)}${order.status === "paid" ? " — Paid in full." : " — Balance due."}${paymentDetail} We appreciate your visit!`;
                   const link = buildWhatsAppLink(customerPhone, message);
                   if (link) window.open(link, "_blank");
                 }}
@@ -352,6 +356,13 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
                   <SelectItem value="room_charge">Room charge</SelectItem>
                 </SelectContent>
               </Select>
+              <label className="text-xs font-medium text-muted-foreground">Payment reference (optional)</label>
+              <Input
+                placeholder="M-Pesa code, slip #, etc."
+                value={closePaymentReference}
+                onChange={(e) => setClosePaymentReference(e.target.value)}
+                data-testid="input-order-payment-reference"
+              />
               <Button
                 className="w-full"
                 disabled={!closePaymentMethod || items.length === 0 || closeOrder.isPending}
