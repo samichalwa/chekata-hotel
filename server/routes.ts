@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import {
   insertRoomSchema, insertAccommodationBookingSchema,
   insertFacilitySchema, insertFacilityBookingSchema,
+  insertMovieShowSchema, insertMovieSeatBookingSchema, MOVIE_SEAT_ROWS, MOVIE_SEAT_NUMBERS,
   insertMenuItemSchema, insertOrderSchema, insertOrderItemSchema,
   insertStaffSchema, insertExpenseSchema, insertSettingsSchema,
   insertUserSchema, insertTaxSchema, MODULE_KEYS, type ModuleKey,
@@ -12,8 +13,9 @@ import {
 import { issueDocument } from "./documents";
 import { buildDocumentPdf } from "./pdf";
 import { sendTransactionalEmail } from "./email";
+import { sendSms } from "./sms";
 import { buildReportsWorkbook, REPORT_SHEET_LABELS, type ReportSheetKey } from "./reports-excel";
-import { requireAuth, requireModule, requireAdmin, hashPassword, verifyPassword, toSafeUser, parsePermissions, resolveUserIdFromHeaderToken } from "./auth";
+import { requireAuth, requireModule, requireAdmin, requireCanEditMovieBookings, hashPassword, verifyPassword, toSafeUser, parsePermissions, resolveUserIdFromHeaderToken } from "./auth";
 
 function handleZodError(res: any, err: any) {
   res.status(400).json({ error: err?.message ?? "Invalid request" });
@@ -97,8 +99,8 @@ export async function registerRoutes(
   });
   app.post("/api/users", requireAdmin, async (req, res) => {
     try {
-      const { username, password, fullName, isAdmin, permissions, active } = req.body as {
-        username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean;
+      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings } = req.body as {
+        username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean; canEditMovieBookings?: boolean;
       };
       if (!username || !password || !fullName) return res.status(400).json({ error: "Username, password and full name are required." });
       if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
@@ -110,6 +112,7 @@ export async function registerRoutes(
         fullName: fullName.trim(),
         isAdmin: isAdmin ? 1 : 0,
         permissions: JSON.stringify(validPerms),
+        canEditMovieBookings: canEditMovieBookings ? 1 : 0,
         active: active === false ? 0 : 1,
         createdAt: Date.now(),
       });
@@ -124,8 +127,8 @@ export async function registerRoutes(
       const id = Number(req.params.id);
       const target = await storage.getUser(id);
       if (!target) return res.status(404).json({ error: "User not found" });
-      const { username, password, fullName, isAdmin, permissions, active } = req.body as {
-        username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean;
+      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings } = req.body as {
+        username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean; canEditMovieBookings?: boolean;
       };
       const currentUserId = (req as any).user.id;
       if (currentUserId === id && isAdmin === false) {
@@ -140,6 +143,7 @@ export async function registerRoutes(
       if (typeof isAdmin === "boolean") patch.isAdmin = isAdmin ? 1 : 0;
       if (Array.isArray(permissions)) patch.permissions = JSON.stringify(permissions.filter((p) => (MODULE_KEYS as readonly string[]).includes(p)));
       if (typeof active === "boolean") patch.active = active ? 1 : 0;
+      if (typeof canEditMovieBookings === "boolean") patch.canEditMovieBookings = canEditMovieBookings ? 1 : 0;
       if (password) {
         if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
         patch.passwordHash = await hashPassword(password);
@@ -356,6 +360,206 @@ export async function registerRoutes(
     res.status(204).end();
   });
 
+  // ---------- Movie Room: Shows ----------
+  app.get("/api/movie-shows", requireModule("movie-room"), async (_req, res) => {
+    res.json(await storage.listMovieShows());
+  });
+  app.post("/api/movie-shows", requireModule("movie-room"), async (req, res) => {
+    try {
+      const data = insertMovieShowSchema.parse({ ...req.body, createdAt: Date.now() });
+      res.status(201).json(await storage.createMovieShow(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/movie-shows/:id", requireModule("movie-room"), async (req, res) => {
+    try {
+      const data = insertMovieShowSchema.partial().parse(req.body);
+      const updated = await storage.updateMovieShow(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Show not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/movie-shows/:id", requireModule("movie-room"), async (req, res) => {
+    const showId = Number(req.params.id);
+    const linkedSeats = (await storage.listMovieSeatBookings()).filter((b) => b.showId === showId && b.status !== "cancelled");
+    if (linkedSeats.length > 0) {
+      return res.status(400).json({ error: "This show has active seat bookings. Cancel those bookings first." });
+    }
+    await storage.deleteMovieShow(showId);
+    res.status(204).end();
+  });
+
+  // ---------- Movie Room: Seat bookings ----------
+  app.get("/api/movie-seat-bookings", requireModule("movie-room"), async (_req, res) => {
+    res.json(await storage.listMovieSeatBookings());
+  });
+
+  // Books one or more seats across one or two consecutive shows in a single
+  // transaction/receipt ("booking_ref" groups the rows). Body:
+  // { guestName, guestPhone?, guestEmail?, amountPaid, notes?,
+  //   legs: [{ showId, seats: [{ row: "B", number: 4 }, ...] }, ...] }
+  app.post("/api/movie-seat-bookings", requireModule("movie-room"), async (req, res) => {
+    try {
+      const body = req.body as {
+        guestName?: string; guestPhone?: string; guestEmail?: string;
+        amountPaid?: number; notes?: string;
+        legs?: { showId: number; seats: { row: string; number: number }[] }[];
+      };
+      const guestName = (body.guestName ?? "").trim();
+      if (!guestName) return res.status(400).json({ error: "Guest name is required." });
+      const legs = Array.isArray(body.legs) ? body.legs : [];
+      if (legs.length === 0) return res.status(400).json({ error: "Select at least one seat." });
+      if (legs.length > 2) return res.status(400).json({ error: "You can book at most two shows in one transaction." });
+
+      // Validate legs, shows, and seat coordinates up front.
+      const shows: Record<number, Awaited<ReturnType<typeof storage.getMovieShow>>> = {};
+      for (const leg of legs) {
+        const show = await storage.getMovieShow(leg.showId);
+        if (!show) return res.status(400).json({ error: `Show #${leg.showId} was not found.` });
+        if (show.status === "cancelled") return res.status(400).json({ error: `"${show.name}" has been cancelled.` });
+        shows[leg.showId] = show;
+        if (!Array.isArray(leg.seats) || leg.seats.length === 0) {
+          return res.status(400).json({ error: `Select at least one seat for "${show.name}".` });
+        }
+        for (const seat of leg.seats) {
+          if (!(MOVIE_SEAT_ROWS as readonly string[]).includes(seat.row)) {
+            return res.status(400).json({ error: `Invalid seat row "${seat.row}".` });
+          }
+          if (!(MOVIE_SEAT_NUMBERS as readonly number[]).includes(seat.number)) {
+            return res.status(400).json({ error: `Invalid seat number "${seat.number}".` });
+          }
+        }
+      }
+
+      // Check for seat conflicts against existing active bookings.
+      const existing = await storage.listMovieSeatBookings();
+      for (const leg of legs) {
+        for (const seat of leg.seats) {
+          const conflict = existing.find(
+            (b) => b.showId === leg.showId && b.status !== "cancelled" && b.seatRow === seat.row && b.seatNumber === seat.number,
+          );
+          if (conflict) {
+            return res.status(409).json({ error: `Seat ${seat.row}${seat.number} is already booked for "${shows[leg.showId]!.name}".` });
+          }
+        }
+      }
+
+      const bookingRef = `MOV-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+      const createdAt = Date.now();
+      let remainingPaid = Math.max(0, Number(body.amountPaid) || 0);
+      const created: Awaited<ReturnType<typeof storage.createMovieSeatBooking>>[] = [];
+      const lineItems: { label: string; detail?: string; amount: number }[] = [];
+      const smsLegLines: string[] = [];
+
+      for (const leg of legs) {
+        const show = shows[leg.showId]!;
+        const seatCodes = leg.seats.map((s) => `${s.row}${s.number}`).sort();
+        smsLegLines.push(`${show.name} \u2014 ${show.showDate} ${show.startTime}${show.endTime ? `-${show.endTime}` : ""} \u2014 Seat(s): ${seatCodes.join(", ")}`);
+        for (const seat of leg.seats) {
+          const pay = Math.min(remainingPaid, show.ticketPrice);
+          remainingPaid -= pay;
+          const row = await storage.createMovieSeatBooking({
+            showId: leg.showId,
+            seatRow: seat.row,
+            seatNumber: seat.number,
+            guestName,
+            guestPhone: body.guestPhone || null,
+            guestEmail: body.guestEmail || null,
+            ticketPrice: show.ticketPrice,
+            amountPaid: pay,
+            status: "booked",
+            bookingRef,
+            notes: body.notes || null,
+            createdAt,
+          });
+          created.push(row);
+          lineItems.push({
+            label: `${show.name} \u2014 Seat ${seat.row}${seat.number}`,
+            detail: `${show.showDate} ${show.startTime}${show.endTime ? `-${show.endTime}` : ""}`,
+            amount: show.ticketPrice,
+          });
+        }
+      }
+
+      const totalAmount = created.reduce((sum, r) => sum + r.ticketPrice, 0);
+      const amountPaid = created.reduce((sum, r) => sum + r.amountPaid, 0);
+      const doc = await issueDocument(storage, {
+        docType: "invoice",
+        category: "movie",
+        sourceId: created[0]!.id,
+        recipientName: guestName,
+        recipientEmail: body.guestEmail || null,
+        issueDate: formatDate(),
+        lineItems,
+        totalAmount,
+        amountPaid,
+        balance: totalAmount - amountPaid,
+      });
+
+      let smsResult: { status: "sent" | "skipped"; errorMessage?: string } | null = null;
+      if (amountPaid > 0 && body.guestPhone) {
+        const message = `Hi ${guestName}, your Movie Room booking at The Chekata is confirmed:\n${smsLegLines.join("\n")}\nTotal paid: KES ${amountPaid.toLocaleString()}. Enjoy the show!`;
+        const sms = await sendSms({ settings: await storage.getSettings(), to: body.guestPhone, message });
+        smsResult = sms.ok ? { status: "sent" } : { status: "skipped", errorMessage: sms.error };
+      }
+
+      res.status(201).json({ bookingRef, bookings: created, _document: { status: doc.status, errorMessage: doc.errorMessage }, _sms: smsResult });
+    } catch (err) { handleZodError(res, err); }
+  });
+
+  app.patch("/api/movie-seat-bookings/:id", requireModule("movie-room"), requireCanEditMovieBookings, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const before = await storage.getMovieSeatBooking(id);
+      if (!before) return res.status(404).json({ error: "Booking not found" });
+      const data = insertMovieSeatBookingSchema.partial().parse(req.body);
+      if (data.seatRow || typeof data.seatNumber === "number") {
+        const newRow = data.seatRow ?? before.seatRow;
+        const newNumber = data.seatNumber ?? before.seatNumber;
+        const showId = data.showId ?? before.showId;
+        const conflict = (await storage.listMovieSeatBookings()).find(
+          (b) => b.id !== id && b.showId === showId && b.status !== "cancelled" && b.seatRow === newRow && b.seatNumber === newNumber,
+        );
+        if (conflict) return res.status(409).json({ error: `Seat ${newRow}${newNumber} is already booked for that show.` });
+      }
+      const updated = await storage.updateMovieSeatBooking(id, data);
+      if (!updated) return res.status(404).json({ error: "Booking not found" });
+      let docResult: any = null;
+      const paymentDelta = (updated.amountPaid ?? 0) - (before.amountPaid ?? 0);
+      if (paymentDelta > 0) {
+        const show = await storage.getMovieShow(updated.showId);
+        const doc = await issueDocument(storage, {
+          docType: "receipt",
+          category: "movie",
+          sourceId: updated.id,
+          recipientName: updated.guestName,
+          recipientEmail: updated.guestEmail,
+          issueDate: formatDate(),
+          lineItems: [{
+            label: `${show?.name ?? "Movie Room"} \u2014 Seat ${updated.seatRow}${updated.seatNumber} \u2014 payment received`,
+            detail: show ? `${show.showDate} ${show.startTime}${show.endTime ? `-${show.endTime}` : ""}` : undefined,
+            amount: paymentDelta,
+          }],
+          totalAmount: updated.ticketPrice,
+          amountPaid: updated.amountPaid,
+          balance: updated.ticketPrice - updated.amountPaid,
+          paymentAmount: paymentDelta,
+        });
+        docResult = { status: doc.status, errorMessage: doc.errorMessage };
+        if (updated.guestPhone) {
+          const balance = updated.ticketPrice - updated.amountPaid;
+          const message = `Hi ${updated.guestName}, payment received for your Movie Room booking at The Chekata: ${show?.name ?? "Movie Room"} \u2014 Seat ${updated.seatRow}${updated.seatNumber}. Paid KES ${paymentDelta.toLocaleString()}${balance > 0 ? `, balance KES ${balance.toLocaleString()}` : ""}. Enjoy the show!`;
+          await sendSms({ settings: await storage.getSettings(), to: updated.guestPhone, message });
+        }
+      }
+      res.json({ ...updated, _document: docResult });
+    } catch (err) { handleZodError(res, err); }
+  });
+
+  app.delete("/api/movie-seat-bookings/:id", requireModule("movie-room"), requireCanEditMovieBookings, async (req, res) => {
+    await storage.deleteMovieSeatBooking(Number(req.params.id));
+    res.status(204).end();
+  });
+
   // ---------- Menu Items ----------
   app.get("/api/menu-items", requireModule("bar-restaurant"), async (_req, res) => {
     res.json(await storage.listMenuItems());
@@ -509,6 +713,20 @@ export async function registerRoutes(
       if (!result.ok) return res.status(400).json({ error: result.error });
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to send test email" }); }
+  });
+  app.post("/api/settings/test-sms", requireModule("settings"), async (req, res) => {
+    try {
+      const { phone } = req.body as { phone?: string };
+      if (!phone) return res.status(400).json({ error: "Provide a phone number to test." });
+      const settings = await storage.getSettings();
+      const result = await sendSms({
+        settings,
+        to: phone,
+        message: `This is a test SMS from your ${settings.hotelName || "The Chekata"} management system. If you received this, your SMS settings are working.`,
+      });
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to send test SMS" }); }
   });
 
   // ---------- Documents (Invoices & Receipts) ----------

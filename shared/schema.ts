@@ -74,6 +74,49 @@ export const insertFacilityBookingSchema = createInsertSchema(facilityBookings).
 export type InsertFacilityBooking = z.infer<typeof insertFacilityBookingSchema>;
 export type FacilityBooking = typeof facilityBookings.$inferSelect;
 
+// ---------- Movie Room: Seat map constants ----------
+export const MOVIE_SEAT_ROWS = ["A", "B", "C", "D", "E", "F", "G"] as const;
+export const MOVIE_SEAT_NUMBERS = [1, 2, 3, 4, 5, 6, 7] as const;
+export type MovieSeatRow = typeof MOVIE_SEAT_ROWS[number];
+
+// ---------- Movie Room: Shows ----------
+export const movieShows = pgTable("movie_shows", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(), // event/movie name shown on tickets & receipts
+  showDate: text("show_date").notNull(), // YYYY-MM-DD
+  startTime: text("start_time").notNull(), // HH:MM
+  endTime: text("end_time"), // HH:MM, optional
+  ticketPrice: real("ticket_price").notNull(), // KES per seat
+  status: text("status").notNull().default("scheduled"), // scheduled | completed | cancelled
+  notes: text("notes"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+
+export const insertMovieShowSchema = createInsertSchema(movieShows).omit({ id: true });
+export type InsertMovieShow = z.infer<typeof insertMovieShowSchema>;
+export type MovieShow = typeof movieShows.$inferSelect;
+
+// ---------- Movie Room: Per-seat bookings ----------
+export const movieSeatBookings = pgTable("movie_seat_bookings", {
+  id: serial("id").primaryKey(),
+  showId: integer("show_id").notNull(),
+  seatRow: text("seat_row").notNull(), // A-G
+  seatNumber: integer("seat_number").notNull(), // 1-7
+  guestName: text("guest_name").notNull(),
+  guestPhone: text("guest_phone"),
+  guestEmail: text("guest_email"),
+  ticketPrice: real("ticket_price").notNull(), // snapshot of the show's price at booking time
+  amountPaid: real("amount_paid").notNull().default(0),
+  status: text("status").notNull().default("booked"), // booked | cancelled
+  bookingRef: text("booking_ref").notNull(), // groups seats/shows purchased together into one transaction/receipt
+  notes: text("notes"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+
+export const insertMovieSeatBookingSchema = createInsertSchema(movieSeatBookings).omit({ id: true });
+export type InsertMovieSeatBooking = z.infer<typeof insertMovieSeatBookingSchema>;
+export type MovieSeatBooking = typeof movieSeatBookings.$inferSelect;
+
 // ---------- Bar & Restaurant: Menu Items ----------
 export const menuItems = pgTable("menu_items", {
   id: serial("id").primaryKey(),
@@ -167,6 +210,11 @@ export const settings = pgTable("settings", {
   emailFromName: text("email_from_name"),
   mailgunDomain: text("mailgun_domain"), // only used when provider = mailgun
   invoicesEnabled: integer("invoices_enabled").notNull().default(1),
+  smsProvider: text("sms_provider").notNull().default(""), // '' | africastalking
+  smsUsername: text("sms_username"), // Africa's Talking username (not secret)
+  smsApiKey: text("sms_api_key"),
+  smsSenderId: text("sms_sender_id"), // optional AT short code / sender ID
+  smsEnabled: integer("sms_enabled").notNull().default(0),
 });
 
 export const insertSettingsSchema = createInsertSchema(settings).omit({ id: true });
@@ -197,6 +245,7 @@ export const MODULE_KEYS = [
   "dashboard",
   "accommodation",
   "facilities",
+  "movie-room",
   "bar-restaurant",
   "staff",
   "expenses",
@@ -210,6 +259,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   dashboard: "Dashboard",
   accommodation: "Accommodation",
   facilities: "Conference & Movie Room",
+  "movie-room": "Movie Room (Seat Booking)",
   "bar-restaurant": "Bar & Restaurant",
   staff: "Staff",
   expenses: "Expenses",
@@ -226,6 +276,7 @@ export const users = pgTable("users", {
   fullName: text("full_name").notNull(),
   isAdmin: integer("is_admin").notNull().default(0),
   permissions: text("permissions").notNull().default("[]"), // JSON array of ModuleKey
+  canEditMovieBookings: integer("can_edit_movie_bookings").notNull().default(0), // extra right: edit/cancel an already-entered movie seat booking
   active: integer("active").notNull().default(1),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });

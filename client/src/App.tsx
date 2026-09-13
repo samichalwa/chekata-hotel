@@ -13,6 +13,7 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Accommodation from "@/pages/accommodation";
 import Facilities from "@/pages/facilities";
+import MovieRoom from "@/pages/movie-room";
 import BarRestaurant from "@/pages/bar-restaurant";
 import Staff from "@/pages/staff";
 import Expenses from "@/pages/expenses";
@@ -43,6 +44,7 @@ function AppRouter() {
       <Route path="/" component={() => <Guarded moduleKey="dashboard" component={Dashboard} />} />
       <Route path="/accommodation" component={() => <Guarded moduleKey="accommodation" component={Accommodation} />} />
       <Route path="/facilities" component={() => <Guarded moduleKey="facilities" component={Facilities} />} />
+      <Route path="/movie-room" component={() => <Guarded moduleKey="movie-room" component={MovieRoom} />} />
       <Route path="/bar-restaurant" component={() => <Guarded moduleKey="bar-restaurant" component={BarRestaurant} />} />
       <Route path="/staff" component={() => <Guarded moduleKey="staff" component={Staff} />} />
       <Route path="/expenses" component={() => <Guarded moduleKey="expenses" component={Expenses} />} />

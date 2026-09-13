@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { formatKES, todayISO, titleCase, formatDate, nightsBetween } from "@/lib/format";
-import type { AccommodationBooking, Facility, FacilityBooking, Order, Staff, Expense, Room } from "@shared/schema";
+import type { AccommodationBooking, Facility, FacilityBooking, Order, Staff, Expense, Room, MovieShow, MovieSeatBooking } from "@shared/schema";
 
 function firstOfMonthISO(): string {
   const d = new Date();
@@ -51,6 +51,8 @@ export default function Reports() {
   const { data: orders = [] } = useQuery<Order[]>({ queryKey: ["/api/orders"] });
   const { data: staff = [] } = useQuery<Staff[]>({ queryKey: ["/api/staff"] });
   const { data: expenses = [] } = useQuery<Expense[]>({ queryKey: ["/api/expenses"] });
+  const { data: movieShows = [] } = useQuery<MovieShow[]>({ queryKey: ["/api/movie-shows"] });
+  const { data: movieSeatBookings = [] } = useQuery<MovieSeatBooking[]>({ queryKey: ["/api/movie-seat-bookings"] });
 
   const inRange = (d: string) => (!fromDate || d >= fromDate) && (!toDate || d <= toDate);
 
@@ -84,7 +86,13 @@ export default function Reports() {
     [orders, fromDate, toDate]
   );
 
-  const totalRevenue = accommodationRevenue + facilityRevenue + barRevenue + restaurantRevenue;
+  const movieShowById = useMemo(() => new Map(movieShows.map((s) => [s.id, s])), [movieShows]);
+  const movieRevenue = useMemo(
+    () => movieSeatBookings.filter((b) => b.status !== "cancelled" && inRange(movieShowById.get(b.showId)?.showDate ?? "")).reduce((s, b) => s + b.amountPaid, 0),
+    [movieSeatBookings, movieShowById, fromDate, toDate]
+  );
+
+  const totalRevenue = accommodationRevenue + facilityRevenue + barRevenue + restaurantRevenue + movieRevenue;
 
   const periodMonths = useMemo(() => {
     if (!fromDate || !toDate) return 1;
@@ -111,6 +119,7 @@ export default function Reports() {
   const revenueRows = [
     { label: "Accommodation", value: accommodationRevenue },
     ...Array.from(facilityRevenueByName.entries()).map(([label, value]) => ({ label, value })),
+    { label: "Movie Room", value: movieRevenue },
     { label: "Bar", value: barRevenue },
     { label: "Restaurant", value: restaurantRevenue },
   ].filter((r) => r.value > 0 || r.label === "Accommodation" || r.label === "Bar" || r.label === "Restaurant");
@@ -129,6 +138,12 @@ export default function Reports() {
   const facilityBookingsInRange = useMemo(
     () => facilityBookings.filter((b) => inRange(b.eventDate)).sort((a, b) => a.eventDate.localeCompare(b.eventDate)),
     [facilityBookings, fromDate, toDate]
+  );
+  const movieBookingsInRange = useMemo(
+    () => movieSeatBookings
+      .filter((b) => inRange(movieShowById.get(b.showId)?.showDate ?? ""))
+      .sort((a, b) => (movieShowById.get(a.showId)?.showDate ?? "").localeCompare(movieShowById.get(b.showId)?.showDate ?? "")),
+    [movieSeatBookings, movieShowById, fromDate, toDate]
   );
   const ordersInRange = useMemo(
     () => orders.filter((o) => inRange(o.orderDate)).sort((a, b) => a.orderDate.localeCompare(b.orderDate)),
@@ -314,7 +329,7 @@ export default function Reports() {
           </div>
           <Card>
             <div className="p-4 border-b border-card-border flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Conference hall & movie room bookings</h2>
+              <h2 className="text-lg font-semibold">Conference hall bookings</h2>
               <span className="text-sm text-muted-foreground">{facilityBookingsInRange.length} booking{facilityBookingsInRange.length === 1 ? "" : "s"} · {formatKES(facilityRevenue)}</span>
             </div>
             <div className="overflow-x-auto">
@@ -342,6 +357,48 @@ export default function Reports() {
                         <TableCell>{facility?.name ?? "—"}</TableCell>
                         <TableCell>{formatDate(b.eventDate)}</TableCell>
                         <TableCell className="text-right tabular-nums">{formatKES(b.totalAmount)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatKES(balance)}</TableCell>
+                        <TableCell><Badge variant="outline">{titleCase(b.status)}</Badge></TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+
+          <Card>
+            <div className="p-4 border-b border-card-border flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Movie room seat bookings</h2>
+              <span className="text-sm text-muted-foreground">{movieBookingsInRange.length} seat{movieBookingsInRange.length === 1 ? "" : "s"} · {formatKES(movieRevenue)}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Guest</TableHead>
+                    <TableHead>Show</TableHead>
+                    <TableHead>Show date</TableHead>
+                    <TableHead>Seat</TableHead>
+                    <TableHead className="text-right">Ticket price</TableHead>
+                    <TableHead className="text-right">Balance</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {movieBookingsInRange.length === 0 && (
+                    <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-6">No movie room bookings in this period.</TableCell></TableRow>
+                  )}
+                  {movieBookingsInRange.map((b) => {
+                    const show = movieShowById.get(b.showId);
+                    const balance = b.ticketPrice - b.amountPaid;
+                    return (
+                      <TableRow key={b.id} data-testid={`row-report-movie-booking-${b.id}`}>
+                        <TableCell>{b.guestName}</TableCell>
+                        <TableCell>{show?.name ?? "—"}</TableCell>
+                        <TableCell>{show ? formatDate(show.showDate) : "—"}</TableCell>
+                        <TableCell>{b.seatRow}{b.seatNumber}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatKES(b.ticketPrice)}</TableCell>
                         <TableCell className="text-right tabular-nums">{formatKES(balance)}</TableCell>
                         <TableCell><Badge variant="outline">{titleCase(b.status)}</Badge></TableCell>
                       </TableRow>

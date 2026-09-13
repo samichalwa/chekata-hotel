@@ -52,6 +52,7 @@ export function toSafeUser(user: {
   fullName: string;
   isAdmin: number;
   permissions: string;
+  canEditMovieBookings?: number;
   active: number;
   createdAt: number;
 }): SafeUser {
@@ -61,6 +62,7 @@ export function toSafeUser(user: {
     fullName: user.fullName,
     isAdmin: user.isAdmin,
     permissions: user.permissions,
+    canEditMovieBookings: user.canEditMovieBookings ?? 0,
     active: user.active,
     createdAt: user.createdAt,
   };
@@ -116,4 +118,15 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (!user) return res.status(401).json({ error: "Not signed in" });
   if (!user.isAdmin) return res.status(403).json({ error: "Administrator access required" });
   next();
+}
+
+// Requires the signed-in user to be an administrator OR to hold the dedicated
+// "edit movie bookings" right — used to gate editing/cancelling an *existing*
+// movie seat booking, separate from the "movie-room" module access needed to
+// view the page and create new bookings.
+export function requireCanEditMovieBookings(req: Request, res: Response, next: NextFunction) {
+  const user = (req as any).user;
+  if (!user) return res.status(401).json({ error: "Not signed in" });
+  if (user.isAdmin || user.canEditMovieBookings) return next();
+  return res.status(403).json({ error: "You don't have rights to edit movie bookings" });
 }

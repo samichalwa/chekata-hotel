@@ -1,5 +1,6 @@
 import {
   rooms, accommodationBookings, facilities, facilityBookings,
+  movieShows, movieSeatBookings,
   menuItems, orders, orderItems, staff, expenses, settings, documents,
   users, taxes,
 } from '@shared/schema';
@@ -8,6 +9,8 @@ import type {
   AccommodationBooking, InsertAccommodationBooking,
   Facility, InsertFacility,
   FacilityBooking, InsertFacilityBooking,
+  MovieShow, InsertMovieShow,
+  MovieSeatBooking, InsertMovieSeatBooking,
   MenuItem, InsertMenuItem,
   Order, InsertOrder,
   OrderItem, InsertOrderItem,
@@ -86,6 +89,32 @@ CREATE TABLE IF NOT EXISTS facility_bookings (
   notes TEXT,
   created_at BIGINT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS movie_shows (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  show_date TEXT NOT NULL,
+  start_time TEXT NOT NULL,
+  end_time TEXT,
+  ticket_price REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'scheduled',
+  notes TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS movie_seat_bookings (
+  id SERIAL PRIMARY KEY,
+  show_id INTEGER NOT NULL,
+  seat_row TEXT NOT NULL,
+  seat_number INTEGER NOT NULL,
+  guest_name TEXT NOT NULL,
+  guest_phone TEXT,
+  guest_email TEXT,
+  ticket_price REAL NOT NULL,
+  amount_paid REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'booked',
+  booking_ref TEXT NOT NULL,
+  notes TEXT,
+  created_at BIGINT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS menu_items (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
@@ -148,7 +177,12 @@ CREATE TABLE IF NOT EXISTS settings (
   email_from TEXT,
   email_from_name TEXT,
   mailgun_domain TEXT,
-  invoices_enabled INTEGER NOT NULL DEFAULT 1
+  invoices_enabled INTEGER NOT NULL DEFAULT 1,
+  sms_provider TEXT NOT NULL DEFAULT '',
+  sms_username TEXT,
+  sms_api_key TEXT,
+  sms_sender_id TEXT,
+  sms_enabled INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS documents (
   id SERIAL PRIMARY KEY,
@@ -203,6 +237,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   await ensureColumn("orders", "customer_name", "TEXT");
   await ensureColumn("orders", "customer_email", "TEXT");
   await ensureColumn("orders", "customer_phone", "TEXT");
+  await ensureColumn("users", "can_edit_movie_bookings", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("settings", "sms_provider", "TEXT NOT NULL DEFAULT ''");
+  await ensureColumn("settings", "sms_username", "TEXT");
+  await ensureColumn("settings", "sms_api_key", "TEXT");
+  await ensureColumn("settings", "sms_sender_id", "TEXT");
+  await ensureColumn("settings", "sms_enabled", "INTEGER NOT NULL DEFAULT 0");
 
   // ---- Seed a default settings row (idempotent) ----
   async function seedSettings() {
@@ -241,10 +281,10 @@ CREATE TABLE IF NOT EXISTS sessions (
       const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD || "admin123";
       const hash = bcrypt.hashSync(defaultPassword, 10);
       const allPermissions = JSON.stringify([
-        "dashboard", "accommodation", "facilities", "bar-restaurant",
+        "dashboard", "accommodation", "facilities", "movie-room", "bar-restaurant",
         "staff", "expenses", "reports", "documents", "settings",
       ]);
-      await sql`INSERT INTO users (username, password_hash, full_name, is_admin, permissions, active, created_at) VALUES ('admin', ${hash}, 'Administrator', 1, ${allPermissions}, 1, ${Date.now()})`;
+      await sql`INSERT INTO users (username, password_hash, full_name, is_admin, permissions, can_edit_movie_bookings, active, created_at) VALUES ('admin', ${hash}, 'Administrator', 1, ${allPermissions}, 1, 1, ${Date.now()})`;
       console.log(
         `[storage] No users found — created default administrator (username: admin, password: ${defaultPassword}). Change this password after first login.`,
       );
@@ -286,6 +326,21 @@ export interface IStorage {
   createFacilityBooking(data: InsertFacilityBooking): Promise<FacilityBooking>;
   updateFacilityBooking(id: number, data: Partial<InsertFacilityBooking>): Promise<FacilityBooking | undefined>;
   deleteFacilityBooking(id: number): Promise<{ changes: number }>;
+
+  // Movie shows
+  listMovieShows(): Promise<MovieShow[]>;
+  getMovieShow(id: number): Promise<MovieShow | undefined>;
+  createMovieShow(data: InsertMovieShow): Promise<MovieShow>;
+  updateMovieShow(id: number, data: Partial<InsertMovieShow>): Promise<MovieShow | undefined>;
+  deleteMovieShow(id: number): Promise<{ changes: number }>;
+
+  // Movie seat bookings
+  listMovieSeatBookings(): Promise<MovieSeatBooking[]>;
+  getMovieSeatBooking(id: number): Promise<MovieSeatBooking | undefined>;
+  listMovieSeatBookingsByRef(bookingRef: string): Promise<MovieSeatBooking[]>;
+  createMovieSeatBooking(data: InsertMovieSeatBooking): Promise<MovieSeatBooking>;
+  updateMovieSeatBooking(id: number, data: Partial<InsertMovieSeatBooking>): Promise<MovieSeatBooking | undefined>;
+  deleteMovieSeatBooking(id: number): Promise<{ changes: number }>;
 
   // Menu items
   listMenuItems(): Promise<MenuItem[]>;
@@ -411,6 +466,45 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteFacilityBooking(id: number) {
     const result = await db.delete(facilityBookings).where(eq(facilityBookings.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  // Movie shows
+  async listMovieShows() {
+    return db.select().from(movieShows);
+  }
+  async getMovieShow(id: number) {
+    return (await db.select().from(movieShows).where(eq(movieShows.id, id)))[0];
+  }
+  async createMovieShow(data: InsertMovieShow) {
+    return (await db.insert(movieShows).values(data).returning())[0];
+  }
+  async updateMovieShow(id: number, data: Partial<InsertMovieShow>) {
+    return (await db.update(movieShows).set(data).where(eq(movieShows.id, id)).returning())[0];
+  }
+  async deleteMovieShow(id: number) {
+    const result = await db.delete(movieShows).where(eq(movieShows.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  // Movie seat bookings
+  async listMovieSeatBookings() {
+    return db.select().from(movieSeatBookings);
+  }
+  async getMovieSeatBooking(id: number) {
+    return (await db.select().from(movieSeatBookings).where(eq(movieSeatBookings.id, id)))[0];
+  }
+  async listMovieSeatBookingsByRef(bookingRef: string) {
+    return db.select().from(movieSeatBookings).where(eq(movieSeatBookings.bookingRef, bookingRef));
+  }
+  async createMovieSeatBooking(data: InsertMovieSeatBooking) {
+    return (await db.insert(movieSeatBookings).values(data).returning())[0];
+  }
+  async updateMovieSeatBooking(id: number, data: Partial<InsertMovieSeatBooking>) {
+    return (await db.update(movieSeatBookings).set(data).where(eq(movieSeatBookings.id, id)).returning())[0];
+  }
+  async deleteMovieSeatBooking(id: number) {
+    const result = await db.delete(movieSeatBookings).where(eq(movieSeatBookings.id, id));
     return { changes: result.count ?? 0 };
   }
 

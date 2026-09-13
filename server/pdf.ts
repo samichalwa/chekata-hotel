@@ -22,7 +22,7 @@ export interface DocLineItem {
 export interface DocPayload {
   docType: "invoice" | "receipt";
   docNumber: number;
-  category: "accommodation" | "facility" | "bar" | "restaurant";
+  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie";
   recipientName: string;
   recipientEmail?: string | null;
   issueDate: string; // formatted date string
@@ -45,6 +45,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   facility: "Conference & Movie Room",
   bar: "Bar",
   restaurant: "Restaurant",
+  movie: "Movie Room (Seat Booking)",
 };
 
 export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promise<Buffer> {

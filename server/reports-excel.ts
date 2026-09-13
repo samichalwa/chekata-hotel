@@ -92,16 +92,19 @@ async function buildOverviewSheet(wb: ExcelJS.Workbook, storage: IStorage, hotel
   const ws = wb.addWorksheet("Overview");
   addTitleBlock(ws, hotelName, "Revenue & Cost Summary", from, to, "B");
 
-  const [bookings, facilities, facilityBookings, orders, staffList, expenses] = await Promise.all([
+  const [bookings, facilities, facilityBookings, orders, staffList, expenses, movieShows, movieSeatBookings] = await Promise.all([
     storage.listAccommodationBookings(),
     storage.listFacilities(),
     storage.listFacilityBookings(),
     storage.listOrders(),
     storage.listStaff(),
     storage.listExpenses(),
+    storage.listMovieShows(),
+    storage.listMovieSeatBookings(),
   ]);
 
   const facilityById = new Map(facilities.map((f) => [f.id, f]));
+  const movieShowById = new Map(movieShows.map((s) => [s.id, s]));
 
   const accommodationRevenue = bookings
     .filter((b) => b.status !== "cancelled" && inRange(b.checkIn, from, to))
@@ -123,7 +126,11 @@ async function buildOverviewSheet(wb: ExcelJS.Workbook, storage: IStorage, hotel
     .filter((o) => o.outlet === "restaurant" && o.status === "paid" && inRange(o.orderDate, from, to))
     .reduce((s, o) => s + o.totalAmount, 0);
 
-  const totalRevenue = accommodationRevenue + facilityRevenue + barRevenue + restaurantRevenue;
+  const movieRevenue = movieSeatBookings
+    .filter((b) => b.status !== "cancelled" && inRange(movieShowById.get(b.showId)?.showDate ?? "", from, to))
+    .reduce((s, b) => s + b.amountPaid, 0);
+
+  const totalRevenue = accommodationRevenue + facilityRevenue + barRevenue + restaurantRevenue + movieRevenue;
 
   let periodMonths = 1;
   if (from && to) {
@@ -164,6 +171,7 @@ async function buildOverviewSheet(wb: ExcelJS.Workbook, storage: IStorage, hotel
   const revenueRows: [string, number][] = [
     ["Accommodation", accommodationRevenue],
     ...Array.from(facilityRevenueByName.entries()),
+    ["Movie Room", movieRevenue],
     ["Bar", barRevenue],
     ["Restaurant", restaurantRevenue],
   ];
@@ -246,7 +254,7 @@ async function buildAccommodationSheet(wb: ExcelJS.Workbook, storage: IStorage, 
 async function buildFacilitiesSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, from?: string, to?: string) {
   const ws = wb.addWorksheet("Conference & Movie Room");
   const cols = ["Booking ID", "Client", "Email", "Phone", "Facility", "Event date", "Start", "End", "Rate (KES)", "Total (KES)", "Paid (KES)", "Balance (KES)", "Status", "Notes"];
-  addTitleBlock(ws, hotelName, "Conference & Movie Room Bookings", from, to, "N");
+  addTitleBlock(ws, hotelName, "Conference Room Bookings", from, to, "N");
 
   const [facilityBookings, facilities] = await Promise.all([storage.listFacilityBookings(), storage.listFacilities()]);
   const facilityById = new Map(facilities.map((f) => [f.id, f]));
@@ -278,6 +286,53 @@ async function buildFacilitiesSheet(wb: ExcelJS.Workbook, storage: IStorage, hot
   ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: cols.length } };
   ws.views = [{ state: "frozen", ySplit: 4 }];
   autosizeColumns(ws, [10, 18, 22, 14, 16, 11, 8, 8, 11, 12, 12, 12, 12, 20]);
+
+  // Second table on the same sheet: Movie Room seat bookings.
+  ws.addRow([]);
+  ws.addRow([]);
+  const movieTitleRow = ws.addRow(["Movie Room Seat Bookings"]);
+  movieTitleRow.getCell(1).font = { bold: true, size: 13, color: { argb: BRAND } };
+
+  const movieCols = ["Booking Ref", "Show", "Show date", "Start", "End", "Seat", "Guest", "Phone", "Ticket price (KES)", "Paid (KES)", "Balance (KES)", "Status"];
+  const movieHeaderRowIndex = ws.rowCount + 1;
+  const movieHeader = ws.addRow(movieCols);
+  styleHeaderRow(movieHeader);
+
+  const [movieShows, movieSeatBookings] = await Promise.all([storage.listMovieShows(), storage.listMovieSeatBookings()]);
+  const movieShowById = new Map(movieShows.map((s) => [s.id, s]));
+  const filteredMovie = movieSeatBookings
+    .filter((b) => inRange(movieShowById.get(b.showId)?.showDate ?? "", from, to))
+    .sort((a, b) => (movieShowById.get(a.showId)?.showDate ?? "").localeCompare(movieShowById.get(b.showId)?.showDate ?? "") || a.seatRow.localeCompare(b.seatRow) || a.seatNumber - b.seatNumber);
+
+  let movieTotalTicket = 0, movieTotalPaid = 0, movieTotalBalance = 0;
+  filteredMovie.forEach((b) => {
+    const show = movieShowById.get(b.showId);
+    const balance = b.ticketPrice - b.amountPaid;
+    movieTotalTicket += b.ticketPrice; movieTotalPaid += b.amountPaid; movieTotalBalance += balance;
+    const row = ws.addRow([
+      b.bookingRef, show?.name ?? "—", show?.showDate ?? "—", show?.startTime ?? "—", show?.endTime ?? "—",
+      `${b.seatRow}${b.seatNumber}`, b.guestName, b.guestPhone ?? "", b.ticketPrice, b.amountPaid, balance, titleCase(b.status),
+    ]);
+    [9, 10, 11].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
+  });
+
+  if (filteredMovie.length === 0) {
+    ws.addRow(["No movie room bookings in this period."]);
+  } else {
+    const movieTotalsRow = ws.addRow(["", "", "", "", "", "", "", "Totals", movieTotalTicket, movieTotalPaid, movieTotalBalance, ""]);
+    [9, 10, 11].forEach((c) => { movieTotalsRow.getCell(c).numFmt = KES_FMT; movieTotalsRow.getCell(c).alignment = { horizontal: "right" }; });
+    styleTotalsRow(movieTotalsRow);
+  }
+
+  movieCols.forEach((_, idx) => {
+    const col = ws.getColumn(idx + 1);
+    let max = col.width ?? 10;
+    for (let r = movieHeaderRowIndex; r <= ws.rowCount; r++) {
+      const text = String(ws.getCell(r, idx + 1).value ?? "");
+      if (text.length + 3 > max) max = text.length + 3;
+    }
+    col.width = Math.min(max, 42);
+  });
 }
 
 async function buildBarRestaurantSheets(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, from?: string, to?: string) {
@@ -459,12 +514,15 @@ async function buildTaxesSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelNam
   const ws = wb.addWorksheet("Taxes");
   addTitleBlock(ws, hotelName, "Tax Collected (inclusive pricing)", from, to, "E");
 
-  const [bookings, facilityBookings, orders, allTaxes] = await Promise.all([
+  const [bookings, facilityBookings, orders, allTaxes, movieShows, movieSeatBookings] = await Promise.all([
     storage.listAccommodationBookings(),
     storage.listFacilityBookings(),
     storage.listOrders(),
     storage.listTaxes(),
+    storage.listMovieShows(),
+    storage.listMovieSeatBookings(),
   ]);
+  const movieShowById = new Map(movieShows.map((s) => [s.id, s]));
 
   const perTax: Record<string, { rate: number; total: number }> = {};
   const bump = (name: string, rate: number, amount: number) => {
@@ -493,6 +551,10 @@ async function buildTaxesSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelNam
   bookings.filter((b) => b.status !== "cancelled" && inRange(b.checkIn, from, to)).forEach((b) => apply(b.totalAmount, "accommodation"));
   facilityBookings.filter((b) => b.status !== "cancelled" && inRange(b.eventDate, from, to)).forEach((b) => apply(b.totalAmount, "facilities"));
   orders.filter((o) => o.status === "paid" && inRange(o.orderDate, from, to)).forEach((o) => apply(o.totalAmount, o.outlet === "bar" ? "bar" : "restaurant"));
+  // Movie room bookings share the "facilities" tax mapping, matching invoice/receipt generation (see DOC_CATEGORY_TO_TAX_CATEGORY in documents.ts).
+  movieSeatBookings
+    .filter((b) => b.status !== "cancelled" && b.amountPaid > 0 && inRange(movieShowById.get(b.showId)?.showDate ?? "", from, to))
+    .forEach((b) => apply(b.amountPaid, "facilities"));
 
   const header = ws.addRow(["Tax name", "Rate (%)", "Amount collected (KES)"]);
   styleHeaderRow(header);

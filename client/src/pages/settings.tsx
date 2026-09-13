@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Save, Send, Mail, Building2, Plus, Pencil, Trash2, Percent, ShieldCheck, KeyRound } from "lucide-react";
+import { Save, Send, Mail, MessageSquare, Building2, Plus, Pencil, Trash2, Percent, ShieldCheck, KeyRound } from "lucide-react";
 import { PageHeader } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -34,6 +34,11 @@ const settingsFormSchema = z.object({
   emailFromName: z.string().optional().nullable(),
   mailgunDomain: z.string().optional().nullable(),
   invoicesEnabled: z.coerce.number(),
+  smsProvider: z.string(),
+  smsUsername: z.string().optional().nullable(),
+  smsApiKey: z.string().optional().nullable(),
+  smsSenderId: z.string().optional().nullable(),
+  smsEnabled: z.coerce.number(),
 });
 
 type SettingsFormValues = z.infer<typeof settingsFormSchema>;
@@ -60,10 +65,16 @@ const providers = [
   { value: "mailgun", label: "Mailgun" },
 ];
 
+const smsProviders = [
+  { value: NONE_PROVIDER, label: "Not configured" },
+  { value: "africastalking", label: "Africa's Talking" },
+];
+
 function HotelEmailTab() {
   const { toast } = useToast();
   const { data, isLoading } = useQuery<Settings>({ queryKey: ["/api/settings"] });
   const [testEmail, setTestEmail] = useState("");
+  const [testPhone, setTestPhone] = useState("");
 
   const form = useForm<SettingsFormValues>({
     resolver: zodResolver(settingsFormSchema),
@@ -78,6 +89,11 @@ function HotelEmailTab() {
       emailFromName: "",
       mailgunDomain: "",
       invoicesEnabled: 1,
+      smsProvider: "",
+      smsUsername: "",
+      smsApiKey: "",
+      smsSenderId: "",
+      smsEnabled: 0,
     },
   });
 
@@ -94,11 +110,17 @@ function HotelEmailTab() {
         emailFromName: data.emailFromName ?? "",
         mailgunDomain: data.mailgunDomain ?? "",
         invoicesEnabled: data.invoicesEnabled ?? 1,
+        smsProvider: data.smsProvider ?? "",
+        smsUsername: data.smsUsername ?? "",
+        smsApiKey: data.smsApiKey ?? "",
+        smsSenderId: data.smsSenderId ?? "",
+        smsEnabled: data.smsEnabled ?? 0,
       });
     }
   }, [data]);
 
   const provider = form.watch("emailProvider");
+  const smsProvider = form.watch("smsProvider");
 
   const saveMutation = useMutation({
     mutationFn: (values: SettingsFormValues) => apiRequest("PUT", "/api/settings", values),
@@ -116,6 +138,15 @@ function HotelEmailTab() {
     },
     onSuccess: () => toast({ title: "Test email sent", description: `Check ${testEmail} for the message.` }),
     onError: (err: Error) => toast({ title: "Test email failed", description: extractErrorMessage(err.message), variant: "destructive" }),
+  });
+
+  const testSmsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/settings/test-sms", { phone: testPhone });
+      return res.json();
+    },
+    onSuccess: () => toast({ title: "Test SMS sent", description: `Check ${testPhone} for the message.` }),
+    onError: (err: Error) => toast({ title: "Test SMS failed", description: extractErrorMessage(err.message), variant: "destructive" }),
   });
 
   if (isLoading) {
@@ -230,6 +261,76 @@ function HotelEmailTab() {
             </div>
             <Button type="button" variant="outline" disabled={!testEmail || testEmailMutation.isPending} onClick={() => testEmailMutation.mutate()} data-testid="button-send-test-email">
               <Send className="h-4 w-4 mr-1" /> {testEmailMutation.isPending ? "Sending..." : "Send test"}
+            </Button>
+          </div>
+        </Card>
+
+        <Card className="p-5 space-y-4">
+          <h2 className="text-sm font-semibold flex items-center gap-2"><MessageSquare className="h-4 w-4" /> SMS confirmations</h2>
+          <FormDescription>
+            When a movie-room seat booking is paid for, an SMS confirmation (show, date/time, and seat) is sent to the guest's phone. This uses Africa's Talking and costs a small fee per message — the free WhatsApp button still works either way.
+          </FormDescription>
+          <FormField control={form.control} name="smsProvider" render={({ field }) => (
+            <FormItem>
+              <FormLabel>Provider</FormLabel>
+              <Select
+                onValueChange={(v) => field.onChange(v === NONE_PROVIDER ? "" : v)}
+                value={field.value || NONE_PROVIDER}
+              >
+                <FormControl><SelectTrigger data-testid="select-sms-provider"><SelectValue /></SelectTrigger></FormControl>
+                <SelectContent>
+                  {smsProviders.map((p) => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )} />
+          {smsProvider === "africastalking" && (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <FormField control={form.control} name="smsUsername" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Africa's Talking username</FormLabel>
+                    <FormControl><Input placeholder="your_at_username" {...field} value={field.value ?? ""} data-testid="input-sms-username" /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="smsSenderId" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Sender ID (optional)</FormLabel>
+                    <FormControl><Input placeholder="THECHEKATA" {...field} value={field.value ?? ""} data-testid="input-sms-sender-id" /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              </div>
+              <FormField control={form.control} name="smsApiKey" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>API key</FormLabel>
+                  <FormControl><Input type="password" placeholder="Paste your Africa's Talking API key" {...field} value={field.value ?? ""} data-testid="input-sms-api-key" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            </>
+          )}
+          <FormField control={form.control} name="smsEnabled" render={({ field }) => (
+            <FormItem className="flex items-center justify-between rounded-md border border-border p-3">
+              <div>
+                <FormLabel className="mb-0">Send SMS confirmations automatically</FormLabel>
+                <FormDescription>Turn off to stop sending SMS while keeping the settings saved.</FormDescription>
+              </div>
+              <FormControl>
+                <Switch checked={field.value === 1} onCheckedChange={(c) => field.onChange(c ? 1 : 0)} data-testid="switch-sms-enabled" />
+              </FormControl>
+            </FormItem>
+          )} />
+
+          <div className="flex items-end gap-2 pt-2 border-t border-border">
+            <div className="flex-1 space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Send a test SMS</label>
+              <Input type="tel" placeholder="07xx xxx xxx" value={testPhone} onChange={(e) => setTestPhone(e.target.value)} data-testid="input-test-sms" />
+            </div>
+            <Button type="button" variant="outline" disabled={!testPhone || testSmsMutation.isPending} onClick={() => testSmsMutation.mutate()} data-testid="button-send-test-sms">
+              <Send className="h-4 w-4 mr-1" /> {testSmsMutation.isPending ? "Sending..." : "Send test"}
             </Button>
           </div>
         </Card>
@@ -445,6 +546,7 @@ const userFormSchema = z.object({
   isAdmin: z.boolean(),
   active: z.boolean(),
   permissions: z.array(z.string()),
+  canEditMovieBookings: z.boolean(),
 });
 
 type UserFormValues = z.infer<typeof userFormSchema>;
@@ -460,11 +562,13 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
       })
     ),
     defaultValues: user
-      ? { fullName: user.fullName, username: user.username, password: "", isAdmin: !!user.isAdmin, active: !!user.active, permissions: JSON.parse(user.permissions || "[]") }
-      : { fullName: "", username: "", password: "", isAdmin: false, active: true, permissions: [] },
+      ? { fullName: user.fullName, username: user.username, password: "", isAdmin: !!user.isAdmin, active: !!user.active, permissions: JSON.parse(user.permissions || "[]"), canEditMovieBookings: !!user.canEditMovieBookings }
+      : { fullName: "", username: "", password: "", isAdmin: false, active: true, permissions: [], canEditMovieBookings: false },
   });
 
   const isAdminWatch = form.watch("isAdmin");
+  const permissionsWatch = form.watch("permissions");
+  const hasMovieRoomAccess = isAdminWatch || (permissionsWatch as string[]).includes("movie-room");
 
   const mutation = useMutation({
     mutationFn: async (values: UserFormValues) => {
@@ -545,6 +649,19 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
                       );
                     })}
                   </div>
+                </FormItem>
+              )} />
+            )}
+            {hasMovieRoomAccess && (
+              <FormField control={form.control} name="canEditMovieBookings" render={({ field }) => (
+                <FormItem className="flex items-center justify-between rounded-md border border-border p-3">
+                  <div>
+                    <FormLabel className="mb-0">Can edit movie room bookings</FormLabel>
+                    <FormDescription>Allows editing or cancelling a seat booking that's already been entered. Admins always have this right.</FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch checked={isAdminWatch || field.value} disabled={isAdminWatch} onCheckedChange={field.onChange} data-testid="switch-user-can-edit-movie-bookings" />
+                  </FormControl>
                 </FormItem>
               )} />
             )}

@@ -9,11 +9,12 @@ const DOC_CATEGORY_TO_TAX_CATEGORY: Record<string, TaxCategory> = {
   facility: "facilities",
   bar: "bar",
   restaurant: "restaurant",
+  movie: "facilities",
 };
 
 export interface IssueDocumentInput {
   docType: "invoice" | "receipt";
-  category: "accommodation" | "facility" | "bar" | "restaurant";
+  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie";
   sourceId: number;
   recipientName: string;
   recipientEmail?: string | null;
