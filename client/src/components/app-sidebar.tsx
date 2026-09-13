@@ -51,7 +51,7 @@ export function AppSidebar() {
   const copyrightYear = new Date().getFullYear();
 
   return (
-    <Sidebar>
+    <Sidebar collapsible="icon">
       <SidebarHeader>
         <div className="flex items-center gap-2 px-2 py-1.5 text-sidebar-foreground">
           <img
@@ -60,7 +60,7 @@ export function AppSidebar() {
             className="h-8 w-8 shrink-0 rounded-md object-cover"
             data-testid="img-sidebar-logo"
           />
-          <div className="flex flex-col leading-tight">
+          <div className="flex flex-col leading-tight group-data-[collapsible=icon]:hidden">
             <span className="text-sm font-semibold" data-testid="text-sidebar-hotel-name">{hotelName}</span>
             <span className="text-xs text-sidebar-foreground/60">Highway Hotel</span>
           </div>
@@ -87,15 +87,15 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter>
         {user && (
-          <div className="flex items-center justify-between gap-2 px-2 py-1.5">
-            <div className="flex min-w-0 flex-col leading-tight">
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1">
+            <div className="flex min-w-0 flex-col leading-tight group-data-[collapsible=icon]:hidden">
               <span className="truncate text-xs font-medium text-sidebar-foreground" data-testid="text-current-user">{user.fullName}</span>
               <span className="text-[11px] text-sidebar-foreground/50">{user.isAdmin ? "Administrator" : "Staff"}</span>
             </div>
             <button
               type="button"
               onClick={() => logout.mutate()}
-              className="rounded-md p-1.5 text-sidebar-foreground/60 hover-elevate active-elevate-2"
+              className="shrink-0 rounded-md p-1.5 text-sidebar-foreground/60 hover-elevate active-elevate-2"
               title="Sign out"
               data-testid="button-logout"
             >
@@ -103,10 +103,10 @@ export function AppSidebar() {
             </button>
           </div>
         )}
-        <div className="px-2 py-1.5 text-xs text-sidebar-foreground/50">
+        <div className="px-2 py-1.5 text-xs text-sidebar-foreground/50 group-data-[collapsible=icon]:hidden">
           Currency: KES · All figures in Kenyan Shillings
         </div>
-        <div className="px-2 pb-1.5 text-[11px] text-sidebar-foreground/40" data-testid="text-copyright">
+        <div className="px-2 pb-1.5 text-[11px] text-sidebar-foreground/40 group-data-[collapsible=icon]:hidden" data-testid="text-copyright">
           © {copyrightYear} {hotelName}. All rights reserved.
         </div>
       </SidebarFooter>
