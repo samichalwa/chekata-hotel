@@ -1,5 +1,17 @@
 import PDFDocument from "pdfkit";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 import type { Settings } from "@shared/schema";
+
+// Resolves next to this file in both dev (server/, run via tsx as ESM,
+// where __dirname is undefined) and the production bundle (dist/index.cjs,
+// a real CJS module where __dirname is always defined natively) — as long
+// as the build step copies assets/ alongside dist/index.cjs (see
+// script/build.ts).
+const moduleDir = typeof __dirname !== "undefined" ? __dirname : path.dirname(fileURLToPath(import.meta.url));
+const LOGO_PATH = path.join(moduleDir, "assets", "chekata-logo.jpg");
+const LOGO_EXISTS = fs.existsSync(LOGO_PATH);
 
 export interface DocLineItem {
   label: string;
@@ -48,12 +60,21 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
     const muted = "#6b6157";
 
     // ---- Header: hotel identity ----
-    doc.fillColor(accent).fontSize(22).font("Helvetica-Bold").text(settings.hotelName || "The Chekata", 50, 50);
+    const logoSize = 46;
+    const textX = LOGO_EXISTS ? 50 + logoSize + 12 : 50;
+    if (LOGO_EXISTS) {
+      try {
+        doc.image(LOGO_PATH, 50, 48, { width: logoSize, height: logoSize });
+      } catch {
+        // If the image can't be embedded for any reason, fall back to text-only header.
+      }
+    }
+    doc.fillColor(accent).fontSize(22).font("Helvetica-Bold").text(settings.hotelName || "The Chekata", textX, 50);
     doc.fillColor(muted).fontSize(9).font("Helvetica");
     let y = 78;
-    if (settings.hotelAddress) { doc.text(settings.hotelAddress, 50, y); y += 13; }
-    if (settings.hotelPhone) { doc.text(`Tel: ${settings.hotelPhone}`, 50, y); y += 13; }
-    if (settings.hotelEmail) { doc.text(settings.hotelEmail, 50, y); y += 13; }
+    if (settings.hotelAddress) { doc.text(settings.hotelAddress, textX, y); y += 13; }
+    if (settings.hotelPhone) { doc.text(`Tel: ${settings.hotelPhone}`, textX, y); y += 13; }
+    if (settings.hotelEmail) { doc.text(settings.hotelEmail, textX, y); y += 13; }
 
     // ---- Doc title box (right) ----
     const title = payload.docType === "invoice" ? "INVOICE" : "RECEIPT";
