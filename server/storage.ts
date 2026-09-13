@@ -2,7 +2,7 @@ import {
   rooms, accommodationBookings, facilities, facilityBookings,
   movieShows, movieSeatBookings,
   menuItems, orders, orderItems, staff, expenses, settings, documents,
-  users, taxes,
+  users, taxes, tables, maintenanceIssues, MODULE_KEYS,
 } from '@shared/schema';
 import type {
   Room, InsertRoom,
@@ -20,6 +20,8 @@ import type {
   DocumentRecord, InsertDocument,
   User, InsertUser,
   Tax, InsertTax,
+  TableRow, InsertTableRow,
+  MaintenanceIssue, InsertMaintenanceIssue,
 } from '@shared/schema';
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -222,6 +224,30 @@ CREATE TABLE IF NOT EXISTS sessions (
   sess TEXT NOT NULL,
   expire BIGINT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS tables (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  outlet TEXT NOT NULL DEFAULT 'both',
+  capacity INTEGER,
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS maintenance_issues (
+  id SERIAL PRIMARY KEY,
+  category TEXT NOT NULL,
+  title TEXT NOT NULL,
+  location TEXT,
+  description TEXT,
+  reported_by TEXT NOT NULL,
+  reported_phone TEXT,
+  priority TEXT NOT NULL DEFAULT 'normal',
+  status TEXT NOT NULL DEFAULT 'open',
+  assigned_to TEXT,
+  notes TEXT,
+  created_at BIGINT NOT NULL,
+  resolved_at BIGINT,
+  closed_at BIGINT,
+  closed_by TEXT
+);
 `);
 
   // ---- Idempotent column additions for installs upgraded from an earlier version ----
@@ -238,6 +264,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   await ensureColumn("orders", "customer_email", "TEXT");
   await ensureColumn("orders", "customer_phone", "TEXT");
   await ensureColumn("users", "can_edit_movie_bookings", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("users", "can_manage_tables_list", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("users", "can_manage_menu_items_list", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("users", "can_close_maintenance_issues", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("settings", "sms_provider", "TEXT NOT NULL DEFAULT ''");
   await ensureColumn("settings", "sms_username", "TEXT");
   await ensureColumn("settings", "sms_api_key", "TEXT");
@@ -280,11 +309,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     if (c === 0) {
       const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD || "admin123";
       const hash = bcrypt.hashSync(defaultPassword, 10);
-      const allPermissions = JSON.stringify([
-        "dashboard", "accommodation", "facilities", "movie-room", "bar-restaurant",
-        "staff", "expenses", "reports", "documents", "settings",
-      ]);
-      await sql`INSERT INTO users (username, password_hash, full_name, is_admin, permissions, can_edit_movie_bookings, active, created_at) VALUES ('admin', ${hash}, 'Administrator', 1, ${allPermissions}, 1, 1, ${Date.now()})`;
+      const allPermissions = JSON.stringify(MODULE_KEYS);
+      await sql`INSERT INTO users (username, password_hash, full_name, is_admin, permissions, can_edit_movie_bookings, can_manage_tables_list, can_manage_menu_items_list, can_close_maintenance_issues, active, created_at) VALUES ('admin', ${hash}, 'Administrator', 1, ${allPermissions}, 1, 1, 1, 1, 1, ${Date.now()})`;
       console.log(
         `[storage] No users found — created default administrator (username: admin, password: ${defaultPassword}). Change this password after first login.`,
       );
@@ -355,6 +381,7 @@ export interface IStorage {
   updateOrder(id: number, data: Partial<InsertOrder>): Promise<Order | undefined>;
   deleteOrder(id: number): Promise<{ changes: number }>;
   listOrderItems(orderId: number): Promise<OrderItem[]>;
+  getOrderItem(id: number): Promise<OrderItem | undefined>;
   createOrderItem(data: InsertOrderItem): Promise<OrderItem>;
   deleteOrderItem(id: number): Promise<{ changes: number }>;
 
@@ -394,6 +421,19 @@ export interface IStorage {
   createTax(data: InsertTax): Promise<Tax>;
   updateTax(id: number, data: Partial<InsertTax>): Promise<Tax | undefined>;
   deleteTax(id: number): Promise<{ changes: number }>;
+
+  // Tables (Lists module)
+  listTables(): Promise<TableRow[]>;
+  createTable(data: InsertTableRow): Promise<TableRow>;
+  updateTable(id: number, data: Partial<InsertTableRow>): Promise<TableRow | undefined>;
+  deleteTable(id: number): Promise<{ changes: number }>;
+
+  // Maintenance issues
+  listMaintenanceIssues(): Promise<MaintenanceIssue[]>;
+  getMaintenanceIssue(id: number): Promise<MaintenanceIssue | undefined>;
+  createMaintenanceIssue(data: InsertMaintenanceIssue): Promise<MaintenanceIssue>;
+  updateMaintenanceIssue(id: number, data: Partial<InsertMaintenanceIssue>): Promise<MaintenanceIssue | undefined>;
+  deleteMaintenanceIssue(id: number): Promise<{ changes: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -544,6 +584,9 @@ export class DatabaseStorage implements IStorage {
   async listOrderItems(orderId: number) {
     return db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
   }
+  async getOrderItem(id: number) {
+    return (await db.select().from(orderItems).where(eq(orderItems.id, id)))[0];
+  }
   async createOrderItem(data: InsertOrderItem) {
     return (await db.insert(orderItems).values(data).returning())[0];
   }
@@ -644,6 +687,39 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteTax(id: number) {
     const result = await db.delete(taxes).where(eq(taxes.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  // Tables (Lists module)
+  async listTables() {
+    return db.select().from(tables);
+  }
+  async createTable(data: InsertTableRow) {
+    return (await db.insert(tables).values(data).returning())[0];
+  }
+  async updateTable(id: number, data: Partial<InsertTableRow>) {
+    return (await db.update(tables).set(data).where(eq(tables.id, id)).returning())[0];
+  }
+  async deleteTable(id: number) {
+    const result = await db.delete(tables).where(eq(tables.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  // Maintenance issues
+  async listMaintenanceIssues() {
+    return db.select().from(maintenanceIssues);
+  }
+  async getMaintenanceIssue(id: number) {
+    return (await db.select().from(maintenanceIssues).where(eq(maintenanceIssues.id, id)))[0];
+  }
+  async createMaintenanceIssue(data: InsertMaintenanceIssue) {
+    return (await db.insert(maintenanceIssues).values(data).returning())[0];
+  }
+  async updateMaintenanceIssue(id: number, data: Partial<InsertMaintenanceIssue>) {
+    return (await db.update(maintenanceIssues).set(data).where(eq(maintenanceIssues.id, id)).returning())[0];
+  }
+  async deleteMaintenanceIssue(id: number) {
+    const result = await db.delete(maintenanceIssues).where(eq(maintenanceIssues.id, id));
     return { changes: result.count ?? 0 };
   }
 }

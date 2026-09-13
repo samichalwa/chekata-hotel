@@ -9,13 +9,18 @@ import {
   insertMenuItemSchema, insertOrderSchema, insertOrderItemSchema,
   insertStaffSchema, insertExpenseSchema, insertSettingsSchema,
   insertUserSchema, insertTaxSchema, MODULE_KEYS, type ModuleKey,
+  insertTableSchema, insertMaintenanceIssueSchema, MAINTENANCE_CATEGORIES,
 } from "@shared/schema";
 import { issueDocument } from "./documents";
 import { buildDocumentPdf } from "./pdf";
 import { sendTransactionalEmail } from "./email";
 import { sendSms } from "./sms";
 import { buildReportsWorkbook, REPORT_SHEET_LABELS, type ReportSheetKey } from "./reports-excel";
-import { requireAuth, requireModule, requireAdmin, requireCanEditMovieBookings, hashPassword, verifyPassword, toSafeUser, parsePermissions, resolveUserIdFromHeaderToken } from "./auth";
+import {
+  requireAuth, requireModule, requireAdmin, requireCanEditMovieBookings,
+  requireAnyModule, requireCanManageTablesList, requireCanManageMenuItemsList, requireCanCloseMaintenanceIssues,
+  hashPassword, verifyPassword, toSafeUser, parsePermissions, resolveUserIdFromHeaderToken,
+} from "./auth";
 
 function handleZodError(res: any, err: any) {
   res.status(400).json({ error: err?.message ?? "Invalid request" });
@@ -99,8 +104,9 @@ export async function registerRoutes(
   });
   app.post("/api/users", requireAdmin, async (req, res) => {
     try {
-      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings } = req.body as {
-        username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean; canEditMovieBookings?: boolean;
+      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues } = req.body as {
+        username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean;
+        canEditMovieBookings?: boolean; canManageTablesList?: boolean; canManageMenuItemsList?: boolean; canCloseMaintenanceIssues?: boolean;
       };
       if (!username || !password || !fullName) return res.status(400).json({ error: "Username, password and full name are required." });
       if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
@@ -113,6 +119,9 @@ export async function registerRoutes(
         isAdmin: isAdmin ? 1 : 0,
         permissions: JSON.stringify(validPerms),
         canEditMovieBookings: canEditMovieBookings ? 1 : 0,
+        canManageTablesList: canManageTablesList ? 1 : 0,
+        canManageMenuItemsList: canManageMenuItemsList ? 1 : 0,
+        canCloseMaintenanceIssues: canCloseMaintenanceIssues ? 1 : 0,
         active: active === false ? 0 : 1,
         createdAt: Date.now(),
       });
@@ -127,8 +136,9 @@ export async function registerRoutes(
       const id = Number(req.params.id);
       const target = await storage.getUser(id);
       if (!target) return res.status(404).json({ error: "User not found" });
-      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings } = req.body as {
-        username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean; canEditMovieBookings?: boolean;
+      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues } = req.body as {
+        username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean;
+        canEditMovieBookings?: boolean; canManageTablesList?: boolean; canManageMenuItemsList?: boolean; canCloseMaintenanceIssues?: boolean;
       };
       const currentUserId = (req as any).user.id;
       if (currentUserId === id && isAdmin === false) {
@@ -144,6 +154,9 @@ export async function registerRoutes(
       if (Array.isArray(permissions)) patch.permissions = JSON.stringify(permissions.filter((p) => (MODULE_KEYS as readonly string[]).includes(p)));
       if (typeof active === "boolean") patch.active = active ? 1 : 0;
       if (typeof canEditMovieBookings === "boolean") patch.canEditMovieBookings = canEditMovieBookings ? 1 : 0;
+      if (typeof canManageTablesList === "boolean") patch.canManageTablesList = canManageTablesList ? 1 : 0;
+      if (typeof canManageMenuItemsList === "boolean") patch.canManageMenuItemsList = canManageMenuItemsList ? 1 : 0;
+      if (typeof canCloseMaintenanceIssues === "boolean") patch.canCloseMaintenanceIssues = canCloseMaintenanceIssues ? 1 : 0;
       if (password) {
         if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
         patch.passwordHash = await hashPassword(password);
@@ -560,17 +573,17 @@ export async function registerRoutes(
     res.status(204).end();
   });
 
-  // ---------- Menu Items ----------
-  app.get("/api/menu-items", requireModule("bar-restaurant"), async (_req, res) => {
+  // ---------- Menu Items (managed from the Lists module; read from Bar & Restaurant too) ----------
+  app.get("/api/menu-items", requireAnyModule(["bar-restaurant", "lists"]), async (_req, res) => {
     res.json(await storage.listMenuItems());
   });
-  app.post("/api/menu-items", requireModule("bar-restaurant"), async (req, res) => {
+  app.post("/api/menu-items", requireModule("lists"), requireCanManageMenuItemsList, async (req, res) => {
     try {
       const data = insertMenuItemSchema.parse(req.body);
       res.status(201).json(await storage.createMenuItem(data));
     } catch (err) { handleZodError(res, err); }
   });
-  app.patch("/api/menu-items/:id", requireModule("bar-restaurant"), async (req, res) => {
+  app.patch("/api/menu-items/:id", requireModule("lists"), requireCanManageMenuItemsList, async (req, res) => {
     try {
       const data = insertMenuItemSchema.partial().parse(req.body);
       const updated = await storage.updateMenuItem(Number(req.params.id), data);
@@ -578,8 +591,31 @@ export async function registerRoutes(
       res.json(updated);
     } catch (err) { handleZodError(res, err); }
   });
-  app.delete("/api/menu-items/:id", requireModule("bar-restaurant"), async (req, res) => {
+  app.delete("/api/menu-items/:id", requireModule("lists"), requireCanManageMenuItemsList, async (req, res) => {
     await storage.deleteMenuItem(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---------- Tables (Lists module; read from Bar & Restaurant too) ----------
+  app.get("/api/tables", requireAnyModule(["bar-restaurant", "lists"]), async (_req, res) => {
+    res.json(await storage.listTables());
+  });
+  app.post("/api/tables", requireModule("lists"), requireCanManageTablesList, async (req, res) => {
+    try {
+      const data = insertTableSchema.parse(req.body);
+      res.status(201).json(await storage.createTable(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/tables/:id", requireModule("lists"), requireCanManageTablesList, async (req, res) => {
+    try {
+      const data = insertTableSchema.partial().parse(req.body);
+      const updated = await storage.updateTable(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Table not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/tables/:id", requireModule("lists"), requireCanManageTablesList, async (req, res) => {
+    await storage.deleteTable(Number(req.params.id));
     res.status(204).end();
   });
 
@@ -618,7 +654,7 @@ export async function registerRoutes(
           paymentAmount: updated.totalAmount,
           paymentMethod: updated.paymentMethod,
         });
-        docResult = { status: doc.status, errorMessage: doc.errorMessage };
+        docResult = { status: doc.status, errorMessage: doc.errorMessage, documentId: doc.id };
       }
       res.json({ ...updated, _document: docResult });
     } catch (err) { handleZodError(res, err); }
@@ -629,16 +665,27 @@ export async function registerRoutes(
   });
 
   // ---------- Order Items ----------
+  // Items may only be added/removed while the order is still "open" — once an
+  // order is closed (status becomes "paid") or cancelled its receipt has
+  // already been generated from a fixed snapshot, so the line items are locked.
   app.get("/api/orders/:orderId/items", requireModule("bar-restaurant"), async (req, res) => {
     res.json(await storage.listOrderItems(Number(req.params.orderId)));
   });
   app.post("/api/order-items", requireModule("bar-restaurant"), async (req, res) => {
     try {
       const data = insertOrderItemSchema.parse(req.body);
+      const order = await storage.getOrder(data.orderId);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+      if (order.status !== "open") return res.status(400).json({ error: "This order is closed — items can no longer be added." });
       res.status(201).json(await storage.createOrderItem(data));
     } catch (err) { handleZodError(res, err); }
   });
   app.delete("/api/order-items/:id", requireModule("bar-restaurant"), async (req, res) => {
+    const item = await storage.getOrderItem(Number(req.params.id));
+    if (item) {
+      const order = await storage.getOrder(item.orderId);
+      if (order && order.status !== "open") return res.status(400).json({ error: "This order is closed — items can no longer be removed." });
+    }
     await storage.deleteOrderItem(Number(req.params.id));
     res.status(204).end();
   });
@@ -686,6 +733,66 @@ export async function registerRoutes(
   });
   app.delete("/api/expenses/:id", requireModule("expenses"), async (req, res) => {
     await storage.deleteExpense(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---------- Maintenance (issue register — tracked separately from Expenses) ----------
+  app.get("/api/maintenance-issues", requireModule("maintenance"), async (_req, res) => {
+    res.json(await storage.listMaintenanceIssues());
+  });
+  app.post("/api/maintenance-issues", requireModule("maintenance"), async (req, res) => {
+    try {
+      const data = insertMaintenanceIssueSchema.parse({
+        ...req.body,
+        status: "open",
+        createdAt: Date.now(),
+        resolvedAt: null,
+        closedAt: null,
+        closedBy: null,
+      });
+      if (!(MAINTENANCE_CATEGORIES as readonly string[]).includes(data.category)) {
+        return res.status(400).json({ error: "Invalid maintenance category." });
+      }
+      const created = await storage.createMaintenanceIssue(data);
+      let smsResult: { status: "sent" | "skipped"; errorMessage?: string } | null = null;
+      if (created.reportedPhone) {
+        const message = `The Chekata Maintenance: your report "${created.title}" has been logged (ref #${created.id}). We'll notify you once it's resolved.`;
+        const sms = await sendSms({ settings: await storage.getSettings(), to: created.reportedPhone, message });
+        smsResult = sms.ok ? { status: "sent" } : { status: "skipped", errorMessage: sms.error };
+      }
+      res.status(201).json({ ...created, _sms: smsResult });
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/maintenance-issues/:id", requireModule("maintenance"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const before = await storage.getMaintenanceIssue(id);
+      if (!before) return res.status(404).json({ error: "Maintenance issue not found" });
+      const data = insertMaintenanceIssueSchema.partial().parse(req.body);
+      if (data.category && !(MAINTENANCE_CATEGORIES as readonly string[]).includes(data.category)) {
+        return res.status(400).json({ error: "Invalid maintenance category." });
+      }
+      const currentUser = (req as any).user;
+      const closingNow = data.status === "closed" && before.status !== "closed";
+      if (closingNow && !(currentUser.isAdmin || currentUser.canCloseMaintenanceIssues)) {
+        return res.status(403).json({ error: "You don't have rights to close maintenance issues" });
+      }
+      const patch: Partial<typeof data> & Record<string, any> = { ...data };
+      if (data.status === "resolved" && before.status !== "resolved") patch.resolvedAt = Date.now();
+      if (closingNow) { patch.closedAt = Date.now(); patch.closedBy = currentUser.fullName; }
+      const updated = await storage.updateMaintenanceIssue(id, patch);
+      if (!updated) return res.status(404).json({ error: "Maintenance issue not found" });
+      let smsResult: { status: "sent" | "skipped"; errorMessage?: string } | null = null;
+      if (closingNow && updated.reportedPhone) {
+        const message = `The Chekata Maintenance: your report "${updated.title}" (ref #${updated.id}) has been resolved and closed. Thank you for reporting it.`;
+        const sms = await sendSms({ settings: await storage.getSettings(), to: updated.reportedPhone, message });
+        smsResult = sms.ok ? { status: "sent" } : { status: "skipped", errorMessage: sms.error };
+      }
+      res.json({ ...updated, _sms: smsResult });
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/maintenance-issues/:id", requireAdmin, async (req, res) => {
+    await storage.deleteMaintenanceIssue(Number(req.params.id));
     res.status(204).end();
   });
 
@@ -765,7 +872,7 @@ export async function registerRoutes(
       const from = typeof req.query.from === "string" && req.query.from ? req.query.from : undefined;
       const to = typeof req.query.to === "string" && req.query.to ? req.query.to : undefined;
       const sheetParam = typeof req.query.sheet === "string" ? req.query.sheet : "all";
-      const validSheets: (ReportSheetKey | "all")[] = ["all", "overview", "accommodation", "facilities", "bar-restaurant", "staff", "expenses", "taxes"];
+      const validSheets: (ReportSheetKey | "all")[] = ["all", "overview", "accommodation", "facilities", "bar-restaurant", "staff", "expenses", "maintenance", "taxes"];
       const sheet = (validSheets as string[]).includes(sheetParam) ? (sheetParam as ReportSheetKey | "all") : "all";
 
       const workbook = await buildReportsWorkbook(storage, { from, to, sheet });

@@ -3,12 +3,11 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Pencil, Trash2, UtensilsCrossed, Wine, Receipt, X, MessageCircle } from "lucide-react";
+import { Plus, Pencil, Trash2, UtensilsCrossed, Wine, Receipt, X, MessageCircle, CheckCircle2, Lock, Info } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
@@ -16,19 +15,14 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatKES, todayISO, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink } from "@/lib/whatsapp";
-import type { MenuItem, Order, OrderItem } from "@shared/schema";
+import { Link } from "wouter";
+import type { MenuItem, Order, OrderItem, TableRow as TableEntity } from "@shared/schema";
 
-const menuItemFormSchema = z.object({
-  name: z.string().min(1, "Item name is required"),
-  category: z.string().min(1),
-  price: z.coerce.number().positive("Price must be greater than 0"),
-  active: z.coerce.number().default(1),
-});
+const NO_TABLE_VALUE = "__none__";
 
 const orderFormSchema = z.object({
   outlet: z.string().min(1),
@@ -39,104 +33,22 @@ const orderFormSchema = z.object({
   orderDate: z.string().min(1),
 });
 
-function MenuItemFormDialog({ item, trigger, defaultCategory }: { item?: MenuItem; trigger: React.ReactNode; defaultCategory?: string }) {
-  const [open, setOpen] = useState(false);
-  const { toast } = useToast();
-  const form = useForm<z.infer<typeof menuItemFormSchema>>({
-    resolver: zodResolver(menuItemFormSchema),
-    defaultValues: item ? { name: item.name, category: item.category, price: item.price, active: item.active } : { name: "", category: defaultCategory ?? "bar", price: 0, active: 1 },
-  });
-
-  // Re-sync the outlet field to the section's default whenever the dialog is
-  // (re)opened for a new item — otherwise a stale value can linger from a
-  // previous open in the same mounted component.
-  useEffect(() => {
-    if (open && !item) {
-      form.reset({ name: "", category: defaultCategory ?? "bar", price: 0, active: 1 });
-    }
-  }, [open]);
-
-  const mutation = useMutation({
-    mutationFn: async (values: z.infer<typeof menuItemFormSchema>) => {
-      if (item) return apiRequest("PATCH", `/api/menu-items/${item.id}`, values);
-      return apiRequest("POST", "/api/menu-items", values);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/menu-items"] });
-      toast({ title: item ? "Item updated" : "Item added" });
-      setOpen(false);
-      form.reset();
-    },
-    onError: (err: Error) => toast({ title: "Something went wrong", description: err.message, variant: "destructive" }),
-  });
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent>
-        <DialogHeader><DialogTitle>{item ? "Edit menu item" : "Add menu item"}</DialogTitle></DialogHeader>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <FormField control={form.control} name="name" render={({ field }) => (
-              <FormItem>
-                <FormLabel>Item name</FormLabel>
-                <FormControl><Input placeholder="e.g. Tusker Lager" {...field} data-testid="input-menu-item-name" /></FormControl>
-                <FormMessage />
-              </FormItem>
-            )} />
-            <div className="grid grid-cols-2 gap-4">
-              <FormField control={form.control} name="category" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Outlet</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <FormControl><SelectTrigger data-testid="select-menu-category"><SelectValue /></SelectTrigger></FormControl>
-                    <SelectContent>
-                      <SelectItem value="bar">Bar</SelectItem>
-                      <SelectItem value="restaurant">Restaurant</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )} />
-              <FormField control={form.control} name="price" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Price (KES)</FormLabel>
-                  <FormControl><Input type="number" {...field} data-testid="input-menu-item-price" /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
-            </div>
-            <FormField control={form.control} name="active" render={({ field }) => (
-              <FormItem className="flex items-center justify-between rounded-md border border-border p-3">
-                <FormLabel className="mb-0">Available on menu</FormLabel>
-                <FormControl>
-                  <Switch checked={field.value === 1} onCheckedChange={(c) => field.onChange(c ? 1 : 0)} data-testid="switch-menu-item-active" />
-                </FormControl>
-              </FormItem>
-            )} />
-            <DialogFooter>
-              <Button type="submit" disabled={mutation.isPending} data-testid="button-save-menu-item">
-                {mutation.isPending ? "Saving..." : "Save item"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function NewOrderDialog({ trigger }: { trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
+  const { data: tables = [] } = useQuery<TableEntity[]>({ queryKey: ["/api/tables"], enabled: open });
   const form = useForm<z.infer<typeof orderFormSchema>>({
     resolver: zodResolver(orderFormSchema),
     defaultValues: { outlet: "bar", reference: "", customerName: "", customerEmail: "", customerPhone: "", orderDate: todayISO() },
   });
 
+  const outletWatch = form.watch("outlet");
+  const availableTables = tables.filter((t) => t.active === 1 && (t.outlet === "both" || t.outlet === outletWatch));
+
   const mutation = useMutation({
     mutationFn: async (values: z.infer<typeof orderFormSchema>) => {
-      const res = await apiRequest("POST", "/api/orders", { ...values, status: "open", paymentMethod: null, totalAmount: 0, notes: null, createdAt: nowTs() });
+      const payload = { ...values, reference: values.reference === NO_TABLE_VALUE ? null : values.reference };
+      const res = await apiRequest("POST", "/api/orders", { ...payload, status: "open", paymentMethod: null, totalAmount: 0, notes: null, createdAt: nowTs() });
       return res.json();
     },
     onSuccess: () => {
@@ -170,8 +82,16 @@ function NewOrderDialog({ trigger }: { trigger: React.ReactNode }) {
             )} />
             <FormField control={form.control} name="reference" render={({ field }) => (
               <FormItem>
-                <FormLabel>Table / room (optional)</FormLabel>
-                <FormControl><Input placeholder="e.g. Table 4 or Room 101" {...field} value={field.value ?? ""} data-testid="input-order-reference" /></FormControl>
+                <FormLabel>Table</FormLabel>
+                <Select onValueChange={field.onChange} value={field.value || NO_TABLE_VALUE}>
+                  <FormControl><SelectTrigger data-testid="select-order-table"><SelectValue placeholder="Choose a table" /></SelectTrigger></FormControl>
+                  <SelectContent>
+                    <SelectItem value={NO_TABLE_VALUE}>No table / walk-in</SelectItem>
+                    {availableTables.map((t) => (
+                      <SelectItem key={t.id} value={t.name}>{t.name}{t.capacity ? ` (seats ${t.capacity})` : ""}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <FormMessage />
               </FormItem>
             )} />
@@ -264,6 +184,8 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
   const [customerName, setCustomerName] = useState(order.customerName ?? "");
   const [customerEmail, setCustomerEmail] = useState(order.customerEmail ?? "");
   const [customerPhone, setCustomerPhone] = useState(order.customerPhone ?? "");
+  const [closePaymentMethod, setClosePaymentMethod] = useState(order.paymentMethod ?? "");
+  const isOpen = order.status === "open";
 
   const updateOrder = useMutation({
     mutationFn: async (data: Partial<Order>) => {
@@ -283,6 +205,25 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
         toast({ title: "Email not sent", description: doc.errorMessage ?? "Check your Settings.", variant: "destructive" });
       }
     },
+  });
+
+  const closeOrder = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/orders/${order.id}`, { status: "paid", paymentMethod: closePaymentMethod });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/documents"] });
+      toast({ title: "Order closed — receipt generated" });
+      const doc = data?._document;
+      if (doc?.status === "sent") {
+        toast({ title: "Receipt emailed", description: "Sent to the customer's email address." });
+      } else if (doc?.status === "failed") {
+        toast({ title: "Email not sent", description: doc.errorMessage ?? "Check your Settings.", variant: "destructive" });
+      }
+    },
+    onError: (err: Error) => toast({ title: "Couldn't close order", description: err.message, variant: "destructive" }),
   });
 
   return (
@@ -308,16 +249,25 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="tabular-nums">{formatKES(it.subtotal)}</span>
-                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => removeItem.mutate(it)} data-testid={`button-remove-order-item-${it.id}`}>
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
+                    {isOpen && (
+                      <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => removeItem.mutate(it)} data-testid={`button-remove-order-item-${it.id}`}>
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))
             )}
           </div>
 
-          {availableMenu.length > 0 && (
+          {!isOpen && (
+            <div className="flex items-center gap-2 rounded-md bg-muted/60 border border-border p-2.5 text-xs text-muted-foreground">
+              <Lock className="h-3.5 w-3.5 shrink-0" />
+              This order is {order.status} — items can no longer be added or removed.
+            </div>
+          )}
+
+          {isOpen && availableMenu.length > 0 && (
             <div className="flex items-end gap-2">
               <div className="flex-1">
                 <Select value={selectedMenuItemId} onValueChange={setSelectedMenuItemId}>
@@ -390,22 +340,11 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Status</label>
-              <Select value={order.status} onValueChange={(v) => updateOrder.mutate({ status: v })}>
-                <SelectTrigger data-testid="select-order-status"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="open">Open</SelectItem>
-                  <SelectItem value="paid">Paid</SelectItem>
-                  <SelectItem value="cancelled">Cancelled</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Payment method</label>
-              <Select value={order.paymentMethod ?? undefined} onValueChange={(v) => updateOrder.mutate({ paymentMethod: v })}>
-                <SelectTrigger data-testid="select-payment-method"><SelectValue placeholder="Select" /></SelectTrigger>
+          {isOpen ? (
+            <div className="space-y-2 rounded-md border border-border p-3">
+              <label className="text-xs font-medium text-muted-foreground">Payment method (required to close)</label>
+              <Select value={closePaymentMethod} onValueChange={setClosePaymentMethod}>
+                <SelectTrigger data-testid="select-payment-method"><SelectValue placeholder="Select payment method" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="cash">Cash</SelectItem>
                   <SelectItem value="mpesa">M-Pesa</SelectItem>
@@ -413,8 +352,37 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
                   <SelectItem value="room_charge">Room charge</SelectItem>
                 </SelectContent>
               </Select>
+              <Button
+                className="w-full"
+                disabled={!closePaymentMethod || items.length === 0 || closeOrder.isPending}
+                onClick={() => closeOrder.mutate()}
+                data-testid="button-close-and-receipt"
+              >
+                <CheckCircle2 className="h-4 w-4 mr-1.5" /> {closeOrder.isPending ? "Closing..." : "Close & Generate Receipt"}
+              </Button>
+              {items.length === 0 && <p className="text-xs text-muted-foreground">Add at least one item before closing.</p>}
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="ghost" size="sm" className="w-full text-destructive" data-testid="button-cancel-order-inline">Cancel this order instead</Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Cancel this order?</AlertDialogTitle>
+                    <AlertDialogDescription>No receipt will be generated. This marks the order as cancelled.</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Back</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => updateOrder.mutate({ status: "cancelled" })}>Cancel order</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
-          </div>
+          ) : (
+            <div className="rounded-md bg-muted p-3 text-sm flex items-center justify-between">
+              <span className="text-muted-foreground">Status</span>
+              <Badge variant={statusVariant[order.status]}>{titleCase(order.status)}</Badge>
+            </div>
+          )}
         </div>
 
         <DialogFooter>
@@ -436,10 +404,6 @@ export default function BarRestaurant() {
   const { data: menuItems = [], isLoading: menuLoading } = useQuery<MenuItem[]>({ queryKey: ["/api/menu-items"] });
   const { data: orders = [], isLoading: ordersLoading } = useQuery<Order[]>({ queryKey: ["/api/orders"] });
 
-  const deleteMenuItem = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/menu-items/${id}`),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/menu-items"] }); toast({ title: "Item removed" }); },
-  });
   const deleteOrder = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/orders/${id}`),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/orders"] }); toast({ title: "Order removed" }); },
@@ -535,16 +499,19 @@ export default function BarRestaurant() {
         </TabsContent>
 
         <TabsContent value="menu" className="mt-4 space-y-6">
+          <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+            <Info className="h-4 w-4 shrink-0" />
+            Menu items are managed on the <Link href="/lists" className="font-medium text-foreground underline underline-offset-2">Lists</Link> page. This view is read-only.
+          </div>
           {([{ key: "bar", label: "Bar menu", list: barMenu, icon: Wine }, { key: "restaurant", label: "Restaurant menu", list: restaurantMenu, icon: UtensilsCrossed }] as const).map(({ key, label, list, icon: Icon }) => (
             <Card key={key}>
               <div className="flex items-center justify-between p-4 border-b border-card-border">
                 <h2 className="text-lg font-semibold flex items-center gap-2"><Icon className="h-4 w-4" /> {label}</h2>
-                <MenuItemFormDialog defaultCategory={key} trigger={<Button size="sm" variant="outline" data-testid={`button-new-menu-item-${key}`}><Plus className="h-4 w-4 mr-1" /> Add item</Button>} />
               </div>
               {menuLoading ? (
                 <div className="p-6 text-sm text-muted-foreground">Loading menu…</div>
               ) : list.length === 0 ? (
-                <div className="p-8 text-center text-sm text-muted-foreground">No items yet.</div>
+                <div className="p-8 text-center text-sm text-muted-foreground">No items yet. Add some from the Lists page.</div>
               ) : (
                 <div className="overflow-x-auto">
                   <Table>
@@ -553,7 +520,6 @@ export default function BarRestaurant() {
                         <TableHead>Item</TableHead>
                         <TableHead className="text-right">Price</TableHead>
                         <TableHead>Availability</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -562,28 +528,6 @@ export default function BarRestaurant() {
                           <TableCell className="font-medium">{m.name}</TableCell>
                           <TableCell className="text-right tabular-nums">{formatKES(m.price)}</TableCell>
                           <TableCell><Badge variant={m.active ? "secondary" : "outline"}>{m.active ? "On menu" : "Hidden"}</Badge></TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex justify-end gap-1">
-                              <MenuItemFormDialog item={m} trigger={
-                                <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-menu-item-${m.id}`}><Pencil className="h-4 w-4" /></Button>
-                              } />
-                              <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                  <Button size="icon" variant="ghost" title="Delete" data-testid={`button-delete-menu-item-${m.id}`}><Trash2 className="h-4 w-4" /></Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                  <AlertDialogHeader>
-                                    <AlertDialogTitle>Remove {m.name}?</AlertDialogTitle>
-                                    <AlertDialogDescription>It will no longer be selectable on new orders.</AlertDialogDescription>
-                                  </AlertDialogHeader>
-                                  <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => deleteMenuItem.mutate(m.id)}>Remove</AlertDialogAction>
-                                  </AlertDialogFooter>
-                                </AlertDialogContent>
-                              </AlertDialog>
-                            </div>
-                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

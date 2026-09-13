@@ -16,6 +16,7 @@ export type ReportSheetKey =
   | "bar-restaurant"
   | "staff"
   | "expenses"
+  | "maintenance"
   | "taxes";
 
 export const REPORT_SHEET_LABELS: Record<ReportSheetKey, string> = {
@@ -24,7 +25,8 @@ export const REPORT_SHEET_LABELS: Record<ReportSheetKey, string> = {
   facilities: "Conference & Movie Room",
   "bar-restaurant": "Bar & Restaurant",
   staff: "Staff & Payroll",
-  expenses: "Expenses & Maintenance",
+  expenses: "Expenses",
+  maintenance: "Maintenance",
   taxes: "Taxes",
 };
 
@@ -510,6 +512,66 @@ async function buildExpensesSheet(wb: ExcelJS.Workbook, storage: IStorage, hotel
   autosizeColumns(ws, [10, 11, 14, 30, 14, 18, 20]);
 }
 
+async function buildMaintenanceSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, from?: string, to?: string) {
+  const ws = wb.addWorksheet("Maintenance");
+  const cols = ["Ref", "Reported", "Category", "Title", "Location", "Priority", "Status", "Reported by", "Resolved", "Closed"];
+  addTitleBlock(ws, hotelName, "Maintenance Issues", from, to, "J");
+
+  const issues = await storage.listMaintenanceIssues();
+  const inWindow = (ts: number) => {
+    const d = new Date(ts).toISOString().slice(0, 10);
+    return inRange(d, from, to);
+  };
+  const filtered = issues.filter((i) => inWindow(i.createdAt)).sort((a, b) => b.createdAt - a.createdAt);
+
+  const header = ws.addRow(cols);
+  styleHeaderRow(header);
+
+  const byCategory = new Map<string, number>();
+  const byStatus = new Map<string, number>();
+  filtered.forEach((i) => {
+    byCategory.set(i.category, (byCategory.get(i.category) ?? 0) + 1);
+    byStatus.set(i.status, (byStatus.get(i.status) ?? 0) + 1);
+    const row = ws.addRow([
+      i.id,
+      new Date(i.createdAt).toISOString().slice(0, 10),
+      titleCase(i.category),
+      i.title,
+      i.location ?? "—",
+      titleCase(i.priority),
+      titleCase(i.status),
+      i.reportedBy,
+      i.resolvedAt ? new Date(i.resolvedAt).toISOString().slice(0, 10) : "—",
+      i.closedAt ? new Date(i.closedAt).toISOString().slice(0, 10) : "—",
+    ]);
+    if (i.status === "open" || i.status === "in_progress") {
+      row.eachCell((c) => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HIGHLIGHT } }; });
+    }
+  });
+
+  if (filtered.length === 0) {
+    ws.addRow(["No maintenance issues reported in this period."]);
+  }
+  ws.addRow([]);
+
+  const catHeader = ws.addRow(["Category", "Issues"]);
+  styleHeaderRow(catHeader);
+  Array.from(byCategory.entries()).sort((a, b) => b[1] - a[1]).forEach(([cat, count]) => {
+    ws.addRow([titleCase(cat), count]);
+  });
+  ws.addRow([]);
+
+  const statusHeader = ws.addRow(["Status", "Issues"]);
+  styleHeaderRow(statusHeader);
+  Array.from(byStatus.entries()).forEach(([status, count]) => {
+    ws.addRow([titleCase(status), count]);
+  });
+
+  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: cols.length } };
+  ws.views = [{ state: "frozen", ySplit: 4 }];
+  autosizeColumns(ws, [8, 12, 14, 30, 18, 10, 14, 20, 12, 12]);
+}
+
 async function buildTaxesSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, from?: string, to?: string) {
   const ws = wb.addWorksheet("Taxes");
   addTitleBlock(ws, hotelName, "Tax Collected (inclusive pricing)", from, to, "E");
@@ -600,6 +662,7 @@ export async function buildReportsWorkbook(
   if (include("bar-restaurant")) await buildBarRestaurantSheets(wb, storage, hotelName, from, to);
   if (include("staff")) await buildStaffSheet(wb, storage, hotelName);
   if (include("expenses")) await buildExpensesSheet(wb, storage, hotelName, from, to);
+  if (include("maintenance")) await buildMaintenanceSheet(wb, storage, hotelName, from, to);
   if (include("taxes")) await buildTaxesSheet(wb, storage, hotelName, from, to);
 
   return wb;

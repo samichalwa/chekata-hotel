@@ -11,6 +11,8 @@ import {
   FileText,
   Settings as SettingsIcon,
   LogOut,
+  Wrench,
+  ClipboardList,
 } from "lucide-react";
 import {
   Sidebar,
@@ -37,6 +39,8 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Bar & Restaurant", url: "/bar-restaurant", icon: UtensilsCrossed, key: "bar-restaurant" },
   { title: "Staff", url: "/staff", icon: Users, key: "staff" },
   { title: "Expenses", url: "/expenses", icon: Receipt, key: "expenses" },
+  { title: "Maintenance", url: "/maintenance", icon: Wrench, key: "maintenance" },
+  { title: "Lists", url: "/lists", icon: ClipboardList, key: "lists" },
   { title: "Reports", url: "/reports", icon: FileBarChart, key: "reports" },
   { title: "Invoices & Receipts", url: "/documents", icon: FileText, key: "documents" },
   { title: "Settings", url: "/settings", icon: SettingsIcon, key: "settings" },

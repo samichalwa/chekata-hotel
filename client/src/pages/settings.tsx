@@ -547,6 +547,9 @@ const userFormSchema = z.object({
   active: z.boolean(),
   permissions: z.array(z.string()),
   canEditMovieBookings: z.boolean(),
+  canManageTablesList: z.boolean(),
+  canManageMenuItemsList: z.boolean(),
+  canCloseMaintenanceIssues: z.boolean(),
 });
 
 type UserFormValues = z.infer<typeof userFormSchema>;
@@ -562,13 +565,20 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
       })
     ),
     defaultValues: user
-      ? { fullName: user.fullName, username: user.username, password: "", isAdmin: !!user.isAdmin, active: !!user.active, permissions: JSON.parse(user.permissions || "[]"), canEditMovieBookings: !!user.canEditMovieBookings }
-      : { fullName: "", username: "", password: "", isAdmin: false, active: true, permissions: [], canEditMovieBookings: false },
+      ? {
+          fullName: user.fullName, username: user.username, password: "", isAdmin: !!user.isAdmin, active: !!user.active,
+          permissions: JSON.parse(user.permissions || "[]"), canEditMovieBookings: !!user.canEditMovieBookings,
+          canManageTablesList: !!user.canManageTablesList, canManageMenuItemsList: !!user.canManageMenuItemsList,
+          canCloseMaintenanceIssues: !!user.canCloseMaintenanceIssues,
+        }
+      : { fullName: "", username: "", password: "", isAdmin: false, active: true, permissions: [], canEditMovieBookings: false, canManageTablesList: false, canManageMenuItemsList: false, canCloseMaintenanceIssues: false },
   });
 
   const isAdminWatch = form.watch("isAdmin");
   const permissionsWatch = form.watch("permissions");
   const hasMovieRoomAccess = isAdminWatch || (permissionsWatch as string[]).includes("movie-room");
+  const hasListsAccess = isAdminWatch || (permissionsWatch as string[]).includes("lists");
+  const hasMaintenanceAccess = isAdminWatch || (permissionsWatch as string[]).includes("maintenance");
 
   const mutation = useMutation({
     mutationFn: async (values: UserFormValues) => {
@@ -661,6 +671,45 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
                   </div>
                   <FormControl>
                     <Switch checked={isAdminWatch || field.value} disabled={isAdminWatch} onCheckedChange={field.onChange} data-testid="switch-user-can-edit-movie-bookings" />
+                  </FormControl>
+                </FormItem>
+              )} />
+            )}
+            {hasListsAccess && (
+              <FormField control={form.control} name="canManageTablesList" render={({ field }) => (
+                <FormItem className="flex items-center justify-between rounded-md border border-border p-3">
+                  <div>
+                    <FormLabel className="mb-0">Can manage Tables list</FormLabel>
+                    <FormDescription>Allows adding, editing, and removing bar/restaurant table numbers. Without this, the Lists page is view-only for tables.</FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch checked={isAdminWatch || field.value} disabled={isAdminWatch} onCheckedChange={field.onChange} data-testid="switch-user-can-manage-tables-list" />
+                  </FormControl>
+                </FormItem>
+              )} />
+            )}
+            {hasListsAccess && (
+              <FormField control={form.control} name="canManageMenuItemsList" render={({ field }) => (
+                <FormItem className="flex items-center justify-between rounded-md border border-border p-3">
+                  <div>
+                    <FormLabel className="mb-0">Can manage Menu Items list</FormLabel>
+                    <FormDescription>Allows adding, editing, and removing bar/restaurant menu items. Without this, the Lists page is view-only for menu items.</FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch checked={isAdminWatch || field.value} disabled={isAdminWatch} onCheckedChange={field.onChange} data-testid="switch-user-can-manage-menu-items-list" />
+                  </FormControl>
+                </FormItem>
+              )} />
+            )}
+            {hasMaintenanceAccess && (
+              <FormField control={form.control} name="canCloseMaintenanceIssues" render={({ field }) => (
+                <FormItem className="flex items-center justify-between rounded-md border border-border p-3">
+                  <div>
+                    <FormLabel className="mb-0">Can close maintenance issues</FormLabel>
+                    <FormDescription>Allows marking a resolved issue as closed. Admins always have this right.</FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch checked={isAdminWatch || field.value} disabled={isAdminWatch} onCheckedChange={field.onChange} data-testid="switch-user-can-close-maintenance-issues" />
                   </FormControl>
                 </FormItem>
               )} />

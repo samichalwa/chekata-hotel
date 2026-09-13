@@ -17,6 +17,8 @@ import MovieRoom from "@/pages/movie-room";
 import BarRestaurant from "@/pages/bar-restaurant";
 import Staff from "@/pages/staff";
 import Expenses from "@/pages/expenses";
+import Maintenance from "@/pages/maintenance";
+import ListsPage from "@/pages/lists";
 import Reports from "@/pages/reports";
 import Documents from "@/pages/documents";
 import SettingsPage from "@/pages/settings";
@@ -48,6 +50,8 @@ function AppRouter() {
       <Route path="/bar-restaurant" component={() => <Guarded moduleKey="bar-restaurant" component={BarRestaurant} />} />
       <Route path="/staff" component={() => <Guarded moduleKey="staff" component={Staff} />} />
       <Route path="/expenses" component={() => <Guarded moduleKey="expenses" component={Expenses} />} />
+      <Route path="/maintenance" component={() => <Guarded moduleKey="maintenance" component={Maintenance} />} />
+      <Route path="/lists" component={() => <Guarded moduleKey="lists" component={ListsPage} />} />
       <Route path="/reports" component={() => <Guarded moduleKey="reports" component={Reports} />} />
       <Route path="/documents" component={() => <Guarded moduleKey="documents" component={Documents} />} />
       <Route path="/settings" component={() => <Guarded moduleKey="settings" component={SettingsPage} />} />

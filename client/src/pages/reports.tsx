@@ -10,7 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { formatKES, todayISO, titleCase, formatDate, nightsBetween } from "@/lib/format";
-import type { AccommodationBooking, Facility, FacilityBooking, Order, Staff, Expense, Room, MovieShow, MovieSeatBooking } from "@shared/schema";
+import type { AccommodationBooking, Facility, FacilityBooking, Order, Staff, Expense, Room, MovieShow, MovieSeatBooking, MaintenanceIssue, MaintenanceCategory } from "@shared/schema";
+import { MAINTENANCE_CATEGORY_LABELS } from "@shared/schema";
 
 function firstOfMonthISO(): string {
   const d = new Date();
@@ -19,7 +20,7 @@ function firstOfMonthISO(): string {
 
 const CHART_COLORS = ["hsl(var(--chart-1))", "hsl(var(--chart-2))", "hsl(var(--chart-3))", "hsl(var(--chart-4))", "hsl(var(--chart-5))"];
 
-type ExportSheet = "all" | "overview" | "accommodation" | "facilities" | "bar-restaurant" | "staff" | "expenses";
+type ExportSheet = "all" | "overview" | "accommodation" | "facilities" | "bar-restaurant" | "staff" | "expenses" | "maintenance";
 
 function exportUrl(sheet: ExportSheet, fromDate: string, toDate: string): string {
   const params = new URLSearchParams();
@@ -53,6 +54,7 @@ export default function Reports() {
   const { data: expenses = [] } = useQuery<Expense[]>({ queryKey: ["/api/expenses"] });
   const { data: movieShows = [] } = useQuery<MovieShow[]>({ queryKey: ["/api/movie-shows"] });
   const { data: movieSeatBookings = [] } = useQuery<MovieSeatBooking[]>({ queryKey: ["/api/movie-seat-bookings"] });
+  const { data: maintenanceIssues = [] } = useQuery<MaintenanceIssue[]>({ queryKey: ["/api/maintenance-issues"] });
 
   const inRange = (d: string) => (!fromDate || d >= fromDate) && (!toDate || d <= toDate);
 
@@ -150,6 +152,12 @@ export default function Reports() {
     [orders, fromDate, toDate]
   );
 
+  const maintenanceInRange = useMemo(
+    () => maintenanceIssues.filter((i) => inRange(new Date(i.createdAt).toISOString().slice(0, 10))).sort((a, b) => b.createdAt - a.createdAt),
+    [maintenanceIssues, fromDate, toDate]
+  );
+  const openMaintenanceCount = useMemo(() => maintenanceInRange.filter((i) => i.status === "open" || i.status === "in_progress").length, [maintenanceInRange]);
+
   const departmentSummary = useMemo(() => {
     const map = new Map<string, { count: number; payroll: number }>();
     activeStaff.forEach((s) => {
@@ -197,7 +205,8 @@ export default function Reports() {
           <TabsTrigger value="facilities" data-testid="tab-report-facilities">Conference &amp; Movie Room</TabsTrigger>
           <TabsTrigger value="bar-restaurant" data-testid="tab-report-bar-restaurant">Bar &amp; Restaurant</TabsTrigger>
           <TabsTrigger value="staff" data-testid="tab-report-staff">Personnel &amp; Payroll</TabsTrigger>
-          <TabsTrigger value="expenses" data-testid="tab-report-expenses">Expenses &amp; Maintenance</TabsTrigger>
+          <TabsTrigger value="expenses" data-testid="tab-report-expenses">Expenses</TabsTrigger>
+          <TabsTrigger value="maintenance" data-testid="tab-report-maintenance">Maintenance</TabsTrigger>
         </TabsList>
 
         {/* Overview */}
@@ -527,7 +536,7 @@ export default function Reports() {
           </Card>
         </TabsContent>
 
-        {/* Expenses & Maintenance */}
+        {/* Expenses */}
         <TabsContent value="expenses" className="space-y-4 mt-4">
           <div className="flex justify-end">
             <ExportButton sheet="expenses" fromDate={fromDate} toDate={toDate} label="Export expenses report" />
@@ -593,6 +602,51 @@ export default function Reports() {
                   {expensesByCategory.size === 0 && (
                     <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-6">No expenses in this period.</TableCell></TableRow>
                   )}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </TabsContent>
+
+        {/* Maintenance */}
+        <TabsContent value="maintenance" className="space-y-4 mt-4">
+          <div className="flex justify-end">
+            <ExportButton sheet="maintenance" fromDate={fromDate} toDate={toDate} label="Export maintenance report" />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <StatCard label="Open / in progress" value={String(openMaintenanceCount)} icon={Wrench} accent="warning" testId="stat-report-maintenance-open" />
+            <StatCard label="Issues logged this period" value={String(maintenanceInRange.length)} icon={FileSpreadsheet} accent="muted" testId="stat-report-maintenance-count" />
+          </div>
+          <Card>
+            <div className="p-4 border-b border-card-border">
+              <h2 className="text-lg font-semibold">Maintenance issue log</h2>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Ref</TableHead>
+                    <TableHead>Reported</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead>Title</TableHead>
+                    <TableHead>Priority</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {maintenanceInRange.length === 0 && (
+                    <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-6">No maintenance issues in this period.</TableCell></TableRow>
+                  )}
+                  {maintenanceInRange.map((i) => (
+                    <TableRow key={i.id} data-testid={`row-report-maintenance-${i.id}`}>
+                      <TableCell className="font-mono text-xs">#{i.id}</TableCell>
+                      <TableCell>{formatDate(new Date(i.createdAt).toISOString().slice(0, 10))}</TableCell>
+                      <TableCell><Badge variant="outline">{MAINTENANCE_CATEGORY_LABELS[i.category as MaintenanceCategory] ?? titleCase(i.category)}</Badge></TableCell>
+                      <TableCell>{i.title}</TableCell>
+                      <TableCell>{titleCase(i.priority)}</TableCell>
+                      <TableCell><Badge variant={i.status === "open" ? "destructive" : i.status === "closed" ? "outline" : "secondary"}>{titleCase(i.status)}</Badge></TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
             </div>

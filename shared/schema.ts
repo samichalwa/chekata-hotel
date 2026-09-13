@@ -164,6 +164,61 @@ export const insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: t
 export type InsertOrderItem = z.infer<typeof insertOrderItemSchema>;
 export type OrderItem = typeof orderItems.$inferSelect;
 
+// ---------- Bar & Restaurant / general: Tables list (editable, admin-managed) ----------
+export const tables = pgTable("tables", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(), // e.g. "Table 1", "Bar Stool 3"
+  outlet: text("outlet").notNull().default("both"), // bar | restaurant | both
+  capacity: integer("capacity"),
+  active: integer("active").notNull().default(1),
+});
+
+export const insertTableSchema = createInsertSchema(tables).omit({ id: true });
+export type InsertTableRow = z.infer<typeof insertTableSchema>;
+export type TableRow = typeof tables.$inferSelect;
+
+// ---------- Maintenance: issue register ----------
+export const MAINTENANCE_CATEGORIES = [
+  "electrical", "plumbing", "masonry", "welding", "grounds", "carpentry", "paint", "tiling", "other",
+] as const;
+export type MaintenanceCategory = typeof MAINTENANCE_CATEGORIES[number];
+export const MAINTENANCE_CATEGORY_LABELS: Record<MaintenanceCategory, string> = {
+  electrical: "Electrical",
+  plumbing: "Plumbing",
+  masonry: "Masonry",
+  welding: "Welding",
+  grounds: "Grounds",
+  carpentry: "Carpentry",
+  paint: "Paint",
+  tiling: "Tiling",
+  other: "Others",
+};
+
+export const MAINTENANCE_STATUSES = ["open", "in_progress", "resolved", "closed"] as const;
+export type MaintenanceStatus = typeof MAINTENANCE_STATUSES[number];
+
+export const maintenanceIssues = pgTable("maintenance_issues", {
+  id: serial("id").primaryKey(),
+  category: text("category").notNull(),
+  title: text("title").notNull(),
+  location: text("location"),
+  description: text("description"),
+  reportedBy: text("reported_by").notNull(),
+  reportedPhone: text("reported_phone"),
+  priority: text("priority").notNull().default("normal"), // low | normal | high | urgent
+  status: text("status").notNull().default("open"), // open | in_progress | resolved | closed
+  assignedTo: text("assigned_to"),
+  notes: text("notes"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  resolvedAt: bigint("resolved_at", { mode: "number" }),
+  closedAt: bigint("closed_at", { mode: "number" }),
+  closedBy: text("closed_by"),
+});
+
+export const insertMaintenanceIssueSchema = createInsertSchema(maintenanceIssues).omit({ id: true });
+export type InsertMaintenanceIssue = z.infer<typeof insertMaintenanceIssueSchema>;
+export type MaintenanceIssue = typeof maintenanceIssues.$inferSelect;
+
 // ---------- Staff ----------
 export const staff = pgTable("staff", {
   id: serial("id").primaryKey(),
@@ -249,6 +304,8 @@ export const MODULE_KEYS = [
   "bar-restaurant",
   "staff",
   "expenses",
+  "maintenance",
+  "lists",
   "reports",
   "documents",
   "settings",
@@ -263,6 +320,8 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   "bar-restaurant": "Bar & Restaurant",
   staff: "Staff",
   expenses: "Expenses",
+  maintenance: "Maintenance",
+  lists: "Lists",
   reports: "Reports",
   documents: "Invoices & Receipts",
   settings: "Settings",
@@ -277,6 +336,9 @@ export const users = pgTable("users", {
   isAdmin: integer("is_admin").notNull().default(0),
   permissions: text("permissions").notNull().default("[]"), // JSON array of ModuleKey
   canEditMovieBookings: integer("can_edit_movie_bookings").notNull().default(0), // extra right: edit/cancel an already-entered movie seat booking
+  canManageTablesList: integer("can_manage_tables_list").notNull().default(0), // Lists module: edit the Tables list
+  canManageMenuItemsList: integer("can_manage_menu_items_list").notNull().default(0), // Lists module: edit the Menu Items list
+  canCloseMaintenanceIssues: integer("can_close_maintenance_issues").notNull().default(0), // Maintenance module: close a reported issue
   active: integer("active").notNull().default(1),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
