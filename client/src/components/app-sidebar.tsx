@@ -23,9 +23,10 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { Logo } from "@/components/logo";
+import { useQuery } from "@tanstack/react-query";
+import chekataLogo from "@/assets/chekata-logo.jpg";
 import { useCurrentUser, useLogout, canAccess } from "@/hooks/use-auth";
-import type { ModuleKey } from "@shared/schema";
+import type { ModuleKey, Settings } from "@shared/schema";
 
 const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard, key: "dashboard" },
@@ -42,17 +43,25 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
 export function AppSidebar() {
   const [location] = useLocation();
   const { data: user } = useCurrentUser();
+  const { data: settings } = useQuery<Settings>({ queryKey: ["/api/settings"] });
   const logout = useLogout();
 
   const visibleItems = items.filter((item) => canAccess(user, item.key));
+  const hotelName = settings?.hotelName || "The Chekata";
+  const copyrightYear = new Date().getFullYear();
 
   return (
     <Sidebar>
       <SidebarHeader>
         <div className="flex items-center gap-2 px-2 py-1.5 text-sidebar-foreground">
-          <Logo className="h-6 w-6 text-sidebar-primary shrink-0" />
+          <img
+            src={chekataLogo}
+            alt={`${hotelName} logo`}
+            className="h-8 w-8 shrink-0 rounded-md object-cover"
+            data-testid="img-sidebar-logo"
+          />
           <div className="flex flex-col leading-tight">
-            <span className="text-sm font-semibold">The Chekata</span>
+            <span className="text-sm font-semibold" data-testid="text-sidebar-hotel-name">{hotelName}</span>
             <span className="text-xs text-sidebar-foreground/60">Highway Hotel</span>
           </div>
         </div>
@@ -96,6 +105,9 @@ export function AppSidebar() {
         )}
         <div className="px-2 py-1.5 text-xs text-sidebar-foreground/50">
           Currency: KES · All figures in Kenyan Shillings
+        </div>
+        <div className="px-2 pb-1.5 text-[11px] text-sidebar-foreground/40" data-testid="text-copyright">
+          © {copyrightYear} {hotelName}. All rights reserved.
         </div>
       </SidebarFooter>
     </Sidebar>
