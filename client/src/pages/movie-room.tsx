@@ -236,9 +236,16 @@ function SeatGrid({
 function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: MovieSeatBooking[] }) {
   const { toast } = useToast();
   const bookableShows = useMemo(
-    () => [...shows].filter((s) => s.status !== "cancelled").sort((a, b) => (a.showDate + a.startTime).localeCompare(b.showDate + b.startTime)),
+    () => [...shows].filter((s) => s.status !== "cancelled" && s.status !== "completed").sort((a, b) => (a.showDate + a.startTime).localeCompare(b.showDate + b.startTime)),
     [shows],
   );
+
+  const [showFilter, setShowFilter] = useState("");
+  const filteredShows = useMemo(() => {
+    const q = showFilter.trim().toLowerCase();
+    if (!q) return bookableShows;
+    return bookableShows.filter((s) => s.name.toLowerCase().includes(q) || s.showDate.includes(q));
+  }, [bookableShows, showFilter]);
 
   const [showId1, setShowId1] = useState<number | null>(null);
   const [seats1, setSeats1] = useState<Set<string>>(new Set());
@@ -332,12 +339,22 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
           <Ticket className="h-4 w-4 text-primary" />
           <h3 className="font-semibold">Show 1</h3>
         </div>
+        <Input
+          value={showFilter}
+          onChange={(e) => setShowFilter(e.target.value)}
+          placeholder="Filter shows by name or date (YYYY-MM-DD)"
+          data-testid="input-filter-shows"
+        />
         <Select onValueChange={(v) => { setShowId1(Number(v)); setSeats1(new Set()); }} value={showId1 ? String(showId1) : undefined}>
           <SelectTrigger data-testid="select-booking-show-1"><SelectValue placeholder="Choose a movie / event" /></SelectTrigger>
           <SelectContent>
-            {bookableShows.map((s) => (
-              <SelectItem key={s.id} value={String(s.id)}>{s.name} — {showTimeLabel(s)} ({formatKES(s.ticketPrice)}/seat)</SelectItem>
-            ))}
+            {filteredShows.length === 0 ? (
+              <div className="px-3 py-2 text-sm text-muted-foreground">No shows match this filter</div>
+            ) : (
+              filteredShows.map((s) => (
+                <SelectItem key={s.id} value={String(s.id)}>{s.name} — {showTimeLabel(s)} ({formatKES(s.ticketPrice)}/seat)</SelectItem>
+              ))
+            )}
           </SelectContent>
         </Select>
         <SeatGrid showId={showId1} bookings={bookings} selected={seats1} onToggle={(r, n) => toggleSeat(1, r, n)} />
@@ -361,9 +378,13 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
           <Select onValueChange={(v) => { setShowId2(Number(v)); setSeats2(new Set()); }} value={showId2 ? String(showId2) : undefined}>
             <SelectTrigger data-testid="select-booking-show-2"><SelectValue placeholder="Choose a second movie / event" /></SelectTrigger>
             <SelectContent>
-              {bookableShows.filter((s) => s.id !== showId1).map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>{s.name} — {showTimeLabel(s)} ({formatKES(s.ticketPrice)}/seat)</SelectItem>
-              ))}
+              {filteredShows.filter((s) => s.id !== showId1).length === 0 ? (
+                <div className="px-3 py-2 text-sm text-muted-foreground">No shows match this filter</div>
+              ) : (
+                filteredShows.filter((s) => s.id !== showId1).map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>{s.name} — {showTimeLabel(s)} ({formatKES(s.ticketPrice)}/seat)</SelectItem>
+                ))
+              )}
             </SelectContent>
           </Select>
           <SeatGrid showId={showId2} bookings={bookings} selected={seats2} onToggle={(r, n) => toggleSeat(2, r, n)} />
@@ -737,9 +758,13 @@ export default function MovieRoom() {
                         <TableCell><Badge variant={showStatusVariant[s.status] ?? "secondary"}>{titleCase(s.status)}</Badge></TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
-                            <ShowFormDialog show={s} trigger={
-                              <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-show-${s.id}`}><Pencil className="h-4 w-4" /></Button>
-                            } />
+                            {s.status === "completed" && !currentUser?.isAdmin ? (
+                              <Button size="icon" variant="ghost" disabled title="Only an administrator can edit a completed show" data-testid={`button-edit-show-${s.id}`}><Pencil className="h-4 w-4" /></Button>
+                            ) : (
+                              <ShowFormDialog show={s} trigger={
+                                <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-show-${s.id}`}><Pencil className="h-4 w-4" /></Button>
+                              } />
+                            )}
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button size="icon" variant="ghost" title="Delete" data-testid={`button-delete-show-${s.id}`}><Trash2 className="h-4 w-4" /></Button>

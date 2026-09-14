@@ -528,8 +528,15 @@ export async function registerRoutes(
   });
   app.patch("/api/movie-shows/:id", requireModule("movie-room"), async (req, res) => {
     try {
+      const id = Number(req.params.id);
+      const before = await storage.getMovieShow(id);
+      if (!before) return res.status(404).json({ error: "Show not found" });
+      const currentUser = (req as any).user;
+      if (before.status === "completed" && !currentUser.isAdmin) {
+        return res.status(403).json({ error: "Only an administrator can edit a completed show." });
+      }
       const data = insertMovieShowSchema.partial().parse(req.body);
-      const updated = await storage.updateMovieShow(Number(req.params.id), data);
+      const updated = await storage.updateMovieShow(id, data);
       if (!updated) return res.status(404).json({ error: "Show not found" });
       res.json(updated);
     } catch (err) { handleZodError(res, err); }
