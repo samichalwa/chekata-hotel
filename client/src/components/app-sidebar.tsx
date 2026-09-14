@@ -18,6 +18,8 @@ import {
   Package,
   ShoppingCart,
   ClipboardCheck,
+  Building2,
+  ChefHat,
 } from "lucide-react";
 import {
   Sidebar,
@@ -42,6 +44,8 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Conference & Movie Room", url: "/facilities", icon: PartyPopper, key: "facilities" },
   { title: "Movie Room (Seats)", url: "/movie-room", icon: Clapperboard, key: "movie-room" },
   { title: "Bar & Restaurant", url: "/bar-restaurant", icon: UtensilsCrossed, key: "bar-restaurant" },
+  { title: "F&B Costing", url: "/fnb-costing", icon: ChefHat, key: "fnb-costing" },
+  { title: "Tenants", url: "/tenants", icon: Building2, key: "tenants" },
   { title: "Staff", url: "/staff", icon: Users, key: "staff" },
   { title: "Expenses", url: "/expenses", icon: Receipt, key: "expenses" },
   { title: "Maintenance", url: "/maintenance", icon: Wrench, key: "maintenance" },

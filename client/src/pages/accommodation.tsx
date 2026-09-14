@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Pencil, Trash2, LogIn, LogOut, BedDouble, MessageCircle } from "lucide-react";
+import { Plus, Pencil, Trash2, LogIn, LogOut, BedDouble, MessageCircle, IdCard, Upload } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -20,7 +20,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatKES, formatDate, nightsBetween, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
-import type { Room, AccommodationBooking } from "@shared/schema";
+import type { Room, AccommodationBooking, GuestIdentityDocument } from "@shared/schema";
 
 const roomFormSchema = z.object({
   name: z.string().min(1, "Room name is required"),
@@ -35,6 +35,7 @@ const bookingFormSchema = z.object({
   guestName: z.string().min(1, "Guest name is required"),
   guestPhone: z.string().optional().nullable(),
   guestEmail: z.string().optional().nullable().refine((v) => !v || /\S+@\S+\.\S+/.test(v), { message: "Enter a valid email" }),
+  numberOfGuests: z.coerce.number().int().min(1, "At least 1 guest is required").max(2, "A booking cannot have more than 2 guests. Please create a separate booking for additional guests."),
   checkIn: z.string().min(1, "Check-in date is required"),
   checkOut: z.string().min(1, "Check-out date is required"),
   rate: z.coerce.number().nonnegative(),
@@ -44,6 +45,19 @@ const bookingFormSchema = z.object({
   status: z.string().min(1),
   notes: z.string().optional().nullable(),
 });
+
+function fileToBase64(file: File): Promise<{ dataBase64: string; mimeType: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const commaIdx = result.indexOf(",");
+      resolve({ dataBase64: result.slice(commaIdx + 1), mimeType: file.type });
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
 
 function RoomFormDialog({ room, rooms, trigger }: { room?: Room; rooms: Room[]; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -151,13 +165,13 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
     defaultValues: booking
       ? {
           roomId: booking.roomId, guestName: booking.guestName, guestPhone: booking.guestPhone ?? "",
-          guestEmail: booking.guestEmail ?? "",
+          guestEmail: booking.guestEmail ?? "", numberOfGuests: booking.numberOfGuests ?? 1,
           checkIn: booking.checkIn, checkOut: booking.checkOut, rate: booking.rate,
           amountPaid: booking.amountPaid, paymentMethod: booking.paymentMethod ?? "", paymentReference: booking.paymentReference ?? "",
           status: booking.status, notes: booking.notes ?? "",
         }
       : {
-          roomId: rooms[0]?.id ?? 0, guestName: "", guestPhone: "", guestEmail: "", checkIn: "", checkOut: "",
+          roomId: rooms[0]?.id ?? 0, guestName: "", guestPhone: "", guestEmail: "", numberOfGuests: 1, checkIn: "", checkOut: "",
           rate: rooms[0]?.rate ?? 0, amountPaid: 0, paymentMethod: "", paymentReference: "", status: "confirmed", notes: "",
         },
   });
@@ -248,13 +262,22 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                 </FormItem>
               )} />
             </div>
-            <FormField control={form.control} name="guestEmail" render={({ field }) => (
-              <FormItem>
-                <FormLabel>Email (optional — invoice/receipt is emailed here)</FormLabel>
-                <FormControl><Input type="email" placeholder="guest@example.com" {...field} value={field.value ?? ""} data-testid="input-guest-email" /></FormControl>
-                <FormMessage />
-              </FormItem>
-            )} />
+            <div className="grid grid-cols-2 gap-4">
+              <FormField control={form.control} name="guestEmail" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email (optional — invoice/receipt is emailed here)</FormLabel>
+                  <FormControl><Input type="email" placeholder="guest@example.com" {...field} value={field.value ?? ""} data-testid="input-guest-email" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={form.control} name="numberOfGuests" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Number of guests (max 2)</FormLabel>
+                  <FormControl><Input type="number" min={1} max={2} {...field} data-testid="input-number-of-guests" /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <FormField control={form.control} name="checkIn" render={({ field }) => (
                 <FormItem>
@@ -371,6 +394,139 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
   );
 }
 
+function extractErrorMessage(raw: string): string {
+  const match = raw.match(/^\d+:\s*([\s\S]*)$/);
+  const body = match ? match[1] : raw;
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed?.error) return parsed.error;
+  } catch {
+    // not JSON, fall through
+  }
+  return body;
+}
+
+const idTypeLabel: Record<string, string> = { national_id: "National ID", passport: "Passport" };
+
+function IdentityDocumentsDialog({ booking, trigger }: { booking: AccommodationBooking; trigger: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [guestNumber, setGuestNumber] = useState("1");
+  const [guestName, setGuestName] = useState(booking.guestName);
+  const [idType, setIdType] = useState("national_id");
+  const [frontFile, setFrontFile] = useState<File | null>(null);
+  const [backFile, setBackFile] = useState<File | null>(null);
+  const { toast } = useToast();
+
+  const { data: docs = [], isLoading } = useQuery<GuestIdentityDocument[]>({
+    queryKey: ["/api/accommodation-bookings", booking.id, "identity-documents"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/accommodation-bookings/${booking.id}/identity-documents`);
+      return res.json();
+    },
+    enabled: open,
+  });
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      if (!frontFile) throw new Error("A front-of-ID image is required.");
+      if (idType === "national_id" && !backFile) throw new Error("A back-of-ID image is required for a national ID.");
+      const front = await fileToBase64(frontFile);
+      const frontRes = await apiRequest("POST", "/api/accommodation/uploads", { filename: frontFile.name, ...front });
+      const { url: frontImageUrl } = await frontRes.json();
+      let backImageUrl: string | undefined;
+      if (backFile) {
+        const back = await fileToBase64(backFile);
+        const backRes = await apiRequest("POST", "/api/accommodation/uploads", { filename: backFile.name, ...back });
+        backImageUrl = (await backRes.json()).url;
+      }
+      return apiRequest("POST", `/api/accommodation-bookings/${booking.id}/identity-documents`, {
+        guestNumber: Number(guestNumber), guestName, idType, frontImageUrl, backImageUrl,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/accommodation-bookings", booking.id, "identity-documents"] });
+      toast({ title: "ID document recorded" });
+      setFrontFile(null); setBackFile(null);
+    },
+    onError: (err: Error) => toast({ title: "Could not save ID document", description: extractErrorMessage(err.message), variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Guest ID documents — {booking.guestName}</DialogTitle></DialogHeader>
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-sm font-medium mb-2">Recorded documents (max 2 guests per room)</h3>
+            {isLoading ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : docs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No ID documents recorded yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {docs.map((d) => (
+                  <div key={d.id} className="flex items-center justify-between rounded-md border p-2 text-sm" data-testid={`row-identity-doc-${d.id}`}>
+                    <span>Guest {d.guestNumber}: {d.guestName} — {idTypeLabel[d.idType] ?? d.idType}</span>
+                    <div className="flex gap-2">
+                      <a href={d.frontImageUrl} target="_blank" rel="noreferrer" className="text-primary underline text-xs">Front</a>
+                      {d.backImageUrl && <a href={d.backImageUrl} target="_blank" rel="noreferrer" className="text-primary underline text-xs">Back</a>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {docs.length < 2 && (
+            <div className="space-y-3 border-t pt-4">
+              <h3 className="text-sm font-medium">Add a guest ID document</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium">Guest number</label>
+                  <Select onValueChange={setGuestNumber} value={guestNumber}>
+                    <SelectTrigger data-testid="select-id-guest-number"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="1">Guest 1</SelectItem><SelectItem value="2">Guest 2</SelectItem></SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">ID type</label>
+                  <Select onValueChange={setIdType} value={idType}>
+                    <SelectTrigger data-testid="select-id-type"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="national_id">National ID</SelectItem><SelectItem value="passport">Passport</SelectItem></SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Guest name</label>
+                <Input value={guestName} onChange={(e) => setGuestName(e.target.value)} data-testid="input-id-guest-name" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium">Front of ID (photo)</label>
+                  <Input type="file" accept="image/*" onChange={(e) => setFrontFile(e.target.files?.[0] ?? null)} data-testid="input-id-front-image" />
+                </div>
+                {idType === "national_id" && (
+                  <div>
+                    <label className="text-sm font-medium">Back of ID (photo)</label>
+                    <Input type="file" accept="image/*" onChange={(e) => setBackFile(e.target.files?.[0] ?? null)} data-testid="input-id-back-image" />
+                  </div>
+                )}
+              </div>
+              <Button type="button" onClick={() => mutation.mutate()} disabled={mutation.isPending || !guestName || !frontFile} data-testid="button-save-identity-document">
+                <Upload className="h-4 w-4 mr-1" /> {mutation.isPending ? "Uploading..." : "Save ID document"}
+              </Button>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setOpen(false)} data-testid="button-close-identity-documents">Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const statusVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   confirmed: "secondary",
   checked_in: "default",
@@ -476,7 +632,7 @@ export default function Accommodation() {
                       const balance = b.totalAmount - b.amountPaid;
                       return (
                         <TableRow key={b.id} data-testid={`row-booking-${b.id}`}>
-                          <TableCell className="font-medium">{b.guestName}</TableCell>
+                          <TableCell className="font-medium">{b.guestName}{b.numberOfGuests > 1 && <span className="text-xs text-muted-foreground ml-1">({b.numberOfGuests} guests)</span>}</TableCell>
                           <TableCell>{room?.name ?? "—"}</TableCell>
                           <TableCell>{formatDate(b.checkIn)}</TableCell>
                           <TableCell>{formatDate(b.checkOut)}</TableCell>
@@ -495,6 +651,9 @@ export default function Accommodation() {
                                   <LogOut className="h-4 w-4" />
                                 </Button>
                               )}
+                              <IdentityDocumentsDialog booking={b} trigger={
+                                <Button size="icon" variant="ghost" title="Guest ID documents" data-testid={`button-manage-ids-${b.id}`}><IdCard className="h-4 w-4" /></Button>
+                              } />
                               <BookingFormDialog booking={b} rooms={rooms} trigger={
                                 <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-booking-${b.id}`}><Pencil className="h-4 w-4" /></Button>
                               } />

@@ -5,7 +5,8 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { sessionMiddleware } from "./auth";
-import { schemaReady } from "./storage";
+import { schemaReady, storage } from "./storage";
+import { runTenantBillingCycle } from "./billing";
 
 const app = express();
 const httpServer = createServer(app);
@@ -21,6 +22,10 @@ declare module "http" {
 
 app.use(
   express.json({
+    // Raised from the 100kb default so base64-encoded ID-document / lease-document
+    // uploads (POST /api/tenants/uploads, /api/accommodation/uploads) fit in a plain
+    // JSON body instead of needing multipart/form-data.
+    limit: "15mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
@@ -92,6 +97,25 @@ app.use((req, res, next) => {
     const { setupVite } = await import("./vite");
     await setupVite(httpServer, app);
   }
+
+  // Phase 3: tenant rent billing cycle — creates the current-period rent invoice
+  // (and emails its PDF) for every active lease that doesn't have one yet, then
+  // sends SMS + email reminders for unpaid invoices past their configured
+  // reminder window. Idempotent, so re-running (deploy restart, hourly tick) is
+  // always safe. Runs once at boot, then hourly.
+  function runBillingCycleLogged() {
+    runTenantBillingCycle(storage)
+      .then((r) => {
+        log(
+          `tenant billing cycle: ${r.invoicesCreated} invoiced, ${r.invoicesSkipped} skipped, ${r.remindersSent} reminders sent`,
+        );
+        if (r.invoiceErrors.length) log(`tenant billing cycle invoice errors: ${JSON.stringify(r.invoiceErrors)}`);
+        if (r.reminderErrors.length) log(`tenant billing cycle reminder errors: ${JSON.stringify(r.reminderErrors)}`);
+      })
+      .catch((e) => log(`tenant billing cycle failed: ${e?.message ?? e}`));
+  }
+  runBillingCycleLogged();
+  setInterval(runBillingCycleLogged, 60 * 60 * 1000);
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.

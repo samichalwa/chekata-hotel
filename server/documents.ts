@@ -11,12 +11,14 @@ const DOC_CATEGORY_TO_TAX_CATEGORY: Record<string, TaxCategory> = {
   bar: "bar",
   restaurant: "restaurant",
   movie: "facilities",
+  tenancy: "tenancy",
 };
 
 export interface IssueDocumentInput {
   docType: "invoice" | "receipt";
-  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie";
+  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy";
   sourceId: number;
+  customDocNumber?: string; // e.g. a module's own sequence number like RENT-000012
   recipientName: string;
   recipientEmail?: string | null;
   issueDate: string;
@@ -92,6 +94,7 @@ export async function issueDocument(storage: IStorage, input: IssueDocumentInput
       docType: input.docType,
       docNumber: input.sourceId,
       category: input.category,
+      customDocNumber: input.customDocNumber,
       recipientName: input.recipientName,
       recipientEmail: input.recipientEmail,
       issueDate: input.issueDate,

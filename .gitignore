@@ -2,6 +2,10 @@ node_modules/
 dist/
 .vite/
 
+# User-uploaded files (ID-document photos, lease documents) — never commit;
+# persists across deploys since git reset --hard leaves untracked dirs alone.
+uploads/
+
 # SQLite database files — never commit; exposes demo data at rest
 data.db
 data.db-shm

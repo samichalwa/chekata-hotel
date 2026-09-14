@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { z } from "zod";
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -22,11 +23,17 @@ import {
   insertPurchaseOrderSchema, insertPurchaseOrderLineSchema,
   insertInternalRequisitionSchema, insertInternalRequisitionLineSchema,
   PR_TYPES, IR_TYPES,
+  insertGuestIdentityDocumentSchema, ID_DOCUMENT_TYPES,
+  insertShopSchema, insertTenantSchema, insertTenancyLeaseSchema, insertMeterReadingSchema,
+  insertRecipeSchema, insertRecipeIngredientSchema,
 } from "@shared/schema";
 import { issueDocument } from "./documents";
 import { buildDocumentPdf, buildMaintenanceReportPdf } from "./pdf";
 import { sendTransactionalEmail } from "./email";
 import { sendSms } from "./sms";
+import { saveBase64Upload, UploadValidationError, UPLOADS_ROOT } from "./uploads";
+import { runTenantBillingCycle } from "./billing";
+import express from "express";
 import { buildReportsWorkbook, REPORT_SHEET_LABELS, type ReportSheetKey } from "./reports-excel";
 import {
   requireAuth, requireModule, requireAdmin, requireCanEditMovieBookings,
@@ -56,6 +63,14 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // Serves uploaded ID-document / lease-document files. Mounted before the SPA
+  // catch-all (registered later, in server/static.ts) so it always takes
+  // priority. Files themselves are gated only by an unguessable random
+  // filename — acceptable for the same class of data (guest ID photos) already
+  // shown in Phase 1/2 WhatsApp PDF links; the upload/write endpoints below are
+  // still permission-gated.
+  app.use("/uploads", express.static(UPLOADS_ROOT));
+
   // ---------- Auth (unprotected: setup, login, logout, current user) ----------
   app.get("/api/auth/setup-status", async (_req, res) => {
     const count = await storage.countUsers();
@@ -218,6 +233,34 @@ export async function registerRoutes(
   // ---------- Everything below requires a signed-in, active user ----------
   app.use("/api", requireAuth);
 
+  // ---------- Uploads (ID-document photos, lease documents) ----------
+  function handleUpload(category: string) {
+    return (req: any, res: any) => {
+      try {
+        const { filename, dataBase64, mimeType } = req.body as { filename?: string; dataBase64?: string; mimeType?: string };
+        if (!dataBase64 || !mimeType) return res.status(400).json({ error: "dataBase64 and mimeType are required." });
+        const result = saveBase64Upload({ category, filename, dataBase64, mimeType });
+        res.status(201).json(result);
+      } catch (err) {
+        if (err instanceof UploadValidationError) return res.status(400).json({ error: err.message });
+        res.status(500).json({ error: (err as any)?.message ?? "Upload failed" });
+      }
+    };
+  }
+  app.post("/api/tenants/uploads", requireModule("tenants"), handleUpload("tenants"));
+  app.post("/api/accommodation/uploads", requireModule("accommodation"), handleUpload("accommodation"));
+
+  // Lets an admin trigger the tenant billing cycle on demand (QA / "I don't want to wait for
+  // the hourly tick") instead of only running automatically at boot + hourly (see server/index.ts).
+  app.post("/api/tenants/run-billing-cycle", requireModule("tenants"), async (req, res) => {
+    try {
+      const result = await runTenantBillingCycle(storage, req.session.userId ? String(req.session.userId) : "system");
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Billing cycle failed" });
+    }
+  });
+
   // Cross-module utility: lets a WhatsApp button in an edit/detail dialog fetch the CURRENT
   // latest document for a given source record at click time (live form/booking state is not
   // tied to any fresh mutation response). Any signed-in user may call this — it is not gated by
@@ -370,6 +413,9 @@ export async function registerRoutes(
   app.post("/api/accommodation-bookings", requireModule("accommodation"), async (req, res) => {
     try {
       const data = insertAccommodationBookingSchema.parse(req.body);
+      if ((data.numberOfGuests ?? 1) > 2) {
+        return res.status(400).json({ error: "A booking cannot have more than 2 guests. Please create a separate booking for additional guests." });
+      }
       const booking = await storage.createAccommodationBooking(data);
       const room = await storage.getRoom(booking.roomId);
       const nights = nightsBetween(booking.checkIn, booking.checkOut);
@@ -400,6 +446,9 @@ export async function registerRoutes(
       const before = await storage.getAccommodationBooking(id);
       if (!before) return res.status(404).json({ error: "Booking not found" });
       const data = insertAccommodationBookingSchema.partial().parse(req.body);
+      if (data.numberOfGuests !== undefined && data.numberOfGuests > 2) {
+        return res.status(400).json({ error: "A booking cannot have more than 2 guests. Please create a separate booking for additional guests." });
+      }
       const updated = await storage.updateAccommodationBooking(id, data);
       if (!updated) return res.status(404).json({ error: "Booking not found" });
       let docResult: any = null;
@@ -1331,7 +1380,7 @@ export async function registerRoutes(
   app.get("/api/inventory/stores", requireAnyModule(["inventory", "purchasing", "internal-requisitions"]), async (_req, res) => {
     res.json(await storage.listStores());
   });
-  app.get("/api/inventory/items", requireAnyModule(["inventory", "purchasing", "internal-requisitions"]), async (_req, res) => {
+  app.get("/api/inventory/items", requireAnyModule(["inventory", "purchasing", "internal-requisitions", "fnb-costing"]), async (_req, res) => {
     res.json(await storage.listInventoryItems());
   });
   app.get("/api/inventory/stock-balances", requireAnyModule(["inventory", "purchasing", "internal-requisitions"]), async (_req, res) => {
@@ -1339,6 +1388,15 @@ export async function registerRoutes(
   });
   app.get("/api/purchasing/gl-accounts", requireAnyModule(["purchasing", "internal-requisitions"]), async (_req, res) => {
     res.json(await storage.listChartOfAccounts());
+  });
+  // Read-only GL account / bank account lookups for the Tenants module (lease setup, rent
+  // payment recording) — kept separate from /api/finance/* so Tenants access never implies
+  // Finance module access, mirroring the purchasing/internal-requisitions pattern above.
+  app.get("/api/tenants/gl-accounts", requireModule("tenants"), async (_req, res) => {
+    res.json(await storage.listChartOfAccounts());
+  });
+  app.get("/api/tenants/bank-accounts", requireModule("tenants"), async (_req, res) => {
+    res.json(await storage.listBankAccounts());
   });
   app.get("/api/definitions/:listKey/items", requireAuth, async (req, res) => {
     const list = await storage.getDefinitionListByKey(String(req.params.listKey));
@@ -1654,6 +1712,291 @@ export async function registerRoutes(
       if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
       res.json(updated);
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to cancel internal requisition" }); }
+  });
+
+
+  // ================= Phase 3: Accommodation guest ID capture =================
+  app.get("/api/accommodation-bookings/:bookingId/identity-documents", requireModule("accommodation"), async (req, res) => {
+    try {
+      const docs = await storage.listGuestIdentityDocuments(Number(req.params.bookingId));
+      res.json(docs);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to load identity documents" }); }
+  });
+  app.post("/api/accommodation-bookings/:bookingId/identity-documents", requireModule("accommodation"), async (req, res) => {
+    try {
+      const bookingId = Number(req.params.bookingId);
+      const data = insertGuestIdentityDocumentSchema.omit({ createdAt: true, bookingId: true }).parse(req.body);
+      if (!ID_DOCUMENT_TYPES.includes(data.idType as any)) {
+        return res.status(400).json({ error: `idType must be one of: ${ID_DOCUMENT_TYPES.join(", ")}` });
+      }
+      if (data.idType === "national_id" && !data.backImageUrl) {
+        return res.status(400).json({ error: "backImageUrl is required for a national ID document." });
+      }
+      const doc = await storage.createGuestIdentityDocument({ ...data, bookingId });
+      res.status(201).json(doc);
+    } catch (err) { handleZodError(res, err); }
+  });
+
+  // ================= Phase 3: Tenants — Shops =================
+  app.get("/api/shops", requireModule("tenants"), async (_req, res) => {
+    res.json(await storage.listShops());
+  });
+  app.post("/api/shops", requireModule("tenants"), async (req, res) => {
+    try {
+      const data = insertShopSchema.omit({ createdAt: true }).parse(req.body);
+      res.status(201).json(await storage.createShop(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/shops/:id", requireModule("tenants"), async (req, res) => {
+    try {
+      const data = insertShopSchema.omit({ createdAt: true }).partial().parse(req.body);
+      const updated = await storage.updateShop(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Shop not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/shops/:id", requireModule("tenants"), async (req, res) => {
+    try {
+      await storage.deleteShop(Number(req.params.id));
+      res.status(204).end();
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to delete shop" }); }
+  });
+
+  // ================= Phase 3: Tenants — Tenants =================
+  app.get("/api/tenants-list", requireModule("tenants"), async (_req, res) => {
+    res.json(await storage.listTenants());
+  });
+  app.post("/api/tenants-list", requireModule("tenants"), async (req, res) => {
+    try {
+      const data = insertTenantSchema.omit({ createdAt: true }).parse(req.body);
+      res.status(201).json(await storage.createTenant(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/tenants-list/:id", requireModule("tenants"), async (req, res) => {
+    try {
+      const data = insertTenantSchema.omit({ createdAt: true }).partial().parse(req.body);
+      const updated = await storage.updateTenant(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Tenant not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/tenants-list/:id", requireModule("tenants"), async (req, res) => {
+    try {
+      await storage.deleteTenant(Number(req.params.id));
+      res.status(204).end();
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to delete tenant" }); }
+  });
+
+  // ================= Phase 3: Tenants — Leases =================
+  app.get("/api/tenancy-leases", requireModule("tenants"), async (_req, res) => {
+    res.json(await storage.listTenancyLeases());
+  });
+  app.post("/api/tenancy-leases", requireModule("tenants"), async (req, res) => {
+    try {
+      const data = insertTenancyLeaseSchema.omit({ createdAt: true }).parse(req.body);
+      res.status(201).json(await storage.createTenancyLease(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/tenancy-leases/:id", requireModule("tenants"), async (req, res) => {
+    try {
+      const data = insertTenancyLeaseSchema.omit({ createdAt: true }).partial().parse(req.body);
+      const updated = await storage.updateTenancyLease(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Lease not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.post("/api/tenancy-leases/:id/end", requireModule("tenants"), async (req, res) => {
+    try {
+      const updated = await storage.endTenancyLease(Number(req.params.id));
+      if (!updated) return res.status(404).json({ error: "Lease not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to end lease" }); }
+  });
+
+  // ================= Phase 3: Tenants — Meter Readings =================
+  app.get("/api/meter-readings", requireModule("tenants"), async (req, res) => {
+    const leaseId = req.query.leaseId ? Number(req.query.leaseId) : undefined;
+    res.json(await storage.listMeterReadings(leaseId));
+  });
+  app.post("/api/meter-readings", requireModule("tenants"), async (req, res) => {
+    try {
+      const data = insertMeterReadingSchema.omit({ createdAt: true, consumption: true, amount: true }).parse(req.body);
+      res.status(201).json(await storage.createMeterReading(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+
+  // ================= Phase 3: Tenants — Rent Invoices =================
+  app.get("/api/rent-invoices", requireModule("tenants"), async (req, res) => {
+    const leaseId = req.query.leaseId ? Number(req.query.leaseId) : undefined;
+    res.json(await storage.listRentInvoices(leaseId));
+  });
+  app.get("/api/rent-invoices/:id", requireModule("tenants"), async (req, res) => {
+    const invoice = await storage.getRentInvoice(Number(req.params.id));
+    if (!invoice) return res.status(404).json({ error: "Rent invoice not found" });
+    res.json(invoice);
+  });
+  // Ad-hoc single-lease invoice generation (e.g. staff wants this period's invoice right now,
+  // instead of waiting for the hourly billing cycle in server/billing.ts to pick it up).
+  app.post("/api/rent-invoices/generate", requireModule("tenants"), async (req, res) => {
+    try {
+      const { leaseId, periodMonth } = req.body as { leaseId?: number; periodMonth?: string };
+      if (!leaseId || !periodMonth || !/^\d{4}-\d{2}$/.test(periodMonth)) {
+        return res.status(400).json({ error: "leaseId and periodMonth (YYYY-MM) are required." });
+      }
+      const user = (req as any).user;
+      const invoice = await storage.createRentInvoiceForPeriod(leaseId, periodMonth, user.fullName ?? user.username);
+      const lease = await storage.getTenancyLease(leaseId);
+      const tenant = lease ? await storage.getTenant(lease.tenantId) : undefined;
+      const shop = lease ? await storage.getShop(lease.shopId) : undefined;
+      const lineItems = [
+        { label: `Shop ${shop?.shopNumber ?? leaseId} rent — ${periodMonth}`, amount: invoice.rentAmount },
+        ...(invoice.electricityAmount > 0 ? [{ label: "Electricity", detail: `${periodMonth} consumption`, amount: invoice.electricityAmount }] : []),
+      ];
+      const doc = await issueDocument(storage, {
+        docType: "invoice",
+        category: "tenancy",
+        sourceId: invoice.id,
+        customDocNumber: invoice.invoiceNumber,
+        recipientName: tenant?.name ?? "Tenant",
+        recipientEmail: tenant?.email ?? null,
+        issueDate: formatDate(),
+        lineItems,
+        totalAmount: invoice.totalAmount,
+        amountPaid: 0,
+        balance: invoice.totalAmount,
+        notes: `Due ${invoice.dueDate}`,
+      });
+      res.status(201).json({ ...invoice, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to generate rent invoice" }); }
+  });
+  app.get("/api/rent-invoices/:id/payments", requireModule("tenants"), async (req, res) => {
+    res.json(await storage.listRentInvoicePayments(Number(req.params.id)));
+  });
+  app.post("/api/rent-invoices/:id/payments", requireModule("tenants"), async (req, res) => {
+    try {
+      const invoiceId = Number(req.params.id);
+      const { amount, bankAccountId, paymentMethod, paymentReference } = req.body as { amount?: number; bankAccountId?: number; paymentMethod?: string; paymentReference?: string };
+      if (!amount || amount <= 0) return res.status(400).json({ error: "A positive amount is required." });
+      if (!bankAccountId) return res.status(400).json({ error: "bankAccountId is required." });
+      const user = (req as any).user;
+      const payment = await storage.recordRentInvoicePayment(invoiceId, { amount, bankAccountId, paymentMethod, paymentReference, recordedBy: user.fullName ?? user.username });
+      const invoice = await storage.getRentInvoice(invoiceId);
+      let docResult: any = null;
+      if (invoice) {
+        const lease = await storage.getTenancyLease(invoice.leaseId);
+        const tenant = lease ? await storage.getTenant(lease.tenantId) : undefined;
+        const shop = lease ? await storage.getShop(lease.shopId) : undefined;
+        const doc = await issueDocument(storage, {
+          docType: "receipt",
+          category: "tenancy",
+          sourceId: invoice.id,
+          customDocNumber: invoice.invoiceNumber,
+          recipientName: tenant?.name ?? "Tenant",
+          recipientEmail: tenant?.email ?? null,
+          issueDate: formatDate(),
+          lineItems: [{ label: `Shop ${shop?.shopNumber ?? invoice.leaseId} rent — payment received`, amount }],
+          totalAmount: invoice.totalAmount,
+          amountPaid: invoice.amountPaid,
+          balance: invoice.totalAmount - invoice.amountPaid,
+          paymentAmount: amount,
+          paymentMethod,
+          paymentReference,
+        });
+        docResult = { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken };
+      }
+      res.status(201).json({ ...payment, _document: docResult });
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to record payment" }); }
+  });
+  app.post("/api/rent-invoices/:id/cancel", requireModule("tenants"), async (req, res) => {
+    try {
+      const { reason } = req.body as { reason?: string };
+      if (!reason) return res.status(400).json({ error: "A cancellation reason is required." });
+      const updated = await storage.cancelRentInvoice(Number(req.params.id), reason);
+      if (!updated) return res.status(404).json({ error: "Rent invoice not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to cancel rent invoice" }); }
+  });
+  // Re-sends the current invoice email/PDF on demand (same document trail as creation —
+  // shows up as a fresh row in Invoices & Receipts, and refreshes the WhatsApp PDF link).
+  app.post("/api/rent-invoices/:id/resend", requireModule("tenants"), async (req, res) => {
+    try {
+      const invoice = await storage.getRentInvoice(Number(req.params.id));
+      if (!invoice) return res.status(404).json({ error: "Rent invoice not found" });
+      const lease = await storage.getTenancyLease(invoice.leaseId);
+      const tenant = lease ? await storage.getTenant(lease.tenantId) : undefined;
+      const shop = lease ? await storage.getShop(lease.shopId) : undefined;
+      const lineItems = [
+        { label: `Shop ${shop?.shopNumber ?? invoice.leaseId} rent — ${invoice.periodMonth}`, amount: invoice.rentAmount },
+        ...(invoice.electricityAmount > 0 ? [{ label: "Electricity", detail: `${invoice.periodMonth} consumption`, amount: invoice.electricityAmount }] : []),
+      ];
+      const doc = await issueDocument(storage, {
+        docType: "invoice",
+        category: "tenancy",
+        sourceId: invoice.id,
+        customDocNumber: invoice.invoiceNumber,
+        recipientName: tenant?.name ?? "Tenant",
+        recipientEmail: tenant?.email ?? null,
+        issueDate: formatDate(),
+        lineItems,
+        totalAmount: invoice.totalAmount,
+        amountPaid: invoice.amountPaid,
+        balance: invoice.totalAmount - invoice.amountPaid,
+        notes: `Due ${invoice.dueDate}`,
+      });
+      res.status(201).json({ status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken });
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to resend invoice" }); }
+  });
+
+  // ================= Phase 3: F&B Costing — Recipes =================
+  async function computeRecipeCost(recipe: { otherCostPerServing: number; targetMarginPercent: number }, ingredients: { quantityPerServing: number; inventoryItemId: number }[]) {
+    let ingredientCostPerServing = 0;
+    for (const ing of ingredients) {
+      const item = await storage.getInventoryItem(ing.inventoryItemId);
+      ingredientCostPerServing += ing.quantityPerServing * (item?.lastUnitCost ?? 0);
+    }
+    const costPerServing = recipe.otherCostPerServing + ingredientCostPerServing;
+    const marginFraction = Math.min(0.99, Math.max(0, recipe.targetMarginPercent / 100));
+    const suggestedPrice = marginFraction > 0 ? costPerServing / (1 - marginFraction) : costPerServing;
+    return { costPerServing, suggestedPrice };
+  }
+  app.get("/api/recipes", requireModule("fnb-costing"), async (_req, res) => {
+    const recipeList = await storage.listRecipes();
+    const withCost = await Promise.all(recipeList.map(async (r) => {
+      const ingredients = await storage.getRecipeIngredients(r.id);
+      const cost = await computeRecipeCost(r, ingredients);
+      return { ...r, ingredients, ...cost };
+    }));
+    res.json(withCost);
+  });
+  app.get("/api/recipes/:id", requireModule("fnb-costing"), async (req, res) => {
+    const recipe = await storage.getRecipe(Number(req.params.id));
+    if (!recipe) return res.status(404).json({ error: "Recipe not found" });
+    const ingredients = await storage.getRecipeIngredients(recipe.id);
+    const cost = await computeRecipeCost(recipe, ingredients);
+    res.json({ ...recipe, ingredients, ...cost });
+  });
+  app.post("/api/recipes", requireModule("fnb-costing"), async (req, res) => {
+    try {
+      const { ingredients, ...rest } = req.body as any;
+      const data = insertRecipeSchema.omit({ createdAt: true }).parse(rest);
+      const parsedIngredients = z.array(insertRecipeIngredientSchema.omit({ recipeId: true })).parse(ingredients ?? []);
+      const recipe = await storage.createRecipe(data, parsedIngredients);
+      res.status(201).json(recipe);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/recipes/:id", requireModule("fnb-costing"), async (req, res) => {
+    try {
+      const { ingredients, ...rest } = req.body as any;
+      const data = insertRecipeSchema.omit({ createdAt: true }).partial().parse(rest);
+      const parsedIngredients = ingredients !== undefined ? z.array(insertRecipeIngredientSchema.omit({ recipeId: true })).parse(ingredients) : undefined;
+      const updated = await storage.updateRecipe(Number(req.params.id), data, parsedIngredients);
+      if (!updated) return res.status(404).json({ error: "Recipe not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/recipes/:id", requireModule("fnb-costing"), async (req, res) => {
+    await storage.deleteRecipe(Number(req.params.id));
+    res.status(204).end();
   });
 
 

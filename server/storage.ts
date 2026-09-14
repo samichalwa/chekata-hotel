@@ -9,6 +9,8 @@ import {
   stores, inventoryItems, stockLedger, suppliers,
   purchaseRequisitions, purchaseRequisitionLines, purchaseOrders, purchaseOrderLines,
   goodsReceipts, goodsReceiptLines, internalRequisitions, internalRequisitionLines, loanReturns,
+  guestIdentityDocuments, shops, tenants, tenancyLeases, meterReadings,
+  rentInvoices, rentInvoicePayments, recipes, recipeIngredients,
 } from '@shared/schema';
 import type {
   Room, InsertRoom,
@@ -53,6 +55,15 @@ import type {
   InternalRequisition, InsertInternalRequisition,
   InternalRequisitionLine, InsertInternalRequisitionLine,
   LoanReturn, InsertLoanReturn,
+  GuestIdentityDocument, InsertGuestIdentityDocument,
+  Shop, InsertShop,
+  Tenant, InsertTenant,
+  TenancyLease, InsertTenancyLease,
+  MeterReading, InsertMeterReading,
+  RentInvoice, InsertRentInvoice,
+  RentInvoicePayment, InsertRentInvoicePayment,
+  Recipe, InsertRecipe,
+  RecipeIngredient, InsertRecipeIngredient,
 } from '@shared/schema';
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -568,6 +579,111 @@ CREATE TABLE IF NOT EXISTS loan_returns (
   condition TEXT,
   notes TEXT
 );
+CREATE TABLE IF NOT EXISTS guest_identity_documents (
+  id SERIAL PRIMARY KEY,
+  booking_id INTEGER NOT NULL,
+  guest_number INTEGER NOT NULL DEFAULT 1,
+  guest_name TEXT NOT NULL,
+  id_type TEXT NOT NULL DEFAULT 'national_id',
+  front_image_url TEXT NOT NULL,
+  back_image_url TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS shops (
+  id SERIAL PRIMARY KEY,
+  shop_number TEXT NOT NULL UNIQUE,
+  description TEXT,
+  location TEXT,
+  size_sqm REAL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tenants (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  contact_person TEXT,
+  phone TEXT,
+  email TEXT,
+  id_number TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  notes TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tenancy_leases (
+  id SERIAL PRIMARY KEY,
+  shop_id INTEGER NOT NULL,
+  tenant_id INTEGER NOT NULL,
+  monthly_rent REAL NOT NULL,
+  electricity_rate_per_unit REAL NOT NULL DEFAULT 0,
+  lease_start TEXT NOT NULL,
+  lease_end TEXT,
+  due_day_of_month INTEGER NOT NULL DEFAULT 5,
+  reminder_days_before INTEGER NOT NULL DEFAULT 3,
+  document_url TEXT,
+  receivable_account_id INTEGER,
+  income_account_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'active',
+  notes TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meter_readings (
+  id SERIAL PRIMARY KEY,
+  lease_id INTEGER NOT NULL,
+  period_month TEXT NOT NULL,
+  start_reading REAL NOT NULL,
+  end_reading REAL NOT NULL,
+  consumption REAL NOT NULL,
+  amount REAL NOT NULL,
+  reading_date TEXT NOT NULL,
+  recorded_by TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  UNIQUE(lease_id, period_month)
+);
+CREATE TABLE IF NOT EXISTS rent_invoices (
+  id SERIAL PRIMARY KEY,
+  invoice_number TEXT NOT NULL UNIQUE,
+  lease_id INTEGER NOT NULL,
+  period_month TEXT NOT NULL,
+  rent_amount REAL NOT NULL,
+  electricity_amount REAL NOT NULL DEFAULT 0,
+  total_amount REAL NOT NULL,
+  amount_paid REAL NOT NULL DEFAULT 0,
+  due_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'unpaid',
+  reminder_sent_at BIGINT,
+  journal_entry_id INTEGER,
+  cancel_reason TEXT,
+  created_at BIGINT NOT NULL,
+  UNIQUE(lease_id, period_month)
+);
+CREATE TABLE IF NOT EXISTS rent_invoice_payments (
+  id SERIAL PRIMARY KEY,
+  invoice_id INTEGER NOT NULL,
+  amount REAL NOT NULL,
+  payment_method TEXT,
+  payment_reference TEXT,
+  journal_entry_id INTEGER,
+  paid_at BIGINT NOT NULL,
+  recorded_by TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS recipes (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  menu_item_id INTEGER,
+  servings_per_batch REAL NOT NULL DEFAULT 1,
+  other_cost_per_serving REAL NOT NULL DEFAULT 0,
+  target_margin_percent REAL NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  notes TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS recipe_ingredients (
+  id SERIAL PRIMARY KEY,
+  recipe_id INTEGER NOT NULL,
+  inventory_item_id INTEGER NOT NULL,
+  quantity_per_serving REAL NOT NULL,
+  unit TEXT
+);
 `);
 
   // ---- Idempotent column additions for installs upgraded from an earlier version ----
@@ -610,6 +726,8 @@ CREATE TABLE IF NOT EXISTS loan_returns (
   await ensureColumn("orders", "payment_reference", "TEXT");
   await ensureColumn("documents", "public_token", "TEXT");
   await ensureColumn("maintenance_issues", "public_token", "TEXT");
+  await ensureColumn("accommodation_bookings", "number_of_guests", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("taxes", "applies_tenancy", "INTEGER NOT NULL DEFAULT 0");
 
   // ---- Backfill public_token for any pre-existing rows created before that column existed ----
   // (each row needs its OWN random token, so this can't be a single UPDATE ... SET public_token = <one value>).
@@ -782,6 +900,20 @@ CREATE TABLE IF NOT EXISTS loan_returns (
     }
   }
   await seedPhase2Foundations();
+
+  // ---- Phase 3: Tenants + F&B Costing foundational data (idempotent) ----
+  async function seedPhase3Foundations() {
+    const now = Date.now();
+    const coaDefaults: { code: string; name: string; type: string }[] = [
+      { code: "1210", name: "Tenant Rent Receivable", type: "asset" },
+      { code: "4040", name: "Rental Income", type: "income" },
+    ];
+    for (const acc of coaDefaults) {
+      await sql`INSERT INTO chart_of_accounts (code, name, type, active, is_system, created_at) VALUES (${acc.code}, ${acc.name}, ${acc.type}, 1, 1, ${now}) ON CONFLICT (code) DO NOTHING`;
+    }
+    await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('rent_invoice', 'RENT', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
+  }
+  await seedPhase3Foundations();
 
   // ---- Seed default rooms & facilities to match The Chekata's layout (idempotent) ----
   async function seed() {
@@ -1071,6 +1203,50 @@ export interface IStorage {
   issueInternalRequisition(id: number, issuedBy: string): Promise<InternalRequisition | undefined>;
   returnLoanItem(lineId: number, data: { quantityReturned: number; returnedBy: string; condition?: string; notes?: string }): Promise<LoanReturn>;
   cancelInternalRequisition(id: number, reason: string): Promise<InternalRequisition | undefined>;
+
+  // ================= Phase 3: Accommodation ID capture =================
+  listGuestIdentityDocuments(bookingId: number): Promise<GuestIdentityDocument[]>;
+  createGuestIdentityDocument(data: Omit<InsertGuestIdentityDocument, "createdAt">): Promise<GuestIdentityDocument>;
+
+  // ================= Phase 3: Tenants =================
+  listShops(): Promise<Shop[]>;
+  getShop(id: number): Promise<Shop | undefined>;
+  createShop(data: Omit<InsertShop, "createdAt">): Promise<Shop>;
+  updateShop(id: number, data: Partial<InsertShop>): Promise<Shop | undefined>;
+  deleteShop(id: number): Promise<{ changes: number }>;
+
+  listTenants(): Promise<Tenant[]>;
+  getTenant(id: number): Promise<Tenant | undefined>;
+  createTenant(data: Omit<InsertTenant, "createdAt">): Promise<Tenant>;
+  updateTenant(id: number, data: Partial<InsertTenant>): Promise<Tenant | undefined>;
+  deleteTenant(id: number): Promise<{ changes: number }>;
+
+  listTenancyLeases(): Promise<TenancyLease[]>;
+  getTenancyLease(id: number): Promise<TenancyLease | undefined>;
+  createTenancyLease(data: Omit<InsertTenancyLease, "createdAt">): Promise<TenancyLease>;
+  updateTenancyLease(id: number, data: Partial<InsertTenancyLease>): Promise<TenancyLease | undefined>;
+  endTenancyLease(id: number): Promise<TenancyLease | undefined>;
+
+  listMeterReadings(leaseId?: number): Promise<MeterReading[]>;
+  createMeterReading(data: Omit<InsertMeterReading, "consumption" | "amount" | "createdAt">): Promise<MeterReading>;
+
+  listRentInvoices(leaseId?: number): Promise<RentInvoice[]>;
+  getRentInvoice(id: number): Promise<RentInvoice | undefined>;
+  getRentInvoiceForPeriod(leaseId: number, periodMonth: string): Promise<RentInvoice | undefined>;
+  createRentInvoiceForPeriod(leaseId: number, periodMonth: string, createdBy: string): Promise<RentInvoice>;
+  recordRentInvoicePayment(invoiceId: number, data: { amount: number; bankAccountId: number; paymentMethod?: string; paymentReference?: string; recordedBy: string }): Promise<RentInvoicePayment>;
+  listRentInvoicePayments(invoiceId: number): Promise<RentInvoicePayment[]>;
+  cancelRentInvoice(id: number, reason: string): Promise<RentInvoice | undefined>;
+  markRentInvoiceReminderSent(id: number): Promise<void>;
+  listUnpaidRentInvoicesDueForReminder(): Promise<(RentInvoice & { tenantEmail: string | null; tenantPhone: string | null; tenantName: string })[]>;
+
+  // ================= Phase 3: F&B Costing =================
+  listRecipes(): Promise<Recipe[]>;
+  getRecipe(id: number): Promise<Recipe | undefined>;
+  getRecipeIngredients(recipeId: number): Promise<RecipeIngredient[]>;
+  createRecipe(data: Omit<InsertRecipe, "createdAt">, ingredients: Omit<InsertRecipeIngredient, "recipeId">[]): Promise<Recipe>;
+  updateRecipe(id: number, data: Partial<InsertRecipe>, ingredients?: Omit<InsertRecipeIngredient, "recipeId">[]): Promise<Recipe | undefined>;
+  deleteRecipe(id: number): Promise<{ changes: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2250,6 +2426,259 @@ export class DatabaseStorage implements IStorage {
     if (current.status === "issued") throw new Error("Cannot cancel an internal requisition that has already been issued");
     if (current.status === "cancelled") throw new Error("This internal requisition is already cancelled");
     return (await db.update(internalRequisitions).set({ status: "cancelled", cancelReason: reason }).where(eq(internalRequisitions.id, id)).returning())[0];
+  }
+
+  // ================= Phase 3: Accommodation ID capture =================
+  async listGuestIdentityDocuments(bookingId: number) {
+    return db.select().from(guestIdentityDocuments).where(eq(guestIdentityDocuments.bookingId, bookingId));
+  }
+  async createGuestIdentityDocument(data: Omit<InsertGuestIdentityDocument, "createdAt">) {
+    const existing = await this.listGuestIdentityDocuments(data.bookingId);
+    if (existing.length >= 2) throw new Error("This booking already has identity documents recorded for 2 guests — the maximum allowed per room");
+    return (await db.insert(guestIdentityDocuments).values({ ...data, createdAt: Date.now() } as InsertGuestIdentityDocument).returning())[0];
+  }
+
+  // ================= Phase 3: Tenants — Shops =================
+  async listShops() {
+    return db.select().from(shops).orderBy(desc(shops.id));
+  }
+  async getShop(id: number) {
+    return (await db.select().from(shops).where(eq(shops.id, id)))[0];
+  }
+  async createShop(data: Omit<InsertShop, "createdAt">) {
+    return (await db.insert(shops).values({ ...data, createdAt: Date.now() } as InsertShop).returning())[0];
+  }
+  async updateShop(id: number, data: Partial<InsertShop>) {
+    return (await db.update(shops).set(data).where(eq(shops.id, id)).returning())[0];
+  }
+  async deleteShop(id: number) {
+    const leases = await db.select().from(tenancyLeases).where(eq(tenancyLeases.shopId, id));
+    if (leases.length > 0) throw new Error("Cannot delete a shop that has tenancy leases on record — deactivate it instead");
+    const result = await db.delete(shops).where(eq(shops.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  // ================= Phase 3: Tenants — Tenants =================
+  async listTenants() {
+    return db.select().from(tenants).orderBy(desc(tenants.id));
+  }
+  async getTenant(id: number) {
+    return (await db.select().from(tenants).where(eq(tenants.id, id)))[0];
+  }
+  async createTenant(data: Omit<InsertTenant, "createdAt">) {
+    return (await db.insert(tenants).values({ ...data, createdAt: Date.now() } as InsertTenant).returning())[0];
+  }
+  async updateTenant(id: number, data: Partial<InsertTenant>) {
+    return (await db.update(tenants).set(data).where(eq(tenants.id, id)).returning())[0];
+  }
+  async deleteTenant(id: number) {
+    const leases = await db.select().from(tenancyLeases).where(eq(tenancyLeases.tenantId, id));
+    if (leases.length > 0) throw new Error("Cannot delete a tenant that has tenancy leases on record — deactivate it instead");
+    const result = await db.delete(tenants).where(eq(tenants.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  // ================= Phase 3: Tenants — Tenancy Leases =================
+  async listTenancyLeases() {
+    return db.select().from(tenancyLeases).orderBy(desc(tenancyLeases.id));
+  }
+  async getTenancyLease(id: number) {
+    return (await db.select().from(tenancyLeases).where(eq(tenancyLeases.id, id)))[0];
+  }
+  async createTenancyLease(data: Omit<InsertTenancyLease, "createdAt">) {
+    const activeOnShop = await db.select().from(tenancyLeases).where(and(eq(tenancyLeases.shopId, data.shopId), eq(tenancyLeases.status, "active")));
+    if (activeOnShop.length > 0) throw new Error("This shop already has an active lease — end it before starting a new one");
+    return (await db.insert(tenancyLeases).values({ ...data, createdAt: Date.now() } as InsertTenancyLease).returning())[0];
+  }
+  async updateTenancyLease(id: number, data: Partial<InsertTenancyLease>) {
+    return (await db.update(tenancyLeases).set(data).where(eq(tenancyLeases.id, id)).returning())[0];
+  }
+  async endTenancyLease(id: number) {
+    return (await db.update(tenancyLeases).set({ status: "ended" }).where(eq(tenancyLeases.id, id)).returning())[0];
+  }
+
+  // ================= Phase 3: Tenants — Meter Readings =================
+  async listMeterReadings(leaseId?: number) {
+    if (leaseId) return db.select().from(meterReadings).where(eq(meterReadings.leaseId, leaseId)).orderBy(desc(meterReadings.id));
+    return db.select().from(meterReadings).orderBy(desc(meterReadings.id));
+  }
+  async createMeterReading(data: Omit<InsertMeterReading, "consumption" | "amount" | "createdAt">) {
+    const lease = await this.getTenancyLease(data.leaseId);
+    if (!lease) throw new Error("Tenancy lease not found");
+    if (data.endReading < data.startReading) throw new Error("End reading cannot be less than start reading");
+    const existing = await db.select().from(meterReadings).where(and(eq(meterReadings.leaseId, data.leaseId), eq(meterReadings.periodMonth, data.periodMonth)));
+    if (existing.length > 0) throw new Error(`A meter reading for ${data.periodMonth} already exists for this lease`);
+    const consumption = data.endReading - data.startReading;
+    const amount = consumption * lease.electricityRatePerUnit;
+    return (await db.insert(meterReadings).values({ ...data, consumption, amount, createdAt: Date.now() } as InsertMeterReading).returning())[0];
+  }
+
+  // ================= Phase 3: Tenants — Rent Invoices =================
+  async listRentInvoices(leaseId?: number) {
+    if (leaseId) return db.select().from(rentInvoices).where(eq(rentInvoices.leaseId, leaseId)).orderBy(desc(rentInvoices.id));
+    return db.select().from(rentInvoices).orderBy(desc(rentInvoices.id));
+  }
+  async getRentInvoice(id: number) {
+    return (await db.select().from(rentInvoices).where(eq(rentInvoices.id, id)))[0];
+  }
+  async getRentInvoiceForPeriod(leaseId: number, periodMonth: string) {
+    return (await db.select().from(rentInvoices).where(and(eq(rentInvoices.leaseId, leaseId), eq(rentInvoices.periodMonth, periodMonth))))[0];
+  }
+  async createRentInvoiceForPeriod(leaseId: number, periodMonth: string, createdBy: string) {
+    const lease = await this.getTenancyLease(leaseId);
+    if (!lease) throw new Error("Tenancy lease not found");
+    const existing = await this.getRentInvoiceForPeriod(leaseId, periodMonth);
+    if (existing) throw new Error(`A rent invoice for ${periodMonth} already exists for this lease`);
+    if (!lease.receivableAccountId || !lease.incomeAccountId) {
+      throw new Error("This lease has no GL receivable/income account configured — set them before generating invoices");
+    }
+    const [meterReading] = await db.select().from(meterReadings).where(and(eq(meterReadings.leaseId, leaseId), eq(meterReadings.periodMonth, periodMonth)));
+    const electricityAmount = meterReading?.amount ?? 0;
+    const rentAmount = lease.monthlyRent;
+    const totalAmount = rentAmount + electricityAmount;
+    const invoiceNumber = await this.getNextSequenceNumber("rent_invoice");
+    const dueDay = Math.min(lease.dueDayOfMonth, 28);
+    const dueDate = `${periodMonth}-${String(dueDay).padStart(2, "0")}`;
+
+    const created = await db.transaction(async (tx) => {
+      const [invoice] = await tx.insert(rentInvoices).values({
+        invoiceNumber, leaseId, periodMonth, rentAmount, electricityAmount, totalAmount,
+        amountPaid: 0, dueDate, status: "unpaid", createdAt: Date.now(),
+      } as InsertRentInvoice).returning();
+      return invoice;
+    });
+
+    const entry = await this.postJournalEntry(
+      {
+        entryDate: new Date().toISOString().slice(0, 10),
+        description: `Rent invoice ${invoiceNumber} — period ${periodMonth}`,
+        sourceModule: "tenants",
+        sourceId: created.id,
+        createdBy,
+        createdAt: Date.now(),
+      } as any,
+      [
+        { accountId: lease.receivableAccountId, debit: totalAmount, credit: 0, description: `Rent invoice ${invoiceNumber}` },
+        { accountId: lease.incomeAccountId, debit: 0, credit: totalAmount, description: `Rent invoice ${invoiceNumber}` },
+      ],
+    );
+
+    const [withJournalEntry] = await db.update(rentInvoices).set({ journalEntryId: entry.id }).where(eq(rentInvoices.id, created.id)).returning();
+    return withJournalEntry;
+  }
+  async recordRentInvoicePayment(invoiceId: number, data: { amount: number; bankAccountId: number; paymentMethod?: string; paymentReference?: string; recordedBy: string }) {
+    const invoice = await this.getRentInvoice(invoiceId);
+    if (!invoice) throw new Error("Rent invoice not found");
+    if (invoice.status === "cancelled") throw new Error("Cannot record a payment against a cancelled invoice");
+    const newAmountPaid = invoice.amountPaid + data.amount;
+    if (newAmountPaid > invoice.totalAmount + 0.01) throw new Error("Payment exceeds the outstanding balance on this invoice");
+    const newStatus = newAmountPaid >= invoice.totalAmount - 0.01 ? "paid" : "partially_paid";
+
+    const lease = await this.getTenancyLease(invoice.leaseId);
+    const bankAccount = await this.getBankAccount(data.bankAccountId);
+    if (!bankAccount) throw new Error("The selected bank/cash account was not found");
+
+    let journalEntryId: number | undefined;
+    if (lease?.receivableAccountId) {
+      const entry = await this.postJournalEntry(
+        {
+          entryDate: new Date().toISOString().slice(0, 10),
+          description: `Payment received — rent invoice ${invoice.invoiceNumber}`,
+          sourceModule: "tenants",
+          sourceId: invoice.id,
+          createdBy: data.recordedBy,
+          createdAt: Date.now(),
+        } as any,
+        [
+          { accountId: bankAccount.glAccountId, debit: data.amount, credit: 0, description: `Rent payment — ${invoice.invoiceNumber}` },
+          { accountId: lease.receivableAccountId, debit: 0, credit: data.amount, description: `Rent payment — ${invoice.invoiceNumber}` },
+        ],
+      );
+      journalEntryId = entry.id;
+    }
+
+    const payment = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(rentInvoicePayments).values({
+        invoiceId, amount: data.amount, paymentMethod: data.paymentMethod, paymentReference: data.paymentReference,
+        journalEntryId, paidAt: Date.now(), recordedBy: data.recordedBy,
+      } as InsertRentInvoicePayment).returning();
+      await tx.update(rentInvoices).set({ amountPaid: newAmountPaid, status: newStatus }).where(eq(rentInvoices.id, invoiceId));
+      return created;
+    });
+
+    return payment;
+  }
+  async listRentInvoicePayments(invoiceId: number) {
+    return db.select().from(rentInvoicePayments).where(eq(rentInvoicePayments.invoiceId, invoiceId)).orderBy(desc(rentInvoicePayments.id));
+  }
+  async cancelRentInvoice(id: number, reason: string) {
+    const current = await this.getRentInvoice(id);
+    if (!current) return undefined;
+    if (current.amountPaid > 0) throw new Error("Cannot cancel a rent invoice that already has payments recorded against it");
+    return (await db.update(rentInvoices).set({ status: "cancelled", cancelReason: reason }).where(eq(rentInvoices.id, id)).returning())[0];
+  }
+  async markRentInvoiceReminderSent(id: number) {
+    await db.update(rentInvoices).set({ reminderSentAt: Date.now() }).where(eq(rentInvoices.id, id));
+  }
+  async listUnpaidRentInvoicesDueForReminder() {
+    const rows = await db.select({
+      invoice: rentInvoices,
+      lease: tenancyLeases,
+      tenant: tenants,
+    }).from(rentInvoices)
+      .innerJoin(tenancyLeases, eq(rentInvoices.leaseId, tenancyLeases.id))
+      .innerJoin(tenants, eq(tenancyLeases.tenantId, tenants.id))
+      .where(and(ne(rentInvoices.status, "paid"), ne(rentInvoices.status, "cancelled")));
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due: (RentInvoice & { tenantEmail: string | null; tenantPhone: string | null; tenantName: string })[] = [];
+    for (const row of rows) {
+      if (row.invoice.reminderSentAt) continue;
+      const dueDate = new Date(row.invoice.dueDate + "T00:00:00");
+      const daysUntilDue = Math.round((dueDate.getTime() - today.getTime()) / 86400000);
+      if (daysUntilDue <= row.lease.reminderDaysBefore) {
+        due.push({ ...row.invoice, tenantEmail: row.tenant.email, tenantPhone: row.tenant.phone, tenantName: row.tenant.name });
+      }
+    }
+    return due;
+  }
+
+  // ================= Phase 3: F&B Costing — Recipes =================
+  async listRecipes() {
+    return db.select().from(recipes).orderBy(desc(recipes.id));
+  }
+  async getRecipe(id: number) {
+    return (await db.select().from(recipes).where(eq(recipes.id, id)))[0];
+  }
+  async getRecipeIngredients(recipeId: number) {
+    return db.select().from(recipeIngredients).where(eq(recipeIngredients.recipeId, recipeId));
+  }
+  async createRecipe(data: Omit<InsertRecipe, "createdAt">, ingredients: Omit<InsertRecipeIngredient, "recipeId">[]) {
+    return db.transaction(async (tx) => {
+      const [created] = await tx.insert(recipes).values({ ...data, createdAt: Date.now() } as InsertRecipe).returning();
+      for (const ing of ingredients) {
+        await tx.insert(recipeIngredients).values({ ...ing, recipeId: created.id });
+      }
+      return created;
+    });
+  }
+  async updateRecipe(id: number, data: Partial<InsertRecipe>, ingredients?: Omit<InsertRecipeIngredient, "recipeId">[]) {
+    return db.transaction(async (tx) => {
+      const [updated] = await tx.update(recipes).set(data).where(eq(recipes.id, id)).returning();
+      if (ingredients) {
+        await tx.delete(recipeIngredients).where(eq(recipeIngredients.recipeId, id));
+        for (const ing of ingredients) {
+          await tx.insert(recipeIngredients).values({ ...ing, recipeId: id });
+        }
+      }
+      return updated;
+    });
+  }
+  async deleteRecipe(id: number) {
+    await db.delete(recipeIngredients).where(eq(recipeIngredients.recipeId, id));
+    const result = await db.delete(recipes).where(eq(recipes.id, id));
+    return { changes: result.count ?? 0 };
   }
 }
 

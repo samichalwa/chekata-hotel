@@ -22,7 +22,8 @@ export interface DocLineItem {
 export interface DocPayload {
   docType: "invoice" | "receipt";
   docNumber: number;
-  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie";
+  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy";
+  customDocNumber?: string; // overrides the auto "INV-00001"/"RCT-00001" label (e.g. a module's own sequence number like RENT-000012)
   recipientName: string;
   recipientEmail?: string | null;
   issueDate: string; // formatted date string
@@ -47,6 +48,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   bar: "Bar",
   restaurant: "Restaurant",
   movie: "Movie Room (Seat Booking)",
+  tenancy: "Tenancy (Shop Rent)",
 };
 
 export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promise<Buffer> {
@@ -82,7 +84,7 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
     const title = payload.docType === "invoice" ? "INVOICE" : "RECEIPT";
     doc.fillColor(dark).fontSize(18).font("Helvetica-Bold").text(title, 350, 50, { width: 195, align: "right" });
     doc.fillColor(muted).fontSize(9).font("Helvetica");
-    doc.text(`No: ${payload.docType === "invoice" ? "INV" : "RCT"}-${String(payload.docNumber).padStart(5, "0")}`, 350, 74, { width: 195, align: "right" });
+    doc.text(`No: ${payload.customDocNumber ?? `${payload.docType === "invoice" ? "INV" : "RCT"}-${String(payload.docNumber).padStart(5, "0")}`}`, 350, 74, { width: 195, align: "right" });
     doc.text(`Date: ${payload.issueDate}`, 350, 88, { width: 195, align: "right" });
     doc.text(`Service: ${CATEGORY_LABEL[payload.category] ?? payload.category}`, 350, 102, { width: 195, align: "right" });
 

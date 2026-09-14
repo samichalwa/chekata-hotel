@@ -32,12 +32,31 @@ export const accommodationBookings = pgTable("accommodation_bookings", {
   paymentReference: text("payment_reference"), // M-Pesa code, card slip #, bank ref, etc.
   status: text("status").notNull().default("confirmed"), // confirmed | checked_in | checked_out | cancelled
   notes: text("notes"),
+  numberOfGuests: integer("number_of_guests").notNull().default(1), // enforced max 2 at API level
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 
 export const insertAccommodationBookingSchema = createInsertSchema(accommodationBookings).omit({ id: true });
 export type InsertAccommodationBooking = z.infer<typeof insertAccommodationBookingSchema>;
 export type AccommodationBooking = typeof accommodationBookings.$inferSelect;
+
+// ---------- Accommodation: Guest Identity Documents (ID/passport capture at check-in) ----------
+export const ID_DOCUMENT_TYPES = ["national_id", "passport"] as const;
+export type IdDocumentType = typeof ID_DOCUMENT_TYPES[number];
+
+export const guestIdentityDocuments = pgTable("guest_identity_documents", {
+  id: serial("id").primaryKey(),
+  bookingId: integer("booking_id").notNull(),
+  guestNumber: integer("guest_number").notNull().default(1), // 1 or 2 (max 2 guests per room)
+  guestName: text("guest_name").notNull(),
+  idType: text("id_type").notNull().default("national_id"), // national_id | passport
+  frontImageUrl: text("front_image_url").notNull(),
+  backImageUrl: text("back_image_url"), // required for national_id, not applicable to passport
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertGuestIdentityDocumentSchema = createInsertSchema(guestIdentityDocuments).omit({ id: true });
+export type InsertGuestIdentityDocument = z.infer<typeof insertGuestIdentityDocumentSchema>;
+export type GuestIdentityDocument = typeof guestIdentityDocuments.$inferSelect;
 
 // ---------- Facilities: Conference Hall / Movie Room / custom ----------
 export const facilities = pgTable("facilities", {
@@ -328,6 +347,8 @@ export const MODULE_KEYS = [
   "inventory",
   "purchasing",
   "internal-requisitions",
+  "tenants",
+  "fnb-costing",
 ] as const;
 export type ModuleKey = typeof MODULE_KEYS[number];
 
@@ -349,6 +370,8 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   inventory: "Inventory",
   purchasing: "Purchasing",
   "internal-requisitions": "Internal Requisitions",
+  tenants: "Tenants",
+  "fnb-costing": "F&B Costing",
 };
 
 // Tables that can be individually write-restricted per user via the System
@@ -644,12 +667,13 @@ export const taxes = pgTable("taxes", {
   appliesFacilities: integer("applies_facilities").notNull().default(0),
   appliesBar: integer("applies_bar").notNull().default(0),
   appliesRestaurant: integer("applies_restaurant").notNull().default(0),
+  appliesTenancy: integer("applies_tenancy").notNull().default(0),
 });
 
 export const insertTaxSchema = createInsertSchema(taxes).omit({ id: true });
 export type InsertTax = z.infer<typeof insertTaxSchema>;
 export type Tax = typeof taxes.$inferSelect;
-export type TaxCategory = "accommodation" | "facilities" | "bar" | "restaurant";
+export type TaxCategory = "accommodation" | "facilities" | "bar" | "restaurant" | "tenancy";
 
 // ============================================================================
 // Phase 2: Inventory, Purchasing, Internal Requisitions
@@ -885,3 +909,145 @@ export const loanReturns = pgTable("loan_returns", {
 export const insertLoanReturnSchema = createInsertSchema(loanReturns).omit({ id: true });
 export type InsertLoanReturn = z.infer<typeof insertLoanReturnSchema>;
 export type LoanReturn = typeof loanReturns.$inferSelect;
+
+// ============================================================================
+// Phase 3: Tenants, F&B Costing
+// ============================================================================
+
+// ---------- Tenants: Shops ----------
+export const shops = pgTable("shops", {
+  id: serial("id").primaryKey(),
+  shopNumber: text("shop_number").notNull().unique(),
+  description: text("description"),
+  location: text("location"),
+  sizeSqm: real("size_sqm"),
+  active: integer("active").notNull().default(1),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertShopSchema = createInsertSchema(shops).omit({ id: true });
+export type InsertShop = z.infer<typeof insertShopSchema>;
+export type Shop = typeof shops.$inferSelect;
+
+// ---------- Tenants: Tenants ----------
+export const tenants = pgTable("tenants", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  contactPerson: text("contact_person"),
+  phone: text("phone"),
+  email: text("email"),
+  idNumber: text("id_number"),
+  active: integer("active").notNull().default(1),
+  notes: text("notes"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertTenantSchema = createInsertSchema(tenants).omit({ id: true });
+export type InsertTenant = z.infer<typeof insertTenantSchema>;
+export type Tenant = typeof tenants.$inferSelect;
+
+// ---------- Tenants: Tenancy Leases ----------
+export const LEASE_STATUSES = ["active", "ended"] as const;
+export type LeaseStatus = typeof LEASE_STATUSES[number];
+
+export const tenancyLeases = pgTable("tenancy_leases", {
+  id: serial("id").primaryKey(),
+  shopId: integer("shop_id").notNull(),
+  tenantId: integer("tenant_id").notNull(),
+  monthlyRent: real("monthly_rent").notNull(),
+  electricityRatePerUnit: real("electricity_rate_per_unit").notNull().default(0),
+  leaseStart: text("lease_start").notNull(), // YYYY-MM-DD
+  leaseEnd: text("lease_end"), // YYYY-MM-DD, nullable = open-ended
+  dueDayOfMonth: integer("due_day_of_month").notNull().default(5), // configurable, 1-28
+  reminderDaysBefore: integer("reminder_days_before").notNull().default(3),
+  documentUrl: text("document_url"), // uploaded lease document
+  receivableAccountId: integer("receivable_account_id"), // GL asset account — Tenant Rent Receivable
+  incomeAccountId: integer("income_account_id"), // GL income account — Rental Income
+  status: text("status").notNull().default("active"), // active | ended
+  notes: text("notes"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertTenancyLeaseSchema = createInsertSchema(tenancyLeases).omit({ id: true });
+export type InsertTenancyLease = z.infer<typeof insertTenancyLeaseSchema>;
+export type TenancyLease = typeof tenancyLeases.$inferSelect;
+
+// ---------- Tenants: Meter Readings ----------
+export const meterReadings = pgTable("meter_readings", {
+  id: serial("id").primaryKey(),
+  leaseId: integer("lease_id").notNull(),
+  periodMonth: text("period_month").notNull(), // YYYY-MM
+  startReading: real("start_reading").notNull(),
+  endReading: real("end_reading").notNull(),
+  consumption: real("consumption").notNull(), // computed = endReading - startReading
+  amount: real("amount").notNull(), // computed = consumption * lease's electricityRatePerUnit at time of entry
+  readingDate: text("reading_date").notNull(), // YYYY-MM-DD
+  recordedBy: text("recorded_by").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertMeterReadingSchema = createInsertSchema(meterReadings).omit({ id: true });
+export type InsertMeterReading = z.infer<typeof insertMeterReadingSchema>;
+export type MeterReading = typeof meterReadings.$inferSelect;
+
+// ---------- Tenants: Rent Invoices ----------
+export const RENT_INVOICE_STATUSES = ["unpaid", "partially_paid", "paid", "overdue", "cancelled"] as const;
+export type RentInvoiceStatus = typeof RENT_INVOICE_STATUSES[number];
+
+export const rentInvoices = pgTable("rent_invoices", {
+  id: serial("id").primaryKey(),
+  invoiceNumber: text("invoice_number").notNull().unique(),
+  leaseId: integer("lease_id").notNull(),
+  periodMonth: text("period_month").notNull(), // YYYY-MM
+  rentAmount: real("rent_amount").notNull(),
+  electricityAmount: real("electricity_amount").notNull().default(0),
+  totalAmount: real("total_amount").notNull(),
+  amountPaid: real("amount_paid").notNull().default(0),
+  dueDate: text("due_date").notNull(), // YYYY-MM-DD
+  status: text("status").notNull().default("unpaid"),
+  reminderSentAt: bigint("reminder_sent_at", { mode: "number" }),
+  journalEntryId: integer("journal_entry_id"),
+  cancelReason: text("cancel_reason"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertRentInvoiceSchema = createInsertSchema(rentInvoices).omit({ id: true });
+export type InsertRentInvoice = z.infer<typeof insertRentInvoiceSchema>;
+export type RentInvoice = typeof rentInvoices.$inferSelect;
+
+// ---------- Tenants: Rent Invoice Payments (audit trail) ----------
+export const rentInvoicePayments = pgTable("rent_invoice_payments", {
+  id: serial("id").primaryKey(),
+  invoiceId: integer("invoice_id").notNull(),
+  amount: real("amount").notNull(),
+  paymentMethod: text("payment_method"), // cash | mpesa | card | bank_transfer
+  paymentReference: text("payment_reference"),
+  journalEntryId: integer("journal_entry_id"),
+  paidAt: bigint("paid_at", { mode: "number" }).notNull(),
+  recordedBy: text("recorded_by").notNull(),
+});
+export const insertRentInvoicePaymentSchema = createInsertSchema(rentInvoicePayments).omit({ id: true });
+export type InsertRentInvoicePayment = z.infer<typeof insertRentInvoicePaymentSchema>;
+export type RentInvoicePayment = typeof rentInvoicePayments.$inferSelect;
+
+// ---------- F&B Costing: Recipes ----------
+export const recipes = pgTable("recipes", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  menuItemId: integer("menu_item_id"), // optional link to an existing bar/restaurant menu item
+  servingsPerBatch: real("servings_per_batch").notNull().default(1),
+  otherCostPerServing: real("other_cost_per_serving").notNull().default(0), // labor/overhead
+  targetMarginPercent: real("target_margin_percent").notNull().default(0),
+  active: integer("active").notNull().default(1),
+  notes: text("notes"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertRecipeSchema = createInsertSchema(recipes).omit({ id: true });
+export type InsertRecipe = z.infer<typeof insertRecipeSchema>;
+export type Recipe = typeof recipes.$inferSelect;
+
+export const recipeIngredients = pgTable("recipe_ingredients", {
+  id: serial("id").primaryKey(),
+  recipeId: integer("recipe_id").notNull(),
+  inventoryItemId: integer("inventory_item_id").notNull(),
+  quantityPerServing: real("quantity_per_serving").notNull(),
+  unit: text("unit"), // optional override of the item's default unit of measure
+});
+export const insertRecipeIngredientSchema = createInsertSchema(recipeIngredients).omit({ id: true });
+export type InsertRecipeIngredient = z.infer<typeof insertRecipeIngredientSchema>;
+export type RecipeIngredient = typeof recipeIngredients.$inferSelect;

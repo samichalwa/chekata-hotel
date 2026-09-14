@@ -17,6 +17,7 @@ const CATEGORY_FIELD: Record<TaxCategory, keyof Tax> = {
   facilities: "appliesFacilities",
   bar: "appliesBar",
   restaurant: "appliesRestaurant",
+  tenancy: "appliesTenancy",
 };
 
 /**
