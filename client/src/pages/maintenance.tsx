@@ -21,7 +21,7 @@ import { titleCase } from "@/lib/format";
 import { buildWhatsAppLink, buildMaintenancePdfUrl } from "@/lib/whatsapp";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { MAINTENANCE_CATEGORIES, MAINTENANCE_CATEGORY_LABELS, MAINTENANCE_STATUSES } from "@shared/schema";
-import type { MaintenanceIssue, MaintenanceCategory, MaintenanceStatus } from "@shared/schema";
+import type { MaintenanceIssue, MaintenanceCategory, MaintenanceStatus, Asset } from "@shared/schema";
 
 const PRIORITIES = ["low", "normal", "high", "urgent"] as const;
 
@@ -47,19 +47,23 @@ const issueFormSchema = z.object({
   reportedBy: z.string().min(1, "Who is reporting this?"),
   reportedPhone: z.string().optional().nullable(),
   priority: z.enum(PRIORITIES),
+  assetId: z.string().optional(),
 });
 
 function ReportIssueDialog() {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
+  const { data: assets = [] } = useQuery<Asset[]>({ queryKey: ["/api/assets"], enabled: open });
   const form = useForm<z.infer<typeof issueFormSchema>>({
     resolver: zodResolver(issueFormSchema),
-    defaultValues: { category: "electrical", title: "", location: "", description: "", reportedBy: "", reportedPhone: "", priority: "normal" },
+    defaultValues: { category: "electrical", title: "", location: "", description: "", reportedBy: "", reportedPhone: "", priority: "normal", assetId: "none" },
   });
 
   const mutation = useMutation({
     mutationFn: async (values: z.infer<typeof issueFormSchema>) => {
-      const res = await apiRequest("POST", "/api/maintenance-issues", values);
+      const { assetId, ...rest } = values;
+      const payload = { ...rest, assetId: assetId && assetId !== "none" ? Number(assetId) : null };
+      const res = await apiRequest("POST", "/api/maintenance-issues", payload);
       return res.json();
     },
     onSuccess: (data: any) => {
@@ -128,6 +132,19 @@ function ReportIssueDialog() {
                 <FormMessage />
               </FormItem>
             )} />
+            <FormField control={form.control} name="assetId" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Linked asset (optional)</FormLabel>
+                <Select onValueChange={field.onChange} value={field.value ?? "none"}>
+                  <FormControl><SelectTrigger data-testid="select-issue-asset"><SelectValue placeholder="None" /></SelectTrigger></FormControl>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {assets.map((a) => <SelectItem key={a.id} value={String(a.id)}>{a.assetNumber} — {a.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )} />
             <div className="grid grid-cols-2 gap-4">
               <FormField control={form.control} name="reportedBy" render={({ field }) => (
                 <FormItem>
@@ -161,6 +178,8 @@ export default function Maintenance() {
   const { data: currentUser } = useCurrentUser();
   const canClose = Boolean(currentUser?.isAdmin || currentUser?.canCloseMaintenanceIssues);
   const { data: issues = [], isLoading } = useQuery<MaintenanceIssue[]>({ queryKey: ["/api/maintenance-issues"] });
+  const { data: assets = [] } = useQuery<Asset[]>({ queryKey: ["/api/assets"] });
+  const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
 
@@ -253,6 +272,7 @@ export default function Maintenance() {
                   <TableHead>Ref</TableHead>
                   <TableHead>Title</TableHead>
                   <TableHead>Category</TableHead>
+                  <TableHead>Asset</TableHead>
                   <TableHead>Location</TableHead>
                   <TableHead>Reported by</TableHead>
                   <TableHead>Priority</TableHead>
@@ -274,6 +294,7 @@ export default function Maintenance() {
                       <TableCell className="font-mono text-xs">#{issue.id}</TableCell>
                       <TableCell className="font-medium">{issue.title}</TableCell>
                       <TableCell><Badge variant="outline">{MAINTENANCE_CATEGORY_LABELS[issue.category as MaintenanceCategory] ?? titleCase(issue.category)}</Badge></TableCell>
+                      <TableCell className="text-sm" data-testid={`cell-issue-asset-${issue.id}`}>{issue.assetId ? (assetById.get(issue.assetId)?.name ?? `#${issue.assetId}`) : "—"}</TableCell>
                       <TableCell>{issue.location || "—"}</TableCell>
                       <TableCell>{issue.reportedBy}</TableCell>
                       <TableCell><Badge variant={priorityVariant[issue.priority]}>{titleCase(issue.priority)}</Badge></TableCell>

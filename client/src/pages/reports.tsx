@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
-import { TrendingUp, TrendingDown, Wallet, Filter, Download, FileSpreadsheet, Users2, Wrench } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, Filter, Download, FileSpreadsheet, Users2, Wrench, PiggyBank, Boxes } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { formatKES, todayISO, titleCase, formatDate, nightsBetween } from "@/lib/format";
-import type { AccommodationBooking, Facility, FacilityBooking, Order, Staff, Expense, Room, MovieShow, MovieSeatBooking, MaintenanceIssue, MaintenanceCategory } from "@shared/schema";
+import type { AccommodationBooking, Facility, FacilityBooking, Order, Staff, Expense, Room, MovieShow, MovieSeatBooking, MaintenanceIssue, MaintenanceCategory, Asset, AssetCategory, AssetDepreciationSchedule } from "@shared/schema";
 import { MAINTENANCE_CATEGORY_LABELS } from "@shared/schema";
 
 function firstOfMonthISO(): string {
@@ -20,7 +20,9 @@ function firstOfMonthISO(): string {
 
 const CHART_COLORS = ["hsl(var(--chart-1))", "hsl(var(--chart-2))", "hsl(var(--chart-3))", "hsl(var(--chart-4))", "hsl(var(--chart-5))"];
 
-type ExportSheet = "all" | "overview" | "accommodation" | "facilities" | "bar-restaurant" | "staff" | "expenses" | "maintenance";
+type ExportSheet = "all" | "overview" | "accommodation" | "facilities" | "bar-restaurant" | "staff" | "expenses" | "maintenance" | "budgeting" | "assets";
+
+type BudgetVarianceRow = { month: string; incomeStreamCode: string; incomeStreamLabel: string; budgetedAmount: number; actualAmount: number; variance: number };
 
 function exportUrl(sheet: ExportSheet, fromDate: string, toDate: string): string {
   const params = new URLSearchParams();
@@ -55,6 +57,11 @@ export default function Reports() {
   const { data: movieShows = [] } = useQuery<MovieShow[]>({ queryKey: ["/api/movie-shows"] });
   const { data: movieSeatBookings = [] } = useQuery<MovieSeatBooking[]>({ queryKey: ["/api/movie-seat-bookings"] });
   const { data: maintenanceIssues = [] } = useQuery<MaintenanceIssue[]>({ queryKey: ["/api/maintenance-issues"] });
+  const { data: assetsList = [] } = useQuery<Asset[]>({ queryKey: ["/api/assets"] });
+  const { data: assetCategories = [] } = useQuery<AssetCategory[]>({ queryKey: ["/api/asset-categories"] });
+  const budgetFromMonth = (fromDate || firstOfMonthISO()).slice(0, 7);
+  const budgetToMonth = (toDate || todayISO()).slice(0, 7);
+  const { data: budgetVariance = [] } = useQuery<BudgetVarianceRow[]>({ queryKey: [`/api/budget-lines/variance?from=${budgetFromMonth}&to=${budgetToMonth}`] });
 
   const inRange = (d: string) => (!fromDate || d >= fromDate) && (!toDate || d <= toDate);
 
@@ -207,6 +214,8 @@ export default function Reports() {
           <TabsTrigger value="staff" data-testid="tab-report-staff">Personnel &amp; Payroll</TabsTrigger>
           <TabsTrigger value="expenses" data-testid="tab-report-expenses">Expenses</TabsTrigger>
           <TabsTrigger value="maintenance" data-testid="tab-report-maintenance">Maintenance</TabsTrigger>
+          <TabsTrigger value="budgeting" data-testid="tab-report-budgeting">Budgeting</TabsTrigger>
+          <TabsTrigger value="assets" data-testid="tab-report-assets">Assets</TabsTrigger>
         </TabsList>
 
         {/* Overview */}
@@ -645,6 +654,100 @@ export default function Reports() {
                       <TableCell>{i.title}</TableCell>
                       <TableCell>{titleCase(i.priority)}</TableCell>
                       <TableCell><Badge variant={i.status === "open" ? "destructive" : i.status === "closed" ? "outline" : "secondary"}>{titleCase(i.status)}</Badge></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </TabsContent>
+
+        {/* Budgeting */}
+        <TabsContent value="budgeting" className="space-y-4 mt-4">
+          <div className="flex justify-end">
+            <ExportButton sheet="budgeting" fromDate={fromDate} toDate={toDate} label="Export budgeting report" />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <StatCard label="Total budgeted (period)" value={formatKES(budgetVariance.reduce((s, r) => s + r.budgetedAmount, 0))} icon={PiggyBank} accent="muted" testId="stat-report-budget-total" />
+            <StatCard label="Total actual (period)" value={formatKES(budgetVariance.reduce((s, r) => s + r.actualAmount, 0))} icon={Wallet} accent="success" testId="stat-report-budget-actual" />
+            <StatCard
+              label="Net variance"
+              value={formatKES(budgetVariance.reduce((s, r) => s + r.variance, 0))}
+              icon={budgetVariance.reduce((s, r) => s + r.variance, 0) >= 0 ? TrendingUp : TrendingDown}
+              accent={budgetVariance.reduce((s, r) => s + r.variance, 0) >= 0 ? "success" : "warning"}
+              testId="stat-report-budget-variance"
+            />
+          </div>
+          <Card>
+            <div className="p-4 border-b border-card-border">
+              <h2 className="text-lg font-semibold">Budget vs actual by income stream ({budgetFromMonth} to {budgetToMonth})</h2>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Month</TableHead>
+                    <TableHead>Income Stream</TableHead>
+                    <TableHead className="text-right">Budgeted</TableHead>
+                    <TableHead className="text-right">Actual</TableHead>
+                    <TableHead className="text-right">Variance</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {budgetVariance.length === 0 && (
+                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">No budget lines entered for this period.</TableCell></TableRow>
+                  )}
+                  {budgetVariance.map((r) => (
+                    <TableRow key={`${r.month}-${r.incomeStreamCode}`} data-testid={`row-report-budget-${r.month}-${r.incomeStreamCode}`}>
+                      <TableCell>{r.month}</TableCell>
+                      <TableCell>{r.incomeStreamLabel}</TableCell>
+                      <TableCell className="text-right">{formatKES(r.budgetedAmount)}</TableCell>
+                      <TableCell className="text-right">{formatKES(r.actualAmount)}</TableCell>
+                      <TableCell className={`text-right ${r.variance < 0 ? "text-destructive" : "text-success"}`}>{formatKES(r.variance)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </TabsContent>
+
+        {/* Assets */}
+        <TabsContent value="assets" className="space-y-4 mt-4">
+          <div className="flex justify-end">
+            <ExportButton sheet="assets" fromDate={fromDate} toDate={toDate} label="Export assets report" />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <StatCard label="Active assets" value={String(assetsList.filter((a) => a.status === "active").length)} icon={Boxes} accent="muted" testId="stat-report-assets-active" />
+            <StatCard label="Total acquisition cost" value={formatKES(assetsList.reduce((s, a) => s + a.acquisitionCost, 0))} icon={Wallet} accent="success" testId="stat-report-assets-cost" />
+            <StatCard label="Disposed assets" value={String(assetsList.filter((a) => a.status === "disposed").length)} icon={FileSpreadsheet} accent="warning" testId="stat-report-assets-disposed" />
+          </div>
+          <Card>
+            <div className="p-4 border-b border-card-border">
+              <h2 className="text-lg font-semibold">Asset register</h2>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Asset #</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">Cost</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {assetsList.length === 0 && (
+                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">No assets registered yet.</TableCell></TableRow>
+                  )}
+                  {assetsList.map((a) => (
+                    <TableRow key={a.id} data-testid={`row-report-asset-${a.id}`}>
+                      <TableCell className="font-mono text-xs">{a.assetNumber}</TableCell>
+                      <TableCell>{a.name}</TableCell>
+                      <TableCell>{assetCategories.find((c) => c.id === a.categoryId)?.name ?? "—"}</TableCell>
+                      <TableCell className="text-right">{formatKES(a.acquisitionCost)}</TableCell>
+                      <TableCell><Badge variant={a.status === "active" ? "secondary" : a.status === "disposed" ? "outline" : "destructive"}>{titleCase(a.status)}</Badge></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

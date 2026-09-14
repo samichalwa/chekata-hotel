@@ -231,6 +231,7 @@ export const maintenanceIssues = pgTable("maintenance_issues", {
   description: text("description"),
   reportedBy: text("reported_by").notNull(),
   reportedPhone: text("reported_phone"),
+  assetId: integer("asset_id"), // optional link to the Assets register (which asset this issue is about)
   priority: text("priority").notNull().default("normal"), // low | normal | high | urgent
   status: text("status").notNull().default("open"), // open | in_progress | resolved | closed
   assignedTo: text("assigned_to"),
@@ -297,7 +298,7 @@ export type AttendanceRecord = typeof attendanceRecords.$inferSelect;
 // ---------- Phase 4: Leave Management ----------
 export const leaveTypes = pgTable("leave_types", {
   id: serial("id").primaryKey(),
-  name: text("name").notNull(),
+  name: text("name").notNull().unique(),
   entitlementDaysPerYear: real("entitlement_days_per_year").notNull().default(0),
   accrualMethod: text("accrual_method").notNull().default("annual"), // annual | monthly
   isPaid: integer("is_paid").notNull().default(1),
@@ -501,6 +502,8 @@ export const MODULE_KEYS = [
   "attendance",
   "leave",
   "payroll",
+  "budgeting",
+  "assets",
 ] as const;
 export type ModuleKey = typeof MODULE_KEYS[number];
 
@@ -527,6 +530,8 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   attendance: "Time & Attendance",
   leave: "Leave Management",
   payroll: "Payroll",
+  budgeting: "Budgeting",
+  assets: "Assets",
 };
 
 // Tables that can be individually write-restricted per user via the System
@@ -590,6 +595,7 @@ export const chartOfAccounts = pgTable("chart_of_accounts", {
   description: text("description"),
   active: integer("active").notNull().default(1),
   isSystem: integer("is_system").notNull().default(0), // seeded defaults; still editable, never force-deleted by code
+  incomeStreamCode: text("income_stream_code"), // optional — tags an income-type account to a Budgeting income stream (definition_list_items.code for listKey "income_stream"), so actual-vs-budget variance can be computed from the ledger
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 export const insertChartOfAccountSchema = createInsertSchema(chartOfAccounts).omit({ id: true });
@@ -1206,3 +1212,85 @@ export const recipeIngredients = pgTable("recipe_ingredients", {
 export const insertRecipeIngredientSchema = createInsertSchema(recipeIngredients).omit({ id: true });
 export type InsertRecipeIngredient = z.infer<typeof insertRecipeIngredientSchema>;
 export type RecipeIngredient = typeof recipeIngredients.$inferSelect;
+
+// ---------- Phase 5: Budgeting ----------
+// Income streams themselves are NOT a fixed enum — they are an admin-editable
+// definition list (listKey "income_stream", managed via System Administration
+// → Definitions, same generic mechanism used for attendance status / leave
+// type / etc). Seeded with a starter set, but new streams can be added at any
+// time without a code change.
+export const budgetLines = pgTable("budget_lines", {
+  id: serial("id").primaryKey(),
+  month: text("month").notNull(), // "YYYY-MM"
+  incomeStreamCode: text("income_stream_code").notNull(), // definition_list_items.code for listKey "income_stream"
+  budgetedAmount: real("budgeted_amount").notNull().default(0),
+  notes: text("notes"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+export const insertBudgetLineSchema = createInsertSchema(budgetLines).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertBudgetLine = z.infer<typeof insertBudgetLineSchema>;
+export type BudgetLine = typeof budgetLines.$inferSelect;
+
+// ---------- Phase 5: Assets ----------
+export const DEPRECIATION_METHODS = ["straight_line", "none"] as const;
+export type DepreciationMethod = typeof DEPRECIATION_METHODS[number];
+
+export const assetCategories = pgTable("asset_categories", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(), // e.g. Vehicles, IT Equipment, CCTV, Furniture
+  description: text("description"),
+  defaultUsefulLifeMonths: integer("default_useful_life_months").notNull().default(60),
+  defaultDepreciationMethod: text("default_depreciation_method").notNull().default("straight_line"),
+  depreciationExpenseAccountId: integer("depreciation_expense_account_id"), // Finance chart-of-accounts (expense type)
+  accumulatedDepreciationAccountId: integer("accumulated_depreciation_account_id"), // Finance chart-of-accounts (asset/contra type)
+  active: integer("active").notNull().default(1),
+});
+export const insertAssetCategorySchema = createInsertSchema(assetCategories).omit({ id: true });
+export type InsertAssetCategory = z.infer<typeof insertAssetCategorySchema>;
+export type AssetCategory = typeof assetCategories.$inferSelect;
+
+export const ASSET_STATUSES = ["active", "under_maintenance", "disposed"] as const;
+export type AssetStatus = typeof ASSET_STATUSES[number];
+
+export const assets = pgTable("assets", {
+  id: serial("id").primaryKey(),
+  assetNumber: text("asset_number").notNull().unique(), // auto-serialized, e.g. AST-000001
+  name: text("name").notNull(),
+  categoryId: integer("category_id").notNull(),
+  description: text("description"),
+  serialNumber: text("serial_number"),
+  location: text("location"),
+  supplier: text("supplier"),
+  acquisitionDate: text("acquisition_date").notNull(), // YYYY-MM-DD
+  acquisitionCost: real("acquisition_cost").notNull().default(0),
+  salvageValue: real("salvage_value").notNull().default(0),
+  usefulLifeMonths: integer("useful_life_months").notNull().default(60),
+  depreciationMethod: text("depreciation_method").notNull().default("straight_line"),
+  status: text("status").notNull().default("active"), // active | under_maintenance | disposed
+  photoUrl: text("photo_url"),
+  notes: text("notes"),
+  disposedAt: bigint("disposed_at", { mode: "number" }),
+  disposalValue: real("disposal_value"),
+  disposalNotes: text("disposal_notes"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertAssetSchema = createInsertSchema(assets).omit({ id: true, assetNumber: true, createdAt: true });
+export type InsertAsset = z.infer<typeof insertAssetSchema>;
+export type Asset = typeof assets.$inferSelect;
+
+// One row per asset per period once a depreciation run has been posted for
+// that period — the running record of net book value over time.
+export const assetDepreciationSchedules = pgTable("asset_depreciation_schedules", {
+  id: serial("id").primaryKey(),
+  assetId: integer("asset_id").notNull(),
+  periodMonth: text("period_month").notNull(), // "YYYY-MM"
+  depreciationAmount: real("depreciation_amount").notNull().default(0),
+  accumulatedDepreciation: real("accumulated_depreciation").notNull().default(0),
+  netBookValue: real("net_book_value").notNull().default(0),
+  journalEntryId: integer("journal_entry_id"), // the posted Finance journal entry for this run
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertAssetDepreciationScheduleSchema = createInsertSchema(assetDepreciationSchedules).omit({ id: true, createdAt: true });
+export type InsertAssetDepreciationSchedule = z.infer<typeof insertAssetDepreciationScheduleSchema>;
+export type AssetDepreciationSchedule = typeof assetDepreciationSchedules.$inferSelect;

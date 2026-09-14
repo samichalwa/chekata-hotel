@@ -28,6 +28,7 @@ import {
   insertRecipeSchema, insertRecipeIngredientSchema,
   insertAttendanceRecordSchema, insertLeaveTypeSchema, insertLeaveRequestSchema, insertLeaveBalanceSchema,
   insertStatutoryRateTableSchema, insertPayeBandSchema,
+  insertBudgetLineSchema, insertAssetCategorySchema, insertAssetSchema, DEPRECIATION_METHODS, ASSET_STATUSES,
 } from "@shared/schema";
 import { issueDocument } from "./documents";
 import { buildDocumentPdf, buildMaintenanceReportPdf, buildPayslipPdf } from "./pdf";
@@ -1097,7 +1098,7 @@ export async function registerRoutes(
       const from = typeof req.query.from === "string" && req.query.from ? req.query.from : undefined;
       const to = typeof req.query.to === "string" && req.query.to ? req.query.to : undefined;
       const sheetParam = typeof req.query.sheet === "string" ? req.query.sheet : "all";
-      const validSheets: (ReportSheetKey | "all")[] = ["all", "overview", "accommodation", "facilities", "bar-restaurant", "staff", "expenses", "maintenance", "taxes"];
+      const validSheets: (ReportSheetKey | "all")[] = ["all", "overview", "accommodation", "facilities", "bar-restaurant", "staff", "expenses", "maintenance", "taxes", "budgeting", "assets"];
       const sheet = (validSheets as string[]).includes(sheetParam) ? (sheetParam as ReportSheetKey | "all") : "all";
 
       const workbook = await buildReportsWorkbook(storage, { from, to, sheet });
@@ -2273,6 +2274,106 @@ export async function registerRoutes(
       await workbook.xlsx.write(res);
       res.end();
     } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to generate bank advice export" }); }
+  });
+
+  // ================= Phase 5: Budgeting =================
+  app.get("/api/budget-lines", requireModule("budgeting"), async (req, res) => {
+    const { from, to } = req.query as { from?: string; to?: string };
+    res.json(await storage.listBudgetLines(from && to ? { from, to } : undefined));
+  });
+  app.post("/api/budget-lines", requireModule("budgeting"), async (req, res) => {
+    try {
+      const data = insertBudgetLineSchema.parse(req.body);
+      res.status(201).json(await storage.upsertBudgetLine(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/budget-lines/:id", requireModule("budgeting"), async (req, res) => {
+    await storage.deleteBudgetLine(Number(req.params.id));
+    res.status(204).end();
+  });
+  app.get("/api/budget-lines/variance", requireModule("budgeting"), async (req, res) => {
+    const { from, to } = req.query as { from?: string; to?: string };
+    if (!from || !to) return res.status(400).json({ error: "from and to (YYYY-MM) query params are required" });
+    res.json(await storage.getBudgetVariance(from, to));
+  });
+
+  // ================= Phase 5: Assets =================
+  app.get("/api/assets/gl-accounts", requireModule("assets"), async (_req, res) => {
+    res.json(await storage.listChartOfAccounts());
+  });
+  app.get("/api/asset-categories", requireModule("assets"), async (_req, res) => {
+    res.json(await storage.listAssetCategories());
+  });
+  app.post("/api/asset-categories", requireModule("assets"), async (req, res) => {
+    try {
+      const data = insertAssetCategorySchema.parse(req.body);
+      res.status(201).json(await storage.createAssetCategory(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/asset-categories/:id", requireModule("assets"), async (req, res) => {
+    try {
+      const data = insertAssetCategorySchema.partial().parse(req.body);
+      const updated = await storage.updateAssetCategory(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Asset category not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/asset-categories/:id", requireAdmin, async (req, res) => {
+    await storage.deleteAssetCategory(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  app.get("/api/assets", requireModule("assets"), async (req, res) => {
+    const { status, categoryId } = req.query as { status?: string; categoryId?: string };
+    res.json(await storage.listAssets({ status, categoryId: categoryId ? Number(categoryId) : undefined }));
+  });
+  app.get("/api/assets/:id", requireModule("assets"), async (req, res) => {
+    const row = await storage.getAsset(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: "Asset not found" });
+    res.json(row);
+  });
+  app.post("/api/assets", requireModule("assets"), async (req, res) => {
+    try {
+      const data = insertAssetSchema.parse({ ...req.body, status: req.body.status ?? "active" });
+      res.status(201).json(await storage.createAsset(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/assets/:id", requireModule("assets"), async (req, res) => {
+    try {
+      const data = insertAssetSchema.partial().parse(req.body);
+      const updated = await storage.updateAsset(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Asset not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.post("/api/assets/:id/dispose", requireModule("assets"), async (req, res) => {
+    try {
+      const schema = z.object({ disposalValue: z.number(), disposalNotes: z.string().optional() });
+      const data = schema.parse(req.body);
+      const updated = await storage.disposeAsset(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Asset not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/assets/:id", requireAdmin, async (req, res) => {
+    await storage.deleteAsset(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  app.get("/api/assets/:id/depreciation-schedule", requireModule("assets"), async (req, res) => {
+    res.json(await storage.listAssetDepreciationSchedules(Number(req.params.id)));
+  });
+  app.post("/api/assets/run-depreciation", requireModule("assets"), async (req, res) => {
+    try {
+      const schema = z.object({ periodMonth: z.string().regex(/^\d{4}-\d{2}$/, "periodMonth must be YYYY-MM") });
+      const { periodMonth } = schema.parse(req.body);
+      const currentUser = (req as any).user;
+      const result = await storage.runDepreciationForPeriod(periodMonth, currentUser.fullName);
+      res.status(201).json(result);
+    } catch (err: any) {
+      if (err instanceof z.ZodError) return handleZodError(res, err);
+      res.status(400).json({ error: err?.message ?? "Failed to run depreciation" });
+    }
   });
 
   return httpServer;

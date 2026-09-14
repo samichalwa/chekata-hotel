@@ -17,7 +17,9 @@ export type ReportSheetKey =
   | "staff"
   | "expenses"
   | "maintenance"
-  | "taxes";
+  | "taxes"
+  | "budgeting"
+  | "assets";
 
 export const REPORT_SHEET_LABELS: Record<ReportSheetKey, string> = {
   overview: "Revenue & Cost Summary",
@@ -28,6 +30,8 @@ export const REPORT_SHEET_LABELS: Record<ReportSheetKey, string> = {
   expenses: "Expenses",
   maintenance: "Maintenance",
   taxes: "Taxes",
+  budgeting: "Budgeting & Variance",
+  assets: "Assets & Depreciation",
 };
 
 function inRange(date: string, from?: string, to?: string): boolean {
@@ -642,6 +646,96 @@ async function buildTaxesSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelNam
   autosizeColumns(ws, [30, 12, 22]);
 }
 
+async function buildBudgetingSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, from?: string, to?: string) {
+  const ws = wb.addWorksheet("Budgeting & Variance");
+  const cols = ["Month", "Income Stream", "Budgeted (KES)", "Actual (KES)", "Variance (KES)", "Variance %"];
+  addTitleBlock(ws, hotelName, "Budget vs Actual by Income Stream", from, to, "F");
+
+  // Reports use full dates (YYYY-MM-DD); budgeting works in calendar months, so
+  // collapse the range down to YYYY-MM, defaulting to the current month when unset.
+  const nowMonth = new Date().toISOString().slice(0, 7);
+  const fromMonth = from ? from.slice(0, 7) : nowMonth;
+  const toMonth = to ? to.slice(0, 7) : nowMonth;
+
+  const rows = await storage.getBudgetVariance(fromMonth, toMonth);
+
+  const header = ws.addRow(cols);
+  styleHeaderRow(header);
+
+  let totalBudget = 0;
+  let totalActual = 0;
+  rows.forEach((r) => {
+    totalBudget += r.budgetedAmount;
+    totalActual += r.actualAmount;
+    const variancePercent = r.budgetedAmount !== 0 ? (r.variance / r.budgetedAmount) * 100 : 0;
+    const row = ws.addRow([r.month, r.incomeStreamLabel, r.budgetedAmount, r.actualAmount, r.variance, `${variancePercent.toFixed(1)}%`]);
+    [3, 4, 5].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
+    if (r.variance < 0) row.getCell(5).font = { color: { argb: "FFB5502F" } };
+  });
+
+  if (rows.length === 0) {
+    ws.addRow(["No budget lines entered for this period.", "", "", "", "", ""]);
+  } else {
+    const totalsRow = ws.addRow(["", "Total", totalBudget, totalActual, totalActual - totalBudget, ""]);
+    [3, 4, 5].forEach((c) => { totalsRow.getCell(c).numFmt = KES_FMT; totalsRow.getCell(c).alignment = { horizontal: "right" }; });
+    styleTotalsRow(totalsRow);
+  }
+
+  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: cols.length } };
+  ws.views = [{ state: "frozen", ySplit: 4 }];
+  autosizeColumns(ws, [10, 20, 16, 16, 16, 12]);
+}
+
+async function buildAssetsSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, from?: string, to?: string) {
+  const ws = wb.addWorksheet("Assets & Depreciation");
+  const cols = ["Asset #", "Name", "Category", "Acquisition Date", "Cost (KES)", "Useful Life (months)", "Accum. Depreciation (KES)", "Net Book Value (KES)", "Status", "Location"];
+  addTitleBlock(ws, hotelName, "Asset Register & Depreciation", from, to, "J");
+
+  const [assetRows, categories, allSchedules] = await Promise.all([
+    storage.listAssets(),
+    storage.listAssetCategories(),
+    storage.listAssetDepreciationSchedules(),
+  ]);
+  const categoryById = new Map(categories.map((c) => [c.id, c]));
+  const latestAccumByAsset = new Map<number, number>();
+  allSchedules.forEach((s) => {
+    const current = latestAccumByAsset.get(s.assetId) ?? 0;
+    if (s.accumulatedDepreciation > current) latestAccumByAsset.set(s.assetId, s.accumulatedDepreciation);
+  });
+
+  const filtered = assetRows.filter((a) => inRange(a.acquisitionDate, from, to)).sort((a, b) => a.assetNumber.localeCompare(b.assetNumber));
+
+  const header = ws.addRow(cols);
+  styleHeaderRow(header);
+
+  let totalCost = 0;
+  let totalAccum = 0;
+  filtered.forEach((a) => {
+    const accum = latestAccumByAsset.get(a.id) ?? 0;
+    const nbv = a.acquisitionCost - accum;
+    totalCost += a.acquisitionCost;
+    totalAccum += accum;
+    const row = ws.addRow([
+      a.assetNumber, a.name, categoryById.get(a.categoryId)?.name ?? "—", a.acquisitionDate,
+      a.acquisitionCost, a.usefulLifeMonths, accum, nbv, titleCase(a.status), a.location ?? "—",
+    ]);
+    [5, 7, 8].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
+    if (a.status === "disposed") row.eachCell((c) => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HIGHLIGHT } }; });
+  });
+
+  if (filtered.length === 0) {
+    ws.addRow(["No assets registered in this period."]);
+  } else {
+    const totalsRow = ws.addRow(["", "", "", "Total", totalCost, "", totalAccum, totalCost - totalAccum, "", ""]);
+    [5, 7, 8].forEach((c) => { totalsRow.getCell(c).numFmt = KES_FMT; totalsRow.getCell(c).alignment = { horizontal: "right" }; });
+    styleTotalsRow(totalsRow);
+  }
+
+  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: cols.length } };
+  ws.views = [{ state: "frozen", ySplit: 4 }];
+  autosizeColumns(ws, [12, 24, 18, 16, 16, 16, 20, 18, 14, 18]);
+}
+
 export async function buildReportsWorkbook(
   storage: IStorage,
   opts: { from?: string; to?: string; sheet: ReportSheetKey | "all" }
@@ -664,6 +758,8 @@ export async function buildReportsWorkbook(
   if (include("expenses")) await buildExpensesSheet(wb, storage, hotelName, from, to);
   if (include("maintenance")) await buildMaintenanceSheet(wb, storage, hotelName, from, to);
   if (include("taxes")) await buildTaxesSheet(wb, storage, hotelName, from, to);
+  if (include("budgeting")) await buildBudgetingSheet(wb, storage, hotelName, from, to);
+  if (include("assets")) await buildAssetsSheet(wb, storage, hotelName, from, to);
 
   return wb;
 }

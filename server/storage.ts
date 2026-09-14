@@ -13,6 +13,7 @@ import {
   rentInvoices, rentInvoicePayments, recipes, recipeIngredients,
   attendanceRecords, leaveTypes, leaveRequests, leaveBalances,
   statutoryRateTables, payeBands, payrollRuns, payrollLines,
+  budgetLines, assetCategories, assets, assetDepreciationSchedules,
 } from '@shared/schema';
 import type {
   Room, InsertRoom,
@@ -74,10 +75,14 @@ import type {
   RentInvoicePayment, InsertRentInvoicePayment,
   Recipe, InsertRecipe,
   RecipeIngredient, InsertRecipeIngredient,
+  BudgetLine, InsertBudgetLine,
+  AssetCategory, InsertAssetCategory,
+  Asset, InsertAsset,
+  AssetDepreciationSchedule, InsertAssetDepreciationSchedule,
 } from '@shared/schema';
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { eq, and, ne, desc, gte, lte } from "drizzle-orm";
+import { eq, and, ne, desc, gte, lte, inArray } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
 
@@ -797,6 +802,65 @@ CREATE TABLE IF NOT EXISTS payroll_lines (
 );
 `);
 
+  // ---- Phase 5: Budgeting + Assets (fresh-install bootstrap) ----
+  await sql.unsafe(`
+CREATE TABLE IF NOT EXISTS budget_lines (
+  id SERIAL PRIMARY KEY,
+  month TEXT NOT NULL,
+  income_stream_code TEXT NOT NULL,
+  budgeted_amount REAL NOT NULL DEFAULT 0,
+  notes TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  UNIQUE(month, income_stream_code)
+);
+CREATE TABLE IF NOT EXISTS asset_categories (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  default_useful_life_months INTEGER NOT NULL DEFAULT 60,
+  default_depreciation_method TEXT NOT NULL DEFAULT 'straight_line',
+  depreciation_expense_account_id INTEGER,
+  accumulated_depreciation_account_id INTEGER,
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS assets (
+  id SERIAL PRIMARY KEY,
+  asset_number TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  category_id INTEGER NOT NULL,
+  description TEXT,
+  serial_number TEXT,
+  location TEXT,
+  supplier TEXT,
+  acquisition_date TEXT NOT NULL,
+  acquisition_cost REAL NOT NULL DEFAULT 0,
+  salvage_value REAL NOT NULL DEFAULT 0,
+  useful_life_months INTEGER NOT NULL DEFAULT 60,
+  depreciation_method TEXT NOT NULL DEFAULT 'straight_line',
+  status TEXT NOT NULL DEFAULT 'active',
+  photo_url TEXT,
+  notes TEXT,
+  disposed_at BIGINT,
+  disposal_value REAL,
+  disposal_notes TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
+  id SERIAL PRIMARY KEY,
+  asset_id INTEGER NOT NULL,
+  period_month TEXT NOT NULL,
+  depreciation_amount REAL NOT NULL DEFAULT 0,
+  accumulated_depreciation REAL NOT NULL DEFAULT 0,
+  net_book_value REAL NOT NULL DEFAULT 0,
+  journal_entry_id INTEGER,
+  created_at BIGINT NOT NULL,
+  UNIQUE(asset_id, period_month)
+);
+`);
+  await ensureColumn("chart_of_accounts", "income_stream_code", "TEXT");
+  await ensureColumn("maintenance_issues", "asset_id", "INTEGER");
+
   // ---- Idempotent column additions for installs upgraded from an earlier version ----
   async function ensureColumn(table: string, column: string, ddl: string) {
     try {
@@ -1106,6 +1170,62 @@ CREATE TABLE IF NOT EXISTS payroll_lines (
     }
   }
   await seedPhase4Foundations();
+
+  async function seedPhase5Foundations() {
+    // Income streams for Budgeting: a fully admin-editable definition list
+    // (System Administration → Definitions), not a hardcoded enum. Seeded
+    // with a starter set that can be added to, renamed, or deactivated at
+    // any time without a code change.
+    let [incomeStreamList] = await sql<{ id: number }[]>`SELECT id FROM definition_lists WHERE list_key = 'income_stream'`;
+    if (!incomeStreamList) {
+      [incomeStreamList] = await sql<{ id: number }[]>`
+        INSERT INTO definition_lists (list_key, label, description, is_system)
+        VALUES ('income_stream', 'Income Streams', 'Revenue categories used for Budgeting (actual-vs-budget variance)', 1)
+        RETURNING id`;
+    }
+    const [{ c: streamItemCount }] = await sql`SELECT COUNT(*)::int as c FROM definition_list_items WHERE list_id = ${incomeStreamList.id}`;
+    if (streamItemCount === 0) {
+      const streams: { code: string; label: string }[] = [
+        { code: "accommodation", label: "Accommodation" },
+        { code: "bar", label: "Bar" },
+        { code: "restaurant", label: "Restaurant" },
+        { code: "conference", label: "Conference" },
+        { code: "special_events", label: "Special Events" },
+        { code: "movie_seats", label: "Movie Seats" },
+        { code: "shop_rentals", label: "Shop Rentals" },
+        { code: "wifi_hotspot", label: "WiFi Hotspot" },
+        { code: "water_sales", label: "Water Sales" },
+        { code: "other", label: "Other" },
+      ];
+      for (let i = 0; i < streams.length; i++) {
+        const s = streams[i];
+        await sql`INSERT INTO definition_list_items (list_id, code, label, sort_order, active) VALUES (${incomeStreamList.id}, ${s.code}, ${s.label}, ${i}, 1)`;
+      }
+    }
+
+    const [{ c: categoryCount }] = await sql`SELECT COUNT(*)::int as c FROM asset_categories`;
+    if (categoryCount === 0) {
+      const categories: { name: string; months: number }[] = [
+        { name: "Vehicles", months: 60 },
+        { name: "IT Equipment", months: 36 },
+        { name: "CCTV", months: 60 },
+        { name: "Furniture", months: 84 },
+      ];
+      for (const c of categories) {
+        await sql`INSERT INTO asset_categories (name, default_useful_life_months, default_depreciation_method, active) VALUES (${c.name}, ${c.months}, 'straight_line', 1) ON CONFLICT (name) DO NOTHING`;
+      }
+    }
+    await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('asset', 'AST', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
+
+    const depreciationCoaDefaults: { code: string; name: string; type: string }[] = [
+      { code: "6100", name: "Depreciation Expense", type: "expense" },
+      { code: "1600", name: "Accumulated Depreciation", type: "asset" },
+    ];
+    for (const acc of depreciationCoaDefaults) {
+      await sql`INSERT INTO chart_of_accounts (code, name, type, active, is_system, created_at) VALUES (${acc.code}, ${acc.name}, ${acc.type}, 1, 1, ${Date.now()}) ON CONFLICT (code) DO NOTHING`;
+    }
+  }
+  await seedPhase5Foundations();
 
   // ---- Seed default rooms & facilities to match The Chekata's layout (idempotent) ----
   async function seed() {
@@ -1473,6 +1593,29 @@ export interface IStorage {
   createRecipe(data: Omit<InsertRecipe, "createdAt">, ingredients: Omit<InsertRecipeIngredient, "recipeId">[]): Promise<Recipe>;
   updateRecipe(id: number, data: Partial<InsertRecipe>, ingredients?: Omit<InsertRecipeIngredient, "recipeId">[]): Promise<Recipe | undefined>;
   deleteRecipe(id: number): Promise<{ changes: number }>;
+
+  // ================= Phase 5: Budgeting =================
+  listBudgetLines(filters?: { from?: string; to?: string }): Promise<BudgetLine[]>;
+  upsertBudgetLine(data: InsertBudgetLine): Promise<BudgetLine>;
+  deleteBudgetLine(id: number): Promise<{ changes: number }>;
+  getBudgetVariance(from: string, to: string): Promise<{ month: string; incomeStreamCode: string; incomeStreamLabel: string; budgetedAmount: number; actualAmount: number; variance: number }[]>;
+
+  // ================= Phase 5: Assets =================
+  listAssetCategories(): Promise<AssetCategory[]>;
+  getAssetCategory(id: number): Promise<AssetCategory | undefined>;
+  createAssetCategory(data: InsertAssetCategory): Promise<AssetCategory>;
+  updateAssetCategory(id: number, data: Partial<InsertAssetCategory>): Promise<AssetCategory | undefined>;
+  deleteAssetCategory(id: number): Promise<{ changes: number }>;
+
+  listAssets(filters?: { status?: string; categoryId?: number }): Promise<Asset[]>;
+  getAsset(id: number): Promise<Asset | undefined>;
+  createAsset(data: Omit<InsertAsset, "assetNumber" | "createdAt">): Promise<Asset>;
+  updateAsset(id: number, data: Partial<InsertAsset>): Promise<Asset | undefined>;
+  disposeAsset(id: number, data: { disposalValue: number; disposalNotes?: string }): Promise<Asset | undefined>;
+  deleteAsset(id: number): Promise<{ changes: number }>;
+
+  listAssetDepreciationSchedules(assetId?: number): Promise<AssetDepreciationSchedule[]>;
+  runDepreciationForPeriod(periodMonth: string, createdBy: string): Promise<{ journalEntryId: number | null; scheduleRows: AssetDepreciationSchedule[]; totalDepreciation: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -3207,6 +3350,190 @@ export class DatabaseStorage implements IStorage {
     await db.delete(recipeIngredients).where(eq(recipeIngredients.recipeId, id));
     const result = await db.delete(recipes).where(eq(recipes.id, id));
     return { changes: result.count ?? 0 };
+  }
+
+  // ---- Budgeting (Phase 5) ----
+  async listBudgetLines(filters?: { from?: string; to?: string }) {
+    if (filters?.from && filters?.to) {
+      return db.select().from(budgetLines).where(and(gte(budgetLines.month, filters.from), lte(budgetLines.month, filters.to))).orderBy(budgetLines.month, budgetLines.incomeStreamCode);
+    }
+    return db.select().from(budgetLines).orderBy(budgetLines.month, budgetLines.incomeStreamCode);
+  }
+  async upsertBudgetLine(data: InsertBudgetLine) {
+    const [existing] = await db.select().from(budgetLines).where(and(eq(budgetLines.month, data.month), eq(budgetLines.incomeStreamCode, data.incomeStreamCode)));
+    if (existing) {
+      return (await db.update(budgetLines).set({ ...data, createdAt: existing.createdAt, updatedAt: Date.now() }).where(eq(budgetLines.id, existing.id)).returning())[0];
+    }
+    return (await db.insert(budgetLines).values({ ...data, createdAt: Date.now(), updatedAt: Date.now() } as InsertBudgetLine & { createdAt: number; updatedAt: number }).returning())[0];
+  }
+  async deleteBudgetLine(id: number) {
+    const result = await db.delete(budgetLines).where(eq(budgetLines.id, id));
+    return { changes: result.count ?? 0 };
+  }
+  async getBudgetVariance(from: string, to: string) {
+    // Budgeted side: every budget line in range, one row per (month, stream).
+    const budgetRows = await sql<{ month: string; income_stream_code: string; budgeted_amount: number }[]>`
+      SELECT month, income_stream_code, budgeted_amount FROM budget_lines
+      WHERE month BETWEEN ${from} AND ${to}`;
+    // Actual side: posted journal-entry lines against income accounts tagged with an income_stream_code,
+    // summed per calendar month (credit - debit, since income normally increases on the credit side).
+    const actualRows = await sql<{ month: string; income_stream_code: string; actual_amount: number }[]>`
+      SELECT to_char(je.entry_date::date, 'YYYY-MM') AS month, coa.income_stream_code, SUM(jel.credit - jel.debit) AS actual_amount
+      FROM journal_entry_lines jel
+      JOIN journal_entries je ON je.id = jel.journal_entry_id
+      JOIN chart_of_accounts coa ON coa.id = jel.account_id
+      WHERE je.status = 'posted' AND coa.type = 'income' AND coa.income_stream_code IS NOT NULL
+        AND to_char(je.entry_date::date, 'YYYY-MM') BETWEEN ${from} AND ${to}
+      GROUP BY 1, 2`;
+    const streamListRows = await sql<{ code: string; label: string }[]>`
+      SELECT dli.code, dli.label FROM definition_list_items dli
+      JOIN definition_lists dl ON dl.id = dli.list_id
+      WHERE dl.list_key = 'income_stream'`;
+    const labelByCode = new Map(streamListRows.map((r) => [r.code, r.label]));
+    const key = (month: string, code: string) => `${month}::${code}`;
+    const merged = new Map<string, { month: string; incomeStreamCode: string; budgetedAmount: number; actualAmount: number }>();
+    for (const b of budgetRows) {
+      merged.set(key(b.month, b.income_stream_code), { month: b.month, incomeStreamCode: b.income_stream_code, budgetedAmount: b.budgeted_amount, actualAmount: 0 });
+    }
+    for (const a of actualRows) {
+      const k = key(a.month, a.income_stream_code);
+      const existing = merged.get(k);
+      if (existing) existing.actualAmount = a.actual_amount;
+      else merged.set(k, { month: a.month, incomeStreamCode: a.income_stream_code, budgetedAmount: 0, actualAmount: a.actual_amount });
+    }
+    return Array.from(merged.values())
+      .map((r) => ({ ...r, incomeStreamLabel: labelByCode.get(r.incomeStreamCode) ?? r.incomeStreamCode, variance: r.actualAmount - r.budgetedAmount }))
+      .sort((x, y) => (x.month === y.month ? x.incomeStreamCode.localeCompare(y.incomeStreamCode) : x.month.localeCompare(y.month)));
+  }
+
+  // ---- Assets (Phase 5) ----
+  async listAssetCategories() {
+    return db.select().from(assetCategories).orderBy(assetCategories.name);
+  }
+  async getAssetCategory(id: number) {
+    return (await db.select().from(assetCategories).where(eq(assetCategories.id, id)))[0];
+  }
+  async createAssetCategory(data: InsertAssetCategory) {
+    return (await db.insert(assetCategories).values(data).returning())[0];
+  }
+  async updateAssetCategory(id: number, data: Partial<InsertAssetCategory>) {
+    return (await db.update(assetCategories).set(data).where(eq(assetCategories.id, id)).returning())[0];
+  }
+  async deleteAssetCategory(id: number) {
+    const result = await db.delete(assetCategories).where(eq(assetCategories.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  async listAssets(filters?: { status?: string; categoryId?: number }) {
+    const conditions = [];
+    if (filters?.status) conditions.push(eq(assets.status, filters.status));
+    if (filters?.categoryId) conditions.push(eq(assets.categoryId, filters.categoryId));
+    if (conditions.length) return db.select().from(assets).where(and(...conditions)).orderBy(desc(assets.id));
+    return db.select().from(assets).orderBy(desc(assets.id));
+  }
+  async getAsset(id: number) {
+    return (await db.select().from(assets).where(eq(assets.id, id)))[0];
+  }
+  async createAsset(data: Omit<InsertAsset, "assetNumber" | "createdAt">) {
+    const assetNumber = await this.getNextSequenceNumber("asset");
+    return (await db.insert(assets).values({ ...data, assetNumber, createdAt: Date.now() } as typeof assets.$inferInsert).returning())[0];
+  }
+  async updateAsset(id: number, data: Partial<InsertAsset>) {
+    return (await db.update(assets).set(data).where(eq(assets.id, id)).returning())[0];
+  }
+  async disposeAsset(id: number, data: { disposalValue: number; disposalNotes?: string }) {
+    return (await db.update(assets).set({
+      status: "disposed",
+      disposedAt: Date.now(),
+      disposalValue: data.disposalValue,
+      disposalNotes: data.disposalNotes ?? null,
+    }).where(eq(assets.id, id)).returning())[0];
+  }
+  async deleteAsset(id: number) {
+    await db.delete(assetDepreciationSchedules).where(eq(assetDepreciationSchedules.assetId, id));
+    const result = await db.delete(assets).where(eq(assets.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  async listAssetDepreciationSchedules(assetId?: number) {
+    if (assetId) return db.select().from(assetDepreciationSchedules).where(eq(assetDepreciationSchedules.assetId, assetId)).orderBy(assetDepreciationSchedules.periodMonth);
+    return db.select().from(assetDepreciationSchedules).orderBy(desc(assetDepreciationSchedules.id));
+  }
+  async runDepreciationForPeriod(periodMonth: string, createdBy: string) {
+    const [{ c: alreadyRun }] = await sql<{ c: number }[]>`SELECT COUNT(*)::int as c FROM asset_depreciation_schedules WHERE period_month = ${periodMonth}`;
+    if (alreadyRun > 0) {
+      throw new Error(`Depreciation for ${periodMonth} has already been run. Reverse the existing journal entry first if you need to redo it.`);
+    }
+    const activeAssets = await db.select().from(assets).where(eq(assets.status, "active"));
+    const categories = await db.select().from(assetCategories);
+    const categoryById = new Map(categories.map((c) => [c.id, c]));
+
+    // Fall back to the system default Depreciation Expense / Accumulated Depreciation accounts
+    // (seeded codes 6100/1600) when a category has no specific GL mapping configured.
+    const [defaultExpenseAccount] = await db.select().from(chartOfAccounts).where(eq(chartOfAccounts.code, "6100"));
+    const [defaultAccumAccount] = await db.select().from(chartOfAccounts).where(eq(chartOfAccounts.code, "1600"));
+
+    type Line = { assetId: number; amount: number; expenseAccountId: number; accumAccountId: number };
+    const lines: Line[] = [];
+    const scheduleInserts: (InsertAssetDepreciationSchedule & { createdAt: number })[] = [];
+
+    for (const asset of activeAssets) {
+      if (asset.depreciationMethod === "none") continue;
+      const depreciableBase = Math.max(0, asset.acquisitionCost - asset.salvageValue);
+      if (depreciableBase <= 0 || asset.usefulLifeMonths <= 0) continue;
+      const monthlyAmount = depreciableBase / asset.usefulLifeMonths;
+      const [{ accum }] = await sql<{ accum: number | null }[]>`SELECT MAX(accumulated_depreciation) as accum FROM asset_depreciation_schedules WHERE asset_id = ${asset.id}`;
+      const priorAccumulated = accum ?? 0;
+      const remainingDepreciable = depreciableBase - priorAccumulated;
+      if (remainingDepreciable <= 0.01) continue; // fully depreciated
+      const amount = Math.min(monthlyAmount, remainingDepreciable);
+      const newAccumulated = priorAccumulated + amount;
+      const category = categoryById.get(asset.categoryId);
+      const expenseAccountId = category?.depreciationExpenseAccountId ?? defaultExpenseAccount?.id;
+      const accumAccountId = category?.accumulatedDepreciationAccountId ?? defaultAccumAccount?.id;
+      if (!expenseAccountId || !accumAccountId) {
+        throw new Error(`No Depreciation Expense / Accumulated Depreciation account configured for asset "${asset.name}" (category "${category?.name ?? "unknown"}") and no system default account found.`);
+      }
+      lines.push({ assetId: asset.id, amount, expenseAccountId, accumAccountId });
+      scheduleInserts.push({
+        assetId: asset.id,
+        periodMonth,
+        depreciationAmount: amount,
+        accumulatedDepreciation: newAccumulated,
+        netBookValue: asset.acquisitionCost - newAccumulated,
+        journalEntryId: null,
+        createdAt: Date.now(),
+      });
+    }
+
+    if (lines.length === 0) {
+      return { journalEntryId: null, scheduleRows: [], totalDepreciation: 0 };
+    }
+
+    // One summarized journal entry for the whole batch: total debit to each distinct expense
+    // account, total credit to each distinct accumulated-depreciation account.
+    const byExpenseAccount = new Map<number, number>();
+    const byAccumAccount = new Map<number, number>();
+    for (const l of lines) {
+      byExpenseAccount.set(l.expenseAccountId, (byExpenseAccount.get(l.expenseAccountId) ?? 0) + l.amount);
+      byAccumAccount.set(l.accumAccountId, (byAccumAccount.get(l.accumAccountId) ?? 0) + l.amount);
+    }
+    const journalLines: Omit<InsertJournalEntryLine, "journalEntryId">[] = [];
+    for (const [accountId, amount] of Array.from(byExpenseAccount.entries())) journalLines.push({ accountId, debit: amount, credit: 0, description: `Depreciation for ${periodMonth}` });
+    for (const [accountId, amount] of Array.from(byAccumAccount.entries())) journalLines.push({ accountId, debit: 0, credit: amount, description: `Depreciation for ${periodMonth}` });
+    const totalDepreciation = lines.reduce((sum, l) => sum + l.amount, 0);
+
+    const entryDate = `${periodMonth}-01`;
+    const created = await this.postJournalEntry(
+      { entryDate, description: `Asset depreciation — ${periodMonth}`, sourceModule: "assets", sourceId: null, createdBy, createdAt: Date.now(), periodId: null } as any,
+      journalLines,
+    );
+
+    const scheduleRows = await db.insert(assetDepreciationSchedules).values(
+      scheduleInserts.map((s) => ({ ...s, journalEntryId: created.id })),
+    ).returning();
+
+    return { journalEntryId: created.id, scheduleRows, totalDepreciation };
   }
 }
 
