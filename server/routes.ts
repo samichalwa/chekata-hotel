@@ -1953,13 +1953,14 @@ export async function registerRoutes(
   });
 
   // ================= Phase 3: F&B Costing — Recipes =================
-  async function computeRecipeCost(recipe: { otherCostPerServing: number; targetMarginPercent: number }, ingredients: { quantityPerServing: number; inventoryItemId: number }[]) {
+  async function computeRecipeCost(recipe: { laborCostPercent: number; targetMarginPercent: number }, ingredients: { quantityPerServing: number; inventoryItemId: number }[]) {
     let ingredientCostPerServing = 0;
     for (const ing of ingredients) {
       const item = await storage.getInventoryItem(ing.inventoryItemId);
       ingredientCostPerServing += ing.quantityPerServing * (item?.lastUnitCost ?? 0);
     }
-    const costPerServing = recipe.otherCostPerServing + ingredientCostPerServing;
+    const laborCostPerServing = ingredientCostPerServing * (recipe.laborCostPercent / 100);
+    const costPerServing = laborCostPerServing + ingredientCostPerServing;
     const marginFraction = Math.min(0.99, Math.max(0, recipe.targetMarginPercent / 100));
     const suggestedPrice = marginFraction > 0 ? costPerServing / (1 - marginFraction) : costPerServing;
     return { costPerServing, suggestedPrice };

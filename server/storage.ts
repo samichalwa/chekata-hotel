@@ -681,7 +681,7 @@ CREATE TABLE IF NOT EXISTS recipes (
   name TEXT NOT NULL,
   menu_item_id INTEGER,
   servings_per_batch REAL NOT NULL DEFAULT 1,
-  other_cost_per_serving REAL NOT NULL DEFAULT 0,
+  labor_cost_percent REAL NOT NULL DEFAULT 0,
   target_margin_percent REAL NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1,
   notes TEXT,

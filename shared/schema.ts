@@ -1186,7 +1186,7 @@ export const recipes = pgTable("recipes", {
   name: text("name").notNull(),
   menuItemId: integer("menu_item_id"), // optional link to an existing bar/restaurant menu item
   servingsPerBatch: real("servings_per_batch").notNull().default(1),
-  otherCostPerServing: real("other_cost_per_serving").notNull().default(0), // labor/overhead
+  laborCostPercent: real("labor_cost_percent").notNull().default(0), // labor/overhead, as a % of ingredient cost per serving
   targetMarginPercent: real("target_margin_percent").notNull().default(0),
   active: integer("active").notNull().default(1),
   notes: text("notes"),

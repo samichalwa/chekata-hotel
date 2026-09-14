@@ -43,7 +43,7 @@ const ingredientSchema = z.object({
 const recipeFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   servingsPerBatch: z.coerce.number().min(0.01, "Servings must be greater than 0"),
-  otherCostPerServing: z.coerce.number().min(0, "Cost can't be negative"),
+  laborCostPercent: z.coerce.number().min(0, "Percent can't be negative").max(500, "Percent must be 500 or less"),
   targetMarginPercent: z.coerce.number().min(0, "Margin can't be negative").max(99, "Margin must be below 100%"),
   active: z.number(),
   notes: z.string().optional().nullable(),
@@ -52,16 +52,17 @@ const recipeFormSchema = z.object({
 
 type RecipeFormValues = z.infer<typeof recipeFormSchema>;
 
-function ingredientCostPreview(values: RecipeFormValues, items: InventoryItem[]): { costPerServing: number; suggestedPrice: number } {
+function ingredientCostPreview(values: RecipeFormValues, items: InventoryItem[]): { ingredientCost: number; laborCost: number; costPerServing: number; suggestedPrice: number } {
   let ingredientCost = 0;
   for (const ing of values.ingredients) {
     const item = items.find((i) => i.id === ing.inventoryItemId);
     ingredientCost += (ing.quantityPerServing || 0) * (item?.lastUnitCost ?? 0);
   }
-  const costPerServing = (values.otherCostPerServing || 0) + ingredientCost;
+  const laborCost = ingredientCost * ((values.laborCostPercent || 0) / 100);
+  const costPerServing = ingredientCost + laborCost;
   const marginFraction = Math.min(0.99, Math.max(0, (values.targetMarginPercent || 0) / 100));
   const suggestedPrice = marginFraction > 0 ? costPerServing / (1 - marginFraction) : costPerServing;
-  return { costPerServing, suggestedPrice };
+  return { ingredientCost, laborCost, costPerServing, suggestedPrice };
 }
 
 function RecipeFormDialog({ recipe, trigger }: { recipe?: RecipeWithCost; trigger: React.ReactNode }) {
@@ -74,13 +75,13 @@ function RecipeFormDialog({ recipe, trigger }: { recipe?: RecipeWithCost; trigge
       ? {
           name: recipe.name,
           servingsPerBatch: recipe.servingsPerBatch,
-          otherCostPerServing: recipe.otherCostPerServing,
+          laborCostPercent: recipe.laborCostPercent,
           targetMarginPercent: recipe.targetMarginPercent,
           active: recipe.active,
           notes: recipe.notes ?? "",
           ingredients: recipe.ingredients.map((i) => ({ inventoryItemId: i.inventoryItemId, quantityPerServing: i.quantityPerServing, unit: i.unit ?? "" })),
         }
-      : { name: "", servingsPerBatch: 1, otherCostPerServing: 0, targetMarginPercent: 0, active: 1, notes: "", ingredients: [{ inventoryItemId: 0, quantityPerServing: 0, unit: "" }] },
+      : { name: "", servingsPerBatch: 1, laborCostPercent: 0, targetMarginPercent: 0, active: 1, notes: "", ingredients: [{ inventoryItemId: 0, quantityPerServing: 0, unit: "" }] },
   });
   const { fields, append, remove } = useFieldArray({ control: form.control, name: "ingredients" });
   const watched = form.watch();
@@ -154,8 +155,8 @@ function RecipeFormDialog({ recipe, trigger }: { recipe?: RecipeWithCost; trigge
             </div>
 
             <div className="grid grid-cols-2 gap-4">
-              <FormField control={form.control} name="otherCostPerServing" render={({ field }) => (
-                <FormItem><FormLabel>Other cost/serving (labor, overhead)</FormLabel><FormControl><Input type="number" step="0.01" {...field} data-testid="input-recipe-other-cost" /></FormControl><FormMessage /></FormItem>
+              <FormField control={form.control} name="laborCostPercent" render={({ field }) => (
+                <FormItem><FormLabel>Labor/other cost (% of ingredient cost)</FormLabel><FormControl><Input type="number" step="0.1" {...field} data-testid="input-recipe-other-cost" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="targetMarginPercent" render={({ field }) => (
                 <FormItem><FormLabel>Target margin (%)</FormLabel><FormControl><Input type="number" step="0.1" {...field} data-testid="input-recipe-margin" /></FormControl><FormMessage /></FormItem>
@@ -163,6 +164,14 @@ function RecipeFormDialog({ recipe, trigger }: { recipe?: RecipeWithCost; trigge
             </div>
 
             <Card className="p-4 bg-muted/40 grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground">Ingredient cost/serving</p>
+                <p className="text-base font-medium tabular-nums" data-testid="text-live-ingredient-cost">{formatKES(preview.ingredientCost)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Labor cost/serving</p>
+                <p className="text-base font-medium tabular-nums" data-testid="text-live-labor-cost">{formatKES(preview.laborCost)}</p>
+              </div>
               <div>
                 <p className="text-xs text-muted-foreground">Cost per serving (live)</p>
                 <p className="text-lg font-semibold tabular-nums" data-testid="text-live-cost-per-serving">{formatKES(preview.costPerServing)}</p>
