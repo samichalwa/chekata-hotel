@@ -11,15 +11,22 @@ import {
   insertStaffSchema, insertExpenseSchema, insertSettingsSchema,
   insertUserSchema, insertTaxSchema, MODULE_KEYS, type ModuleKey,
   insertTableSchema, insertMaintenanceIssueSchema, MAINTENANCE_CATEGORIES,
+  insertChartOfAccountSchema, insertAccountingPeriodSchema,
+  insertJournalEntrySchema, insertJournalEntryLineSchema,
+  insertBankAccountSchema, insertBankReconciliationSchema,
+  insertPaymentVoucherSchema, insertApprovalMatrixRuleSchema,
+  insertDefinitionListSchema, insertDefinitionListItemSchema,
+  PERMISSION_TABLE_KEYS, type PermissionTableKey,
 } from "@shared/schema";
 import { issueDocument } from "./documents";
-import { buildDocumentPdf } from "./pdf";
+import { buildDocumentPdf, buildMaintenanceReportPdf } from "./pdf";
 import { sendTransactionalEmail } from "./email";
 import { sendSms } from "./sms";
 import { buildReportsWorkbook, REPORT_SHEET_LABELS, type ReportSheetKey } from "./reports-excel";
 import {
   requireAuth, requireModule, requireAdmin, requireCanEditMovieBookings,
   requireAnyModule, requireCanManageTablesList, requireCanManageMenuItemsList, requireCanCloseMaintenanceIssues,
+  requireAdminUsername, requireTablePermission,
   hashPassword, verifyPassword, toSafeUser, parsePermissions, resolveUserIdFromHeaderToken,
 } from "./auth";
 
@@ -165,8 +172,58 @@ export async function registerRoutes(
     }
   });
 
+  // ---------- Public, tokenized PDF links (no login) — embedded in free WhatsApp click-to-send
+  // messages, which can only carry text, never a real file attachment. Each token is an
+  // unguessable random string; a mismatch or missing document returns a generic 404 so we never
+  // reveal whether a given id exists. ----------
+  app.get("/api/public/documents/:id/pdf", async (req, res) => {
+    try {
+      const token = typeof req.query.token === "string" ? req.query.token : "";
+      const doc = await storage.getDocument(Number(req.params.id));
+      if (!doc || !doc.publicToken || !token || doc.publicToken !== token) {
+        return res.status(404).json({ error: "Not found" });
+      }
+      const settings = await storage.getSettings();
+      const payload = JSON.parse(doc.payloadJson);
+      const pdf = await buildDocumentPdf(settings, { docNumber: doc.sourceId, ...payload });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${doc.docType}-${doc.sourceId}.pdf"`);
+      res.send(pdf);
+    } catch {
+      res.status(404).json({ error: "Not found" });
+    }
+  });
+  app.get("/api/public/maintenance/:id/pdf", async (req, res) => {
+    try {
+      const token = typeof req.query.token === "string" ? req.query.token : "";
+      const issue = await storage.getMaintenanceIssue(Number(req.params.id));
+      if (!issue || !issue.publicToken || !token || issue.publicToken !== token) {
+        return res.status(404).json({ error: "Not found" });
+      }
+      const settings = await storage.getSettings();
+      const pdf = await buildMaintenanceReportPdf(settings, issue);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="maintenance-${issue.id}.pdf"`);
+      res.send(pdf);
+    } catch {
+      res.status(404).json({ error: "Not found" });
+    }
+  });
+
   // ---------- Everything below requires a signed-in, active user ----------
   app.use("/api", requireAuth);
+
+  // Cross-module utility: lets a WhatsApp button in an edit/detail dialog fetch the CURRENT
+  // latest document for a given source record at click time (live form/booking state is not
+  // tied to any fresh mutation response). Any signed-in user may call this — it is not gated by
+  // a specific module permission since the calling page has already authorized the user.
+  app.get("/api/documents/latest/:category/:sourceId", async (req, res) => {
+    try {
+      const doc = await storage.getLatestDocumentBySource(req.params.category, Number(req.params.sourceId));
+      if (!doc || !doc.publicToken) return res.status(404).json({ error: "No document found" });
+      res.json({ id: doc.id, publicToken: doc.publicToken, docType: doc.docType });
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to look up document" }); }
+  });
 
   // ---------- Users (admin only) ----------
   app.get("/api/users", requireAdmin, async (_req, res) => {
@@ -329,7 +386,7 @@ export async function registerRoutes(
         paymentMethod: booking.paymentMethod,
         paymentReference: booking.paymentReference,
       });
-      res.status(201).json({ ...booking, _document: { status: doc.status, errorMessage: doc.errorMessage } });
+      res.status(201).json({ ...booking, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
     } catch (err) { handleZodError(res, err); }
   });
   app.patch("/api/accommodation-bookings/:id", requireModule("accommodation"), async (req, res) => {
@@ -359,7 +416,7 @@ export async function registerRoutes(
           paymentMethod: updated.paymentMethod,
           paymentReference: updated.paymentReference,
         });
-        docResult = { status: doc.status, errorMessage: doc.errorMessage };
+        docResult = { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken };
       }
       res.json({ ...updated, _document: docResult });
     } catch (err) { handleZodError(res, err); }
@@ -419,7 +476,7 @@ export async function registerRoutes(
         paymentMethod: booking.paymentMethod,
         paymentReference: booking.paymentReference,
       });
-      res.status(201).json({ ...booking, _document: { status: doc.status, errorMessage: doc.errorMessage } });
+      res.status(201).json({ ...booking, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
     } catch (err) { handleZodError(res, err); }
   });
   app.patch("/api/facility-bookings/:id", requireModule("facilities"), async (req, res) => {
@@ -449,7 +506,7 @@ export async function registerRoutes(
           paymentMethod: updated.paymentMethod,
           paymentReference: updated.paymentReference,
         });
-        docResult = { status: doc.status, errorMessage: doc.errorMessage };
+        docResult = { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken };
       }
       res.json({ ...updated, _document: docResult });
     } catch (err) { handleZodError(res, err); }
@@ -608,7 +665,7 @@ export async function registerRoutes(
         smsResult = sms.ok ? { status: "sent" } : { status: "skipped", errorMessage: sms.error };
       }
 
-      res.status(201).json({ bookingRef, bookings: created, _document: { status: doc.status, errorMessage: doc.errorMessage }, _sms: smsResult });
+      res.status(201).json({ bookingRef, bookings: created, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken }, _sms: smsResult });
     } catch (err) { handleZodError(res, err); }
   });
 
@@ -652,7 +709,7 @@ export async function registerRoutes(
           paymentMethod: updated.paymentMethod,
           paymentReference: updated.paymentReference,
         });
-        docResult = { status: doc.status, errorMessage: doc.errorMessage };
+        docResult = { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken };
         if (updated.guestPhone) {
           const balance = updated.ticketPrice - updated.amountPaid;
           const paymentDetailLine = (updated.paymentMethod || updated.paymentReference)
@@ -753,7 +810,7 @@ export async function registerRoutes(
           paymentMethod: updated.paymentMethod,
           paymentReference: updated.paymentReference,
         });
-        docResult = { status: doc.status, errorMessage: doc.errorMessage, documentId: doc.id };
+        docResult = { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken };
       }
       res.json({ ...updated, _document: docResult });
     } catch (err) { handleZodError(res, err); }
@@ -848,6 +905,9 @@ export async function registerRoutes(
         resolvedAt: null,
         closedAt: null,
         closedBy: null,
+        // Generated inline for immediate availability (the startup backfill would otherwise leave
+        // a brief null-token window for issues created between deploys).
+        publicToken: randomBytes(16).toString("hex"),
       });
       if (!(MAINTENANCE_CATEGORIES as readonly string[]).includes(data.category)) {
         return res.status(400).json({ error: "Invalid maintenance category." });
@@ -896,16 +956,16 @@ export async function registerRoutes(
   });
 
   // ---------- Settings ----------
-  app.get("/api/settings", requireModule("settings"), async (_req, res) => {
+  app.get("/api/settings", requireModule("settings"), requireAdminUsername, async (_req, res) => {
     res.json(await storage.getSettings());
   });
-  app.put("/api/settings", requireModule("settings"), async (req, res) => {
+  app.put("/api/settings", requireModule("settings"), requireAdminUsername, async (req, res) => {
     try {
       const data = insertSettingsSchema.partial().parse(req.body);
       res.json(await storage.updateSettings(data));
     } catch (err) { handleZodError(res, err); }
   });
-  app.post("/api/settings/test-email", requireModule("settings"), async (req, res) => {
+  app.post("/api/settings/test-email", requireModule("settings"), requireAdminUsername, async (req, res) => {
     try {
       const { email } = req.body as { email?: string };
       if (!email) return res.status(400).json({ error: "Provide an email address to test." });
@@ -920,7 +980,7 @@ export async function registerRoutes(
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to send test email" }); }
   });
-  app.post("/api/settings/test-sms", requireModule("settings"), async (req, res) => {
+  app.post("/api/settings/test-sms", requireModule("settings"), requireAdminUsername, async (req, res) => {
     try {
       const { phone } = req.body as { phone?: string };
       if (!phone) return res.status(400).json({ error: "Provide a phone number to test." });
@@ -986,6 +1046,270 @@ export async function registerRoutes(
     } catch (err: any) {
       res.status(500).json({ error: err?.message ?? "Failed to generate report export" });
     }
+  });
+
+  // ================= Finance =================
+  // ---------- Chart of Accounts ----------
+  app.get("/api/finance/accounts", requireModule("finance"), async (_req, res) => {
+    res.json(await storage.listChartOfAccounts());
+  });
+  app.post("/api/finance/accounts", requireModule("finance"), requireTablePermission("finance.chart_of_accounts"), async (req, res) => {
+    try {
+      const data = insertChartOfAccountSchema.parse({ ...req.body, createdAt: Date.now() });
+      res.status(201).json(await storage.createChartOfAccount(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/finance/accounts/:id", requireModule("finance"), requireTablePermission("finance.chart_of_accounts"), async (req, res) => {
+    try {
+      const data = insertChartOfAccountSchema.partial().parse(req.body);
+      const updated = await storage.updateChartOfAccount(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Account not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/finance/accounts/:id", requireModule("finance"), requireTablePermission("finance.chart_of_accounts"), async (req, res) => {
+    try {
+      await storage.deleteChartOfAccount(Number(req.params.id));
+      res.status(204).end();
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to delete account" }); }
+  });
+
+  // ---------- Accounting Periods ----------
+  app.get("/api/finance/periods", requireModule("finance"), async (_req, res) => {
+    res.json(await storage.listAccountingPeriods());
+  });
+  app.post("/api/finance/periods", requireModule("finance"), requireTablePermission("finance.accounting_periods"), async (req, res) => {
+    try {
+      const data = insertAccountingPeriodSchema.parse({ ...req.body, createdAt: Date.now() });
+      res.status(201).json(await storage.createAccountingPeriod(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/finance/periods/:id", requireModule("finance"), requireTablePermission("finance.accounting_periods"), async (req, res) => {
+    try {
+      const data = insertAccountingPeriodSchema.partial().parse(req.body);
+      const user = (req as any).user;
+      if (data.status === "closed") { (data as any).closedAt = Date.now(); (data as any).closedBy = user?.username; }
+      const updated = await storage.updateAccountingPeriod(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Period not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/finance/periods/:id", requireModule("finance"), requireTablePermission("finance.accounting_periods"), async (req, res) => {
+    await storage.deleteAccountingPeriod(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---------- Journal Entries (General Ledger) ----------
+  app.get("/api/finance/journal-entries", requireModule("finance"), async (_req, res) => {
+    const entries = await storage.listJournalEntries();
+    res.json(entries.slice().sort((a, b) => b.id - a.id));
+  });
+  app.get("/api/finance/journal-entries/:id/lines", requireModule("finance"), async (req, res) => {
+    res.json(await storage.listJournalEntryLines(Number(req.params.id)));
+  });
+  app.post("/api/finance/journal-entries", requireModule("finance"), requireTablePermission("finance.journal_entries"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const body = req.body as { entryDate: string; description: string; sourceModule?: string; sourceId?: number; lines: { accountId: number; debit?: number; credit?: number; description?: string }[] };
+      const entry = insertJournalEntrySchema.omit({ entryNumber: true, status: true, createdBy: true, createdAt: true }).parse({
+        entryDate: body.entryDate,
+        description: body.description,
+        sourceModule: body.sourceModule ?? "finance",
+        sourceId: body.sourceId,
+      });
+      const lines = (body.lines || []).map((l) => insertJournalEntryLineSchema.omit({ journalEntryId: true }).parse({
+        accountId: l.accountId, debit: l.debit ?? 0, credit: l.credit ?? 0, description: l.description,
+      }));
+      const created = await storage.postJournalEntry(
+        { ...entry, createdBy: user.username, createdAt: Date.now() } as any,
+        lines as any,
+      );
+      res.status(201).json(created);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to post journal entry" }); }
+  });
+  app.post("/api/finance/journal-entries/:id/cancel", requireModule("finance"), requireTablePermission("finance.journal_entries"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { reason } = req.body as { reason?: string };
+      if (!reason) return res.status(400).json({ error: "A cancellation reason is required" });
+      const updated = await storage.cancelJournalEntry(Number(req.params.id), user.username, reason);
+      if (!updated) return res.status(404).json({ error: "Journal entry not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to cancel journal entry" }); }
+  });
+
+  // ---------- Bank Accounts ----------
+  app.get("/api/finance/bank-accounts", requireModule("finance"), async (_req, res) => {
+    res.json(await storage.listBankAccounts());
+  });
+  app.post("/api/finance/bank-accounts", requireModule("finance"), requireTablePermission("finance.bank_accounts"), async (req, res) => {
+    try {
+      const data = insertBankAccountSchema.parse(req.body);
+      res.status(201).json(await storage.createBankAccount(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/finance/bank-accounts/:id", requireModule("finance"), requireTablePermission("finance.bank_accounts"), async (req, res) => {
+    try {
+      const data = insertBankAccountSchema.partial().parse(req.body);
+      const updated = await storage.updateBankAccount(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Bank account not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/finance/bank-accounts/:id", requireModule("finance"), requireTablePermission("finance.bank_accounts"), async (req, res) => {
+    await storage.deleteBankAccount(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---------- Bank / Cash Reconciliations ----------
+  app.get("/api/finance/bank-reconciliations", requireModule("finance"), async (_req, res) => {
+    res.json(await storage.listBankReconciliations());
+  });
+  app.post("/api/finance/bank-reconciliations", requireModule("finance"), requireTablePermission("finance.bank_accounts"), async (req, res) => {
+    try {
+      const data = insertBankReconciliationSchema.parse({ ...req.body, createdAt: Date.now() });
+      res.status(201).json(await storage.createBankReconciliation(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/finance/bank-reconciliations/:id", requireModule("finance"), requireTablePermission("finance.bank_accounts"), async (req, res) => {
+    try {
+      const data = insertBankReconciliationSchema.partial().parse(req.body);
+      const user = (req as any).user;
+      if (data.status === "completed") { (data as any).completedAt = Date.now(); (data as any).completedBy = user?.username; }
+      const updated = await storage.updateBankReconciliation(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Reconciliation not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+
+  // ---------- Payment Vouchers ----------
+  app.get("/api/finance/payment-vouchers", requireModule("finance"), async (_req, res) => {
+    const vouchers = await storage.listPaymentVouchers();
+    res.json(vouchers.slice().sort((a, b) => b.id - a.id));
+  });
+  app.post("/api/finance/payment-vouchers", requireModule("finance"), requireTablePermission("finance.payment_vouchers"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const data = insertPaymentVoucherSchema.omit({ voucherNumber: true, requestedBy: true, createdAt: true, status: true }).parse(req.body);
+      const created = await storage.createPaymentVoucher({
+        ...data, requestedBy: user.username, createdAt: Date.now(), status: "draft",
+      } as any);
+      res.status(201).json(created);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/finance/payment-vouchers/:id", requireModule("finance"), requireTablePermission("finance.payment_vouchers"), async (req, res) => {
+    try {
+      const data = insertPaymentVoucherSchema.partial().parse(req.body);
+      const updated = await storage.updatePaymentVoucher(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Payment voucher not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to update payment voucher" }); }
+  });
+  app.post("/api/finance/payment-vouchers/:id/post", requireModule("finance"), requireTablePermission("finance.payment_vouchers"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const updated = await storage.postPaymentVoucher(Number(req.params.id), user.username);
+      if (!updated) return res.status(404).json({ error: "Payment voucher not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to post payment voucher" }); }
+  });
+  app.post("/api/finance/payment-vouchers/:id/cancel", requireModule("finance"), requireTablePermission("finance.payment_vouchers"), async (req, res) => {
+    try {
+      const { reason } = req.body as { reason?: string };
+      if (!reason) return res.status(400).json({ error: "A cancellation reason is required" });
+      const updated = await storage.cancelPaymentVoucher(Number(req.params.id), reason);
+      if (!updated) return res.status(404).json({ error: "Payment voucher not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to cancel payment voucher" }); }
+  });
+
+  // ---------- Reports ----------
+  app.get("/api/finance/reports/trial-balance", requireModule("finance"), async (req, res) => {
+    const asOf = typeof req.query.asOf === "string" && req.query.asOf ? req.query.asOf : undefined;
+    res.json(await storage.getTrialBalance(asOf));
+  });
+  app.get("/api/finance/reports/profit-loss", requireModule("finance"), async (req, res) => {
+    const from = typeof req.query.from === "string" && req.query.from ? req.query.from : undefined;
+    const to = typeof req.query.to === "string" && req.query.to ? req.query.to : undefined;
+    res.json(await storage.getProfitAndLoss(from, to));
+  });
+  app.get("/api/finance/reports/balance-sheet", requireModule("finance"), async (req, res) => {
+    const asOf = typeof req.query.asOf === "string" && req.query.asOf ? req.query.asOf : undefined;
+    res.json(await storage.getBalanceSheet(asOf));
+  });
+
+  // ================= System Administration =================
+  // ---------- Approval Matrix ----------
+  app.get("/api/admin/approval-matrix", requireModule("system-admin"), async (_req, res) => {
+    res.json(await storage.listApprovalMatrixRules());
+  });
+  app.post("/api/admin/approval-matrix", requireModule("system-admin"), async (req, res) => {
+    try {
+      const data = insertApprovalMatrixRuleSchema.parse(req.body);
+      res.status(201).json(await storage.createApprovalMatrixRule(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/admin/approval-matrix/:id", requireModule("system-admin"), async (req, res) => {
+    try {
+      const data = insertApprovalMatrixRuleSchema.partial().parse(req.body);
+      const updated = await storage.updateApprovalMatrixRule(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Approval rule not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/admin/approval-matrix/:id", requireModule("system-admin"), async (req, res) => {
+    await storage.deleteApprovalMatrixRule(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---------- Table-level permissions ----------
+  app.get("/api/admin/table-permissions", requireModule("system-admin"), async (_req, res) => {
+    res.json({ tableKeys: PERMISSION_TABLE_KEYS, rules: await storage.listPermissionTableRules() });
+  });
+  app.put("/api/admin/table-permissions", requireModule("system-admin"), async (req, res) => {
+    try {
+      const { userId, tableKey, canWrite } = req.body as { userId: number; tableKey: PermissionTableKey; canWrite: boolean };
+      if (!userId || !tableKey) return res.status(400).json({ error: "userId and tableKey are required" });
+      if (!(PERMISSION_TABLE_KEYS as readonly string[]).includes(tableKey)) return res.status(400).json({ error: "Unknown table key" });
+      const rule = await storage.setPermissionTableRule(userId, tableKey, !!canWrite);
+      res.json(rule);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to save table permission" }); }
+  });
+
+  // ---------- Definitions (admin-editable dropdown option lists) ----------
+  app.get("/api/admin/definitions", requireModule("system-admin"), async (_req, res) => {
+    res.json(await storage.listDefinitionLists());
+  });
+  app.post("/api/admin/definitions", requireModule("system-admin"), async (req, res) => {
+    try {
+      const data = insertDefinitionListSchema.parse(req.body);
+      res.status(201).json(await storage.createDefinitionList(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.get("/api/admin/definitions/:listKey/items", requireModule("system-admin"), async (req, res) => {
+    const list = await storage.getDefinitionListByKey(String(req.params.listKey));
+    if (!list) return res.status(404).json({ error: "Definition list not found" });
+    res.json(await storage.listDefinitionListItems(list.id));
+  });
+  app.post("/api/admin/definitions/:listKey/items", requireModule("system-admin"), async (req, res) => {
+    try {
+      const list = await storage.getDefinitionListByKey(String(req.params.listKey));
+      if (!list) return res.status(404).json({ error: "Definition list not found" });
+      const data = insertDefinitionListItemSchema.omit({ listId: true }).parse(req.body);
+      res.status(201).json(await storage.createDefinitionListItem({ ...data, listId: list.id }));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/admin/definitions/items/:id", requireModule("system-admin"), async (req, res) => {
+    try {
+      const data = insertDefinitionListItemSchema.partial().parse(req.body);
+      const updated = await storage.updateDefinitionListItem(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Definition item not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/admin/definitions/items/:id", requireModule("system-admin"), async (req, res) => {
+    await storage.deleteDefinitionListItem(Number(req.params.id));
+    res.status(204).end();
   });
 
   return httpServer;

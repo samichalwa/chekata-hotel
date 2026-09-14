@@ -1,4 +1,4 @@
-import { pgTable, text, integer, real, serial, bigint } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, real, serial, bigint, doublePrecision } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import type * as z from "zod/mini";
 
@@ -220,6 +220,9 @@ export const maintenanceIssues = pgTable("maintenance_issues", {
   resolvedAt: bigint("resolved_at", { mode: "number" }),
   closedAt: bigint("closed_at", { mode: "number" }),
   closedBy: text("closed_by"),
+  // Unguessable token letting the reporter view/download a PDF issue report without logging in
+  // (embedded in WhatsApp status-update messages). Nullable until bootstrapSchema backfills it.
+  publicToken: text("public_token"),
 });
 
 export const insertMaintenanceIssueSchema = createInsertSchema(maintenanceIssues).omit({ id: true });
@@ -296,6 +299,10 @@ export const documents = pgTable("documents", {
   errorMessage: text("error_message"),
   payloadJson: text("payload_json").notNull(), // JSON snapshot used to regenerate the PDF
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  // Unguessable token that lets a guest view/download this document's PDF without logging in
+  // (used to embed a PDF link in free click-to-send WhatsApp messages). Nullable so existing
+  // rows created before this column existed keep working until bootstrapSchema backfills them.
+  publicToken: text("public_token"),
 });
 
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true });
@@ -316,6 +323,8 @@ export const MODULE_KEYS = [
   "reports",
   "documents",
   "settings",
+  "finance",
+  "system-admin",
 ] as const;
 export type ModuleKey = typeof MODULE_KEYS[number];
 
@@ -332,7 +341,253 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   reports: "Reports",
   documents: "Invoices & Receipts",
   settings: "Settings",
+  finance: "Finance",
+  "system-admin": "System Administration",
 };
+
+// Tables that can be individually write-restricted per user via the System
+// Administration → Table Permissions grid. A user may have module access
+// but be blocked from writing to a specific table within it. Admins always
+// bypass this check. This list grows as later phases add modules.
+export const PERMISSION_TABLE_KEYS = [
+  "finance.chart_of_accounts",
+  "finance.journal_entries",
+  "finance.payment_vouchers",
+  "finance.accounting_periods",
+  "finance.bank_accounts",
+] as const;
+export type PermissionTableKey = typeof PERMISSION_TABLE_KEYS[number];
+export const PERMISSION_TABLE_LABELS: Record<PermissionTableKey, string> = {
+  "finance.chart_of_accounts": "Finance — Chart of Accounts",
+  "finance.journal_entries": "Finance — Journal Entries",
+  "finance.payment_vouchers": "Finance — Payment Vouchers",
+  "finance.accounting_periods": "Finance — Accounting Periods (open/close)",
+  "finance.bank_accounts": "Finance — Bank Accounts",
+};
+
+// Document types the Approval Matrix can route. Grows in later phases
+// (purchase_order, internal_requisition, leave_request join once those
+// modules exist).
+export const APPROVAL_DOCUMENT_TYPES = ["payment_voucher"] as const;
+export type ApprovalDocumentType = typeof APPROVAL_DOCUMENT_TYPES[number];
+export const APPROVAL_DOCUMENT_TYPE_LABELS: Record<ApprovalDocumentType, string> = {
+  payment_voucher: "Payment Voucher",
+};
+
+// ---------- Finance: Chart of Accounts ----------
+export const ACCOUNT_TYPES = ["asset", "liability", "equity", "income", "expense"] as const;
+export type AccountType = typeof ACCOUNT_TYPES[number];
+export const ACCOUNT_TYPE_LABELS: Record<AccountType, string> = {
+  asset: "Asset",
+  liability: "Liability",
+  equity: "Equity",
+  income: "Income",
+  expense: "Expense",
+};
+// Which side increases the balance for each account type — used by reports
+// (Trial Balance, P&L, Balance Sheet) to decide how to present net movement.
+export const ACCOUNT_NORMAL_BALANCE: Record<AccountType, "debit" | "credit"> = {
+  asset: "debit",
+  liability: "credit",
+  equity: "credit",
+  income: "credit",
+  expense: "debit",
+};
+
+export const chartOfAccounts = pgTable("chart_of_accounts", {
+  id: serial("id").primaryKey(),
+  code: text("code").notNull().unique(), // e.g. 1000, 4000-01 — admin-defined, not hardcoded
+  name: text("name").notNull(),
+  type: text("type").notNull(), // asset | liability | equity | income | expense
+  parentId: integer("parent_id"), // optional, for sub-accounts / groupings
+  description: text("description"),
+  active: integer("active").notNull().default(1),
+  isSystem: integer("is_system").notNull().default(0), // seeded defaults; still editable, never force-deleted by code
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertChartOfAccountSchema = createInsertSchema(chartOfAccounts).omit({ id: true });
+export type InsertChartOfAccount = z.infer<typeof insertChartOfAccountSchema>;
+export type ChartOfAccount = typeof chartOfAccounts.$inferSelect;
+
+// ---------- Finance: Accounting Periods ----------
+export const accountingPeriods = pgTable("accounting_periods", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(), // e.g. "September 2026"
+  financialYear: text("financial_year").notNull(), // e.g. "FY2026"
+  startDate: text("start_date").notNull(), // YYYY-MM-DD
+  endDate: text("end_date").notNull(), // YYYY-MM-DD
+  status: text("status").notNull().default("open"), // open | closed
+  closedAt: bigint("closed_at", { mode: "number" }),
+  closedBy: text("closed_by"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertAccountingPeriodSchema = createInsertSchema(accountingPeriods).omit({ id: true });
+export type InsertAccountingPeriod = z.infer<typeof insertAccountingPeriodSchema>;
+export type AccountingPeriod = typeof accountingPeriods.$inferSelect;
+
+// ---------- Finance: Journal Entries (General Ledger) ----------
+// Journal entries can be CANCELLED but never deleted, per governance spec.
+// entryNumber is system-generated and immutable once created.
+export const journalEntries = pgTable("journal_entries", {
+  id: serial("id").primaryKey(),
+  entryNumber: text("entry_number").notNull().unique(), // e.g. JE-000001
+  entryDate: text("entry_date").notNull(), // YYYY-MM-DD
+  periodId: integer("period_id"),
+  description: text("description").notNull(),
+  sourceModule: text("source_module").notNull().default("finance"), // finance | accommodation | facilities | bar-restaurant | movie-room | ...
+  sourceId: integer("source_id"), // id of the originating record in sourceModule, if system-generated
+  status: text("status").notNull().default("posted"), // posted | cancelled
+  createdBy: text("created_by").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  cancelledAt: bigint("cancelled_at", { mode: "number" }),
+  cancelledBy: text("cancelled_by"),
+  cancelReason: text("cancel_reason"),
+});
+export const insertJournalEntrySchema = createInsertSchema(journalEntries).omit({ id: true });
+export type InsertJournalEntry = z.infer<typeof insertJournalEntrySchema>;
+export type JournalEntry = typeof journalEntries.$inferSelect;
+
+export const journalEntryLines = pgTable("journal_entry_lines", {
+  id: serial("id").primaryKey(),
+  journalEntryId: integer("journal_entry_id").notNull(),
+  accountId: integer("account_id").notNull(),
+  debit: real("debit").notNull().default(0),
+  credit: real("credit").notNull().default(0),
+  description: text("description"),
+});
+export const insertJournalEntryLineSchema = createInsertSchema(journalEntryLines).omit({ id: true });
+export type InsertJournalEntryLine = z.infer<typeof insertJournalEntryLineSchema>;
+export type JournalEntryLine = typeof journalEntryLines.$inferSelect;
+
+// ---------- Finance: Bank Accounts ----------
+export const bankAccounts = pgTable("bank_accounts", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(), // e.g. "KCB Operating Account"
+  bankName: text("bank_name"),
+  accountNumber: text("account_number"),
+  glAccountId: integer("gl_account_id").notNull(), // linked Chart of Accounts asset account
+  openingBalance: real("opening_balance").notNull().default(0),
+  active: integer("active").notNull().default(1),
+  notes: text("notes"),
+});
+export const insertBankAccountSchema = createInsertSchema(bankAccounts).omit({ id: true });
+export type InsertBankAccount = z.infer<typeof insertBankAccountSchema>;
+export type BankAccount = typeof bankAccounts.$inferSelect;
+
+// ---------- Finance: Bank / Cash Reconciliations ----------
+export const bankReconciliations = pgTable("bank_reconciliations", {
+  id: serial("id").primaryKey(),
+  bankAccountId: integer("bank_account_id").notNull(),
+  statementDate: text("statement_date").notNull(), // YYYY-MM-DD
+  statementBalance: real("statement_balance").notNull(),
+  glBalance: real("gl_balance").notNull(),
+  variance: real("variance").notNull(),
+  status: text("status").notNull().default("in_progress"), // in_progress | completed
+  notes: text("notes"),
+  completedAt: bigint("completed_at", { mode: "number" }),
+  completedBy: text("completed_by"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertBankReconciliationSchema = createInsertSchema(bankReconciliations).omit({ id: true });
+export type InsertBankReconciliation = z.infer<typeof insertBankReconciliationSchema>;
+export type BankReconciliation = typeof bankReconciliations.$inferSelect;
+
+// ---------- Finance: Payment Vouchers (payments against invoices or standalone) ----------
+// Cancel-not-delete, system-serialized, routes through the Approval Matrix
+// when the amount requires it (checked at the application layer).
+export const paymentVouchers = pgTable("payment_vouchers", {
+  id: serial("id").primaryKey(),
+  voucherNumber: text("voucher_number").notNull().unique(), // e.g. PV-000001
+  voucherDate: text("voucher_date").notNull(), // YYYY-MM-DD
+  payeeName: text("payee_name").notNull(),
+  amount: real("amount").notNull(),
+  paymentMethod: text("payment_method").notNull(), // cash | mpesa | card | bank_transfer | cheque
+  paymentReference: text("payment_reference"),
+  expenseAccountId: integer("expense_account_id").notNull(), // debit side (expense/payable account)
+  bankAccountId: integer("bank_account_id").notNull(), // credit side (cash/bank)
+  description: text("description").notNull(),
+  status: text("status").notNull().default("draft"), // draft | pending_approval | approved | posted | cancelled
+  requestedBy: text("requested_by").notNull(),
+  reviewedBy: text("reviewed_by"),
+  approvedBy: text("approved_by"),
+  journalEntryId: integer("journal_entry_id"), // set once posted
+  cancelReason: text("cancel_reason"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertPaymentVoucherSchema = createInsertSchema(paymentVouchers).omit({ id: true });
+export type InsertPaymentVoucher = z.infer<typeof insertPaymentVoucherSchema>;
+export type PaymentVoucher = typeof paymentVouchers.$inferSelect;
+
+// ---------- System Administration: Document numbering sequences (generic, reused by every module) ----------
+export const documentSequences = pgTable("document_sequences", {
+  sequenceKey: text("sequence_key").primaryKey(), // e.g. "journal_entry", "payment_voucher"
+  prefix: text("prefix").notNull(), // e.g. "JE", "PV"
+  nextNumber: integer("next_number").notNull().default(1),
+  padLength: integer("pad_length").notNull().default(6),
+});
+export const insertDocumentSequenceSchema = createInsertSchema(documentSequences);
+export type InsertDocumentSequence = z.infer<typeof insertDocumentSequenceSchema>;
+export type DocumentSequence = typeof documentSequences.$inferSelect;
+
+// ---------- System Administration: Approval Matrix ----------
+// Generic requester -> reviewer -> final-approver workflow, reusable by
+// every document type across the system. minAmount/maxAmount define the
+// band a rule applies to (null maxAmount = no upper bound).
+export const approvalMatrixRules = pgTable("approval_matrix_rules", {
+  id: serial("id").primaryKey(),
+  documentType: text("document_type").notNull(), // payment_voucher | (future: purchase_order, internal_requisition, leave_request)
+  name: text("name").notNull(), // admin-friendly label, e.g. "Payments up to 50,000"
+  minAmount: doublePrecision("min_amount").notNull().default(0),
+  maxAmount: doublePrecision("max_amount"), // null = unbounded — doublePrecision (not real) since approval bands for large capex/procurement can exceed float32's ~8.3M safe range
+  reviewerUserId: integer("reviewer_user_id"), // optional middle step
+  approverUserId: integer("approver_user_id").notNull(), // final approver; may also act as final if no reviewer set
+  active: integer("active").notNull().default(1),
+});
+export const insertApprovalMatrixRuleSchema = createInsertSchema(approvalMatrixRules).omit({ id: true });
+export type InsertApprovalMatrixRule = z.infer<typeof insertApprovalMatrixRuleSchema>;
+export type ApprovalMatrixRule = typeof approvalMatrixRules.$inferSelect;
+
+// ---------- System Administration: Table-level permissions ----------
+// A user may have module access but be denied write rights to a specific
+// table within that module. Absence of a row = no restriction (full write
+// access, subject to normal module permission). Admins always bypass.
+export const permissionTableRules = pgTable("permission_table_rules", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  tableKey: text("table_key").notNull(), // one of PERMISSION_TABLE_KEYS
+  canWrite: integer("can_write").notNull().default(0),
+});
+export const insertPermissionTableRuleSchema = createInsertSchema(permissionTableRules).omit({ id: true });
+export type InsertPermissionTableRule = z.infer<typeof insertPermissionTableRuleSchema>;
+export type PermissionTableRule = typeof permissionTableRules.$inferSelect;
+
+// ---------- System Administration: Definitions (generic admin-editable lookup lists) ----------
+// Powers every dropdown that should be admin-configurable instead of
+// hardcoded — e.g. Time & Attendance Status/Shift Code/Leave Type, and any
+// future module's option lists. A list is identified by a stable listKey
+// that application code references; items are the admin-editable options.
+export const definitionLists = pgTable("definition_lists", {
+  id: serial("id").primaryKey(),
+  listKey: text("list_key").notNull().unique(), // e.g. "attendance_status", "shift_code", "leave_type"
+  label: text("label").notNull(), // e.g. "Attendance Status"
+  description: text("description"),
+  isSystem: integer("is_system").notNull().default(0), // seeded list; items still fully editable, list itself not deletable via UI
+});
+export const insertDefinitionListSchema = createInsertSchema(definitionLists).omit({ id: true });
+export type InsertDefinitionList = z.infer<typeof insertDefinitionListSchema>;
+export type DefinitionList = typeof definitionLists.$inferSelect;
+
+export const definitionListItems = pgTable("definition_list_items", {
+  id: serial("id").primaryKey(),
+  listId: integer("list_id").notNull(),
+  code: text("code").notNull(), // stable value stored in records/uploads, e.g. "present", "night"
+  label: text("label").notNull(), // display label, e.g. "Present", "Night Shift"
+  sortOrder: integer("sort_order").notNull().default(0),
+  active: integer("active").notNull().default(1),
+});
+export const insertDefinitionListItemSchema = createInsertSchema(definitionListItems).omit({ id: true });
+export type InsertDefinitionListItem = z.infer<typeof insertDefinitionListItemSchema>;
+export type DefinitionListItem = typeof definitionListItems.$inferSelect;
 
 // ---------- Users ----------
 export const users = pgTable("users", {

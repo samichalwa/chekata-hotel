@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatKES, todayISO, nowTs, titleCase } from "@/lib/format";
-import { buildWhatsAppLink } from "@/lib/whatsapp";
+import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import { Link } from "wouter";
 import type { MenuItem, Order, OrderItem, TableRow as TableEntity } from "@shared/schema";
 
@@ -329,11 +329,13 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
                 type="button"
                 variant="outline"
                 disabled={!buildWhatsAppLink(customerPhone, "x")}
-                onClick={() => {
+                onClick={async () => {
                   const paymentDetail = order.status === "paid" && (order.paymentMethod || order.paymentReference)
                     ? ` Payment: ${[order.paymentMethod, order.paymentReference].filter(Boolean).join(" / ")}.`
                     : "";
-                  const message = `Hi ${customerName || "there"}, thank you for your ${titleCase(order.outlet)} order at The Chekata${order.reference ? ` (${order.reference})` : ""}. Total: ${formatKES(order.totalAmount)}${order.status === "paid" ? " — Paid in full." : " — Balance due."}${paymentDetail} We appreciate your visit!`;
+                  let message = `Hi ${customerName || "there"}, thank you for your ${titleCase(order.outlet)} order at The Chekata${order.reference ? ` (${order.reference})` : ""}. Total: ${formatKES(order.totalAmount)}${order.status === "paid" ? " — Paid in full." : " — Balance due."}${paymentDetail} We appreciate your visit!`;
+                  const pdfUrl = await fetchLatestDocumentPdfUrl(order.outlet === "bar" ? "bar" : "restaurant", order.id);
+                  if (pdfUrl) message += `\n\nView/download your receipt: ${pdfUrl}`;
                   const link = buildWhatsAppLink(customerPhone, message);
                   if (link) window.open(link, "_blank");
                 }}

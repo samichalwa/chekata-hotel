@@ -22,7 +22,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, formatDate, todayISO, titleCase } from "@/lib/format";
-import { buildWhatsAppLink } from "@/lib/whatsapp";
+import { buildWhatsAppLink, buildDocumentPdfUrl, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import { MOVIE_SEAT_ROWS, MOVIE_SEAT_NUMBERS, type MovieShow, type MovieSeatBooking } from "@shared/schema";
 
 // ---------- Shared helpers ----------
@@ -314,6 +314,9 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
         message += ` Payment: ${[paymentMethod, paymentReference].filter(Boolean).join(" / ")}.`;
       }
       message += " See you there!";
+      if (doc?.id && doc?.publicToken) {
+        message += `\n\nView/download your invoice/receipt: ${buildDocumentPdfUrl(doc.id, doc.publicToken)}`;
+      }
       setLastConfirmation({ message, phone: guestPhone });
       resetForm();
     },
@@ -547,12 +550,14 @@ function EditBookingDialog({ booking, show, trigger }: { booking: MovieSeatBooki
                 type="button"
                 variant="outline"
                 disabled={!buildWhatsAppLink(form.watch("guestPhone"), "x")}
-                onClick={() => {
+                onClick={async () => {
                   const pm = form.watch("paymentMethod");
                   const pr = form.watch("paymentReference");
                   const paid = form.watch("amountPaid");
                   const paymentDetail = (pm || pr) ? ` Payment: ${[pm, pr].filter(Boolean).join(" / ")}.` : "";
-                  const message = `Hi ${form.watch("guestName") || booking.guestName}, payment received for your Movie Room booking at The Chekata \u2014 Seat ${booking.seatRow}${booking.seatNumber}. Paid KES ${Number(paid || 0).toLocaleString()}.${paymentDetail} Enjoy the show!`;
+                  let message = `Hi ${form.watch("guestName") || booking.guestName}, payment received for your Movie Room booking at The Chekata \u2014 Seat ${booking.seatRow}${booking.seatNumber}. Paid KES ${Number(paid || 0).toLocaleString()}.${paymentDetail} Enjoy the show!`;
+                  const pdfUrl = await fetchLatestDocumentPdfUrl("movie", booking.id);
+                  if (pdfUrl) message += `\n\nView/download your invoice/receipt: ${pdfUrl}`;
                   const link = buildWhatsAppLink(form.watch("guestPhone"), message);
                   if (link) window.open(link, "_blank");
                 }}

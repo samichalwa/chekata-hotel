@@ -181,3 +181,33 @@ export function requireCanCloseMaintenanceIssues(req: Request, res: Response, ne
   if (user.isAdmin || user.canCloseMaintenanceIssues) return next();
   return res.status(403).json({ error: "You don't have rights to close maintenance issues" });
 }
+
+// Settings is restricted to the literal "admin" account only, per governance
+// spec, even for other users who otherwise hold isAdmin rights. This is
+// intentionally username-based (not the isAdmin flag) so that Settings stays
+// a single-owner area regardless of how many administrator accounts exist.
+export function requireAdminUsername(req: Request, res: Response, next: NextFunction) {
+  const user = (req as any).user;
+  if (!user) return res.status(401).json({ error: "Not signed in" });
+  if (user.username === "admin") return next();
+  return res.status(403).json({ error: "Settings is restricted to the admin account" });
+}
+
+// Generic table-level write permission check, reusable by every module.
+// Admins always bypass. A missing permission_table_rules row means no
+// restriction has been configured for that user/table, so access is
+// allowed by default (module-level access already gated the route).
+// Only a row with can_write = 0 explicitly blocks the write.
+export function requireTablePermission(tableKey: string) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as any).user;
+    if (!user) return res.status(401).json({ error: "Not signed in" });
+    if (user.isAdmin) return next();
+    const rules = await storage.listPermissionTableRulesForUser(user.id);
+    const rule = rules.find((r) => r.tableKey === tableKey);
+    if (rule && !rule.canWrite) {
+      return res.status(403).json({ error: "You don't have write rights for this table" });
+    }
+    return next();
+  };
+}

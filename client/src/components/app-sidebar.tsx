@@ -13,6 +13,8 @@ import {
   LogOut,
   Wrench,
   ClipboardList,
+  Wallet,
+  ShieldCheck,
 } from "lucide-react";
 import {
   Sidebar,
@@ -43,6 +45,8 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Lists", url: "/lists", icon: ClipboardList, key: "lists" },
   { title: "Reports", url: "/reports", icon: FileBarChart, key: "reports" },
   { title: "Invoices & Receipts", url: "/documents", icon: FileText, key: "documents" },
+  { title: "Finance", url: "/finance", icon: Wallet, key: "finance" },
+  { title: "System Administration", url: "/system-admin", icon: ShieldCheck, key: "system-admin" },
   { title: "Settings", url: "/settings", icon: SettingsIcon, key: "settings" },
 ];
 

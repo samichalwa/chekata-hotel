@@ -3,6 +3,9 @@ import {
   movieShows, movieSeatBookings,
   menuItems, orders, orderItems, staff, expenses, settings, documents,
   users, passwordResetTokens, taxes, tables, maintenanceIssues, MODULE_KEYS,
+  chartOfAccounts, accountingPeriods, journalEntries, journalEntryLines,
+  bankAccounts, bankReconciliations, paymentVouchers, documentSequences,
+  approvalMatrixRules, permissionTableRules, definitionLists, definitionListItems,
 } from '@shared/schema';
 import type {
   Room, InsertRoom,
@@ -23,11 +26,23 @@ import type {
   Tax, InsertTax,
   TableRow, InsertTableRow,
   MaintenanceIssue, InsertMaintenanceIssue,
+  ChartOfAccount, InsertChartOfAccount,
+  AccountingPeriod, InsertAccountingPeriod,
+  JournalEntry, InsertJournalEntry,
+  JournalEntryLine, InsertJournalEntryLine,
+  BankAccount, InsertBankAccount,
+  BankReconciliation, InsertBankReconciliation,
+  PaymentVoucher, InsertPaymentVoucher,
+  ApprovalMatrixRule, InsertApprovalMatrixRule,
+  PermissionTableRule, InsertPermissionTableRule,
+  DefinitionList, InsertDefinitionList,
+  DefinitionListItem, InsertDefinitionListItem,
 } from '@shared/schema';
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { eq } from "drizzle-orm";
+import { eq, and, ne, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
+import { randomBytes } from "node:crypto";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -264,6 +279,130 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   used_at BIGINT,
   created_at BIGINT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS chart_of_accounts (
+  id SERIAL PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  parent_id INTEGER,
+  description TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  is_system INTEGER NOT NULL DEFAULT 0,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS accounting_periods (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  financial_year TEXT NOT NULL,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  closed_at BIGINT,
+  closed_by TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS journal_entries (
+  id SERIAL PRIMARY KEY,
+  entry_number TEXT NOT NULL UNIQUE,
+  entry_date TEXT NOT NULL,
+  period_id INTEGER,
+  description TEXT NOT NULL,
+  source_module TEXT NOT NULL DEFAULT 'finance',
+  source_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'posted',
+  created_by TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  cancelled_at BIGINT,
+  cancelled_by TEXT,
+  cancel_reason TEXT
+);
+CREATE TABLE IF NOT EXISTS journal_entry_lines (
+  id SERIAL PRIMARY KEY,
+  journal_entry_id INTEGER NOT NULL,
+  account_id INTEGER NOT NULL,
+  debit REAL NOT NULL DEFAULT 0,
+  credit REAL NOT NULL DEFAULT 0,
+  description TEXT
+);
+CREATE TABLE IF NOT EXISTS bank_accounts (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  bank_name TEXT,
+  account_number TEXT,
+  gl_account_id INTEGER NOT NULL,
+  opening_balance REAL NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  notes TEXT
+);
+CREATE TABLE IF NOT EXISTS bank_reconciliations (
+  id SERIAL PRIMARY KEY,
+  bank_account_id INTEGER NOT NULL,
+  statement_date TEXT NOT NULL,
+  statement_balance REAL NOT NULL,
+  gl_balance REAL NOT NULL,
+  variance REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'in_progress',
+  notes TEXT,
+  completed_at BIGINT,
+  completed_by TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payment_vouchers (
+  id SERIAL PRIMARY KEY,
+  voucher_number TEXT NOT NULL UNIQUE,
+  voucher_date TEXT NOT NULL,
+  payee_name TEXT NOT NULL,
+  amount REAL NOT NULL,
+  payment_method TEXT NOT NULL,
+  payment_reference TEXT,
+  expense_account_id INTEGER NOT NULL,
+  bank_account_id INTEGER NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  requested_by TEXT NOT NULL,
+  reviewed_by TEXT,
+  approved_by TEXT,
+  journal_entry_id INTEGER,
+  cancel_reason TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS document_sequences (
+  sequence_key TEXT PRIMARY KEY,
+  prefix TEXT NOT NULL,
+  next_number INTEGER NOT NULL DEFAULT 1,
+  pad_length INTEGER NOT NULL DEFAULT 6
+);
+CREATE TABLE IF NOT EXISTS approval_matrix_rules (
+  id SERIAL PRIMARY KEY,
+  document_type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  min_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+  max_amount DOUBLE PRECISION,
+  reviewer_user_id INTEGER,
+  approver_user_id INTEGER NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS permission_table_rules (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  table_key TEXT NOT NULL,
+  can_write INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS definition_lists (
+  id SERIAL PRIMARY KEY,
+  list_key TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  description TEXT,
+  is_system INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS definition_list_items (
+  id SERIAL PRIMARY KEY,
+  list_id INTEGER NOT NULL,
+  code TEXT NOT NULL,
+  label TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1
+);
 `);
 
   // ---- Idempotent column additions for installs upgraded from an earlier version ----
@@ -274,6 +413,14 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
       if (!/already exists/i.test(String(e?.message))) throw e;
     }
   }
+  // Idempotent column type widening — safe to re-run every startup (a no-op once the column is already the target type).
+  async function ensureColumnType(table: string, column: string, targetType: string) {
+    await sql.unsafe(`ALTER TABLE ${table} ALTER COLUMN ${column} TYPE ${targetType}`);
+  }
+  // approval_matrix_rules.min_amount/max_amount were briefly created as REAL (float32, ~8.3M safe range) —
+  // widen to DOUBLE PRECISION so large capex/procurement approval bands don't get clipped or lose precision.
+  await ensureColumnType("approval_matrix_rules", "min_amount", "DOUBLE PRECISION");
+  await ensureColumnType("approval_matrix_rules", "max_amount", "DOUBLE PRECISION");
   await ensureColumn("accommodation_bookings", "guest_email", "TEXT");
   await ensureColumn("facility_bookings", "client_email", "TEXT");
   await ensureColumn("orders", "customer_name", "TEXT");
@@ -295,6 +442,20 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   await ensureColumn("movie_seat_bookings", "payment_method", "TEXT");
   await ensureColumn("movie_seat_bookings", "payment_reference", "TEXT");
   await ensureColumn("orders", "payment_reference", "TEXT");
+  await ensureColumn("documents", "public_token", "TEXT");
+  await ensureColumn("maintenance_issues", "public_token", "TEXT");
+
+  // ---- Backfill public_token for any pre-existing rows created before that column existed ----
+  // (each row needs its OWN random token, so this can't be a single UPDATE ... SET public_token = <one value>).
+  async function backfillPublicTokens(table: string) {
+    const rows = await sql.unsafe(`SELECT id FROM ${table} WHERE public_token IS NULL`);
+    for (const row of rows as unknown as { id: number }[]) {
+      const token = randomBytes(16).toString("hex");
+      await sql.unsafe(`UPDATE ${table} SET public_token = $1 WHERE id = $2`, [token, row.id]);
+    }
+  }
+  await backfillPublicTokens("documents");
+  await backfillPublicTokens("maintenance_issues");
 
   // ---- Seed a default settings row (idempotent) ----
   async function seedSettings() {
@@ -304,6 +465,86 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     }
   }
   await seedSettings();
+
+  // ---- Seed default Chart of Accounts, document sequences, and definition lists (idempotent) ----
+  async function seedFinanceFoundations() {
+    const [{ c: coaCount }] = await sql`SELECT COUNT(*)::int as c FROM chart_of_accounts`;
+    if (coaCount === 0) {
+      const now = Date.now();
+      const defaults: { code: string; name: string; type: string }[] = [
+        { code: "1000", name: "Cash on Hand", type: "asset" },
+        { code: "1010", name: "Bank Account", type: "asset" },
+        { code: "1200", name: "Accounts Receivable", type: "asset" },
+        { code: "2000", name: "Accounts Payable", type: "liability" },
+        { code: "2100", name: "VAT Payable", type: "liability" },
+        { code: "3000", name: "Owner's Equity", type: "equity" },
+        { code: "3900", name: "Retained Earnings", type: "equity" },
+        { code: "4000", name: "Accommodation Revenue", type: "income" },
+        { code: "4010", name: "Facilities & Conference Revenue", type: "income" },
+        { code: "4020", name: "Movie Room Revenue", type: "income" },
+        { code: "4030", name: "Bar & Restaurant Revenue", type: "income" },
+        { code: "5000", name: "Staff Salaries & Wages", type: "expense" },
+        { code: "5100", name: "Utilities Expense", type: "expense" },
+        { code: "5200", name: "Maintenance & Repairs Expense", type: "expense" },
+        { code: "5300", name: "General & Administrative Expense", type: "expense" },
+        { code: "5400", name: "Bank Charges", type: "expense" },
+      ];
+      for (const acc of defaults) {
+        await sql`INSERT INTO chart_of_accounts (code, name, type, active, is_system, created_at) VALUES (${acc.code}, ${acc.name}, ${acc.type}, 1, 1, ${now})`;
+      }
+    }
+
+    const [{ c: seqCount }] = await sql`SELECT COUNT(*)::int as c FROM document_sequences`;
+    if (seqCount === 0) {
+      await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('journal_entry', 'JE', 1, 6)`;
+      await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('payment_voucher', 'PV', 1, 6)`;
+    }
+
+    const [{ c: listCount }] = await sql`SELECT COUNT(*)::int as c FROM definition_lists`;
+    if (listCount === 0) {
+      const listDefs: { key: string; label: string; items: { code: string; label: string }[] }[] = [
+        {
+          key: "attendance_status",
+          label: "Attendance Status",
+          items: [
+            { code: "present", label: "Present" },
+            { code: "absent", label: "Absent" },
+            { code: "leave", label: "Leave" },
+            { code: "public_holiday", label: "Public Holiday" },
+            { code: "rest_day", label: "Rest Day" },
+          ],
+        },
+        {
+          key: "shift_code",
+          label: "Shift Code",
+          items: [
+            { code: "D", label: "Day" },
+            { code: "N", label: "Night" },
+            { code: "OFF", label: "Off Day" },
+          ],
+        },
+        {
+          key: "leave_type",
+          label: "Leave Type",
+          items: [
+            { code: "annual_leave", label: "Annual Leave" },
+            { code: "sick_leave", label: "Sick Leave" },
+            { code: "compassionate_leave", label: "Compassionate Leave" },
+            { code: "unpaid_leave", label: "Unpaid Leave" },
+          ],
+        },
+      ];
+      for (const list of listDefs) {
+        const [{ id: listId }] = await sql`INSERT INTO definition_lists (list_key, label, is_system) VALUES (${list.key}, ${list.label}, 1) RETURNING id`;
+        let sortOrder = 0;
+        for (const item of list.items) {
+          await sql`INSERT INTO definition_list_items (list_id, code, label, sort_order, active) VALUES (${listId}, ${item.code}, ${item.label}, ${sortOrder}, 1)`;
+          sortOrder += 1;
+        }
+      }
+    }
+  }
+  await seedFinanceFoundations();
 
   // ---- Seed default rooms & facilities to match The Chekata's layout (idempotent) ----
   async function seed() {
@@ -428,6 +669,7 @@ export interface IStorage {
   listDocuments(): Promise<DocumentRecord[]>;
   getDocument(id: number): Promise<DocumentRecord | undefined>;
   createDocument(data: InsertDocument): Promise<DocumentRecord>;
+  getLatestDocumentBySource(category: string, sourceId: number): Promise<DocumentRecord | undefined>;
 
   // Users (auth + module access)
   listUsers(): Promise<User[]>;
@@ -460,6 +702,76 @@ export interface IStorage {
   createMaintenanceIssue(data: InsertMaintenanceIssue): Promise<MaintenanceIssue>;
   updateMaintenanceIssue(id: number, data: Partial<InsertMaintenanceIssue>): Promise<MaintenanceIssue | undefined>;
   deleteMaintenanceIssue(id: number): Promise<{ changes: number }>;
+
+  // Finance: Chart of Accounts
+  listChartOfAccounts(): Promise<ChartOfAccount[]>;
+  getChartOfAccount(id: number): Promise<ChartOfAccount | undefined>;
+  createChartOfAccount(data: InsertChartOfAccount): Promise<ChartOfAccount>;
+  updateChartOfAccount(id: number, data: Partial<InsertChartOfAccount>): Promise<ChartOfAccount | undefined>;
+  deleteChartOfAccount(id: number): Promise<{ changes: number }>;
+
+  // Finance: Accounting Periods
+  listAccountingPeriods(): Promise<AccountingPeriod[]>;
+  getAccountingPeriod(id: number): Promise<AccountingPeriod | undefined>;
+  createAccountingPeriod(data: InsertAccountingPeriod): Promise<AccountingPeriod>;
+  updateAccountingPeriod(id: number, data: Partial<InsertAccountingPeriod>): Promise<AccountingPeriod | undefined>;
+  deleteAccountingPeriod(id: number): Promise<{ changes: number }>;
+  findOpenPeriodForDate(dateStr: string): Promise<AccountingPeriod | undefined>;
+
+  // Finance: Journal Entries
+  listJournalEntries(): Promise<JournalEntry[]>;
+  getJournalEntry(id: number): Promise<JournalEntry | undefined>;
+  listJournalEntryLines(journalEntryId: number): Promise<JournalEntryLine[]>;
+  postJournalEntry(entry: Omit<InsertJournalEntry, "entryNumber">, lines: Omit<InsertJournalEntryLine, "journalEntryId">[]): Promise<JournalEntry>;
+  cancelJournalEntry(id: number, cancelledBy: string, reason: string): Promise<JournalEntry | undefined>;
+
+  // Finance: Bank Accounts
+  listBankAccounts(): Promise<BankAccount[]>;
+  getBankAccount(id: number): Promise<BankAccount | undefined>;
+  createBankAccount(data: InsertBankAccount): Promise<BankAccount>;
+  updateBankAccount(id: number, data: Partial<InsertBankAccount>): Promise<BankAccount | undefined>;
+  deleteBankAccount(id: number): Promise<{ changes: number }>;
+
+  // Finance: Bank Reconciliations
+  listBankReconciliations(): Promise<BankReconciliation[]>;
+  createBankReconciliation(data: InsertBankReconciliation): Promise<BankReconciliation>;
+  updateBankReconciliation(id: number, data: Partial<InsertBankReconciliation>): Promise<BankReconciliation | undefined>;
+
+  // Finance: Payment Vouchers
+  listPaymentVouchers(): Promise<PaymentVoucher[]>;
+  getPaymentVoucher(id: number): Promise<PaymentVoucher | undefined>;
+  createPaymentVoucher(data: Omit<InsertPaymentVoucher, "voucherNumber">): Promise<PaymentVoucher>;
+  updatePaymentVoucher(id: number, data: Partial<InsertPaymentVoucher>): Promise<PaymentVoucher | undefined>;
+  postPaymentVoucher(id: number, approvedBy: string): Promise<PaymentVoucher | undefined>;
+  cancelPaymentVoucher(id: number, reason: string): Promise<PaymentVoucher | undefined>;
+
+  // System Administration: Approval Matrix
+  listApprovalMatrixRules(): Promise<ApprovalMatrixRule[]>;
+  createApprovalMatrixRule(data: InsertApprovalMatrixRule): Promise<ApprovalMatrixRule>;
+  updateApprovalMatrixRule(id: number, data: Partial<InsertApprovalMatrixRule>): Promise<ApprovalMatrixRule | undefined>;
+  deleteApprovalMatrixRule(id: number): Promise<{ changes: number }>;
+
+  // System Administration: Table-level permissions
+  listPermissionTableRules(): Promise<PermissionTableRule[]>;
+  listPermissionTableRulesForUser(userId: number): Promise<PermissionTableRule[]>;
+  setPermissionTableRule(userId: number, tableKey: string, canWrite: boolean): Promise<PermissionTableRule>;
+
+  // System Administration: Definitions
+  listDefinitionLists(): Promise<DefinitionList[]>;
+  getDefinitionListByKey(listKey: string): Promise<DefinitionList | undefined>;
+  createDefinitionList(data: InsertDefinitionList): Promise<DefinitionList>;
+  listDefinitionListItems(listId: number): Promise<DefinitionListItem[]>;
+  createDefinitionListItem(data: InsertDefinitionListItem): Promise<DefinitionListItem>;
+  updateDefinitionListItem(id: number, data: Partial<InsertDefinitionListItem>): Promise<DefinitionListItem | undefined>;
+  deleteDefinitionListItem(id: number): Promise<{ changes: number }>;
+
+  // Generic document sequence numbering (reused across modules)
+  getNextSequenceNumber(sequenceKey: string): Promise<string>;
+
+  // Finance reports
+  getTrialBalance(asOfDate?: string): Promise<any[]>;
+  getProfitAndLoss(from?: string, to?: string): Promise<any>;
+  getBalanceSheet(asOfDate?: string): Promise<any>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -672,6 +984,19 @@ export class DatabaseStorage implements IStorage {
   async createDocument(data: InsertDocument) {
     return (await db.insert(documents).values(data).returning())[0];
   }
+  // Most recent document (invoice or receipt) issued for a given booking/order, used to embed
+  // a PDF link in a WhatsApp confirmation sent later (e.g. from an edit/detail dialog) without
+  // the caller having to track which document belongs to that record.
+  async getLatestDocumentBySource(category: string, sourceId: number) {
+    return (
+      await db
+        .select()
+        .from(documents)
+        .where(and(eq(documents.category, category), eq(documents.sourceId, sourceId)))
+        .orderBy(desc(documents.createdAt))
+        .limit(1)
+    )[0];
+  }
 
   // Users
   async listUsers() {
@@ -758,6 +1083,345 @@ export class DatabaseStorage implements IStorage {
   async deleteMaintenanceIssue(id: number) {
     const result = await db.delete(maintenanceIssues).where(eq(maintenanceIssues.id, id));
     return { changes: result.count ?? 0 };
+  }
+
+  // ---------------- Finance: Chart of Accounts ----------------
+  async listChartOfAccounts() {
+    return db.select().from(chartOfAccounts);
+  }
+  async getChartOfAccount(id: number) {
+    return (await db.select().from(chartOfAccounts).where(eq(chartOfAccounts.id, id)))[0];
+  }
+  async createChartOfAccount(data: InsertChartOfAccount) {
+    return (await db.insert(chartOfAccounts).values(data).returning())[0];
+  }
+  async updateChartOfAccount(id: number, data: Partial<InsertChartOfAccount>) {
+    return (await db.update(chartOfAccounts).set(data).where(eq(chartOfAccounts.id, id)).returning())[0];
+  }
+  async deleteChartOfAccount(id: number) {
+    const result = await db.delete(chartOfAccounts).where(eq(chartOfAccounts.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  // ---------------- Finance: Accounting Periods ----------------
+  async listAccountingPeriods() {
+    return db.select().from(accountingPeriods);
+  }
+  async getAccountingPeriod(id: number) {
+    return (await db.select().from(accountingPeriods).where(eq(accountingPeriods.id, id)))[0];
+  }
+  async createAccountingPeriod(data: InsertAccountingPeriod) {
+    return (await db.insert(accountingPeriods).values(data).returning())[0];
+  }
+  async updateAccountingPeriod(id: number, data: Partial<InsertAccountingPeriod>) {
+    return (await db.update(accountingPeriods).set(data).where(eq(accountingPeriods.id, id)).returning())[0];
+  }
+  async deleteAccountingPeriod(id: number) {
+    const result = await db.delete(accountingPeriods).where(eq(accountingPeriods.id, id));
+    return { changes: result.count ?? 0 };
+  }
+  async findOpenPeriodForDate(dateStr: string) {
+    const rows = await sql<AccountingPeriod[]>`SELECT * FROM accounting_periods WHERE ${dateStr} BETWEEN start_date AND end_date ORDER BY id DESC LIMIT 1`;
+    return rows[0] as AccountingPeriod | undefined;
+  }
+
+  // ---------------- Finance: Journal Entries (General Ledger) ----------------
+  async listJournalEntries() {
+    return db.select().from(journalEntries);
+  }
+  async getJournalEntry(id: number) {
+    return (await db.select().from(journalEntries).where(eq(journalEntries.id, id)))[0];
+  }
+  async listJournalEntryLines(journalEntryId: number) {
+    return db.select().from(journalEntryLines).where(eq(journalEntryLines.journalEntryId, journalEntryId));
+  }
+  async postJournalEntry(entry: Omit<InsertJournalEntry, "entryNumber">, lines: Omit<InsertJournalEntryLine, "journalEntryId">[]) {
+    if (!lines || lines.length < 2) {
+      throw new Error("A journal entry needs at least two lines");
+    }
+    const totalDebit = lines.reduce((sum, l) => sum + (l.debit || 0), 0);
+    const totalCredit = lines.reduce((sum, l) => sum + (l.credit || 0), 0);
+    if (Math.abs(totalDebit - totalCredit) > 0.01) {
+      throw new Error(`Journal entry is not balanced: total debit ${totalDebit.toFixed(2)} does not equal total credit ${totalCredit.toFixed(2)}`);
+    }
+    const period = await this.findOpenPeriodForDate(entry.entryDate);
+    if (period && period.status === "closed") {
+      throw new Error(`Accounting period "${period.name}" covering ${entry.entryDate} is closed. Reopen it before posting, or use a date in an open period.`);
+    }
+    const entryNumber = await this.getNextSequenceNumber("journal_entry");
+    return db.transaction(async (tx) => {
+      const [created] = await tx.insert(journalEntries).values({
+        ...entry,
+        entryNumber,
+        periodId: period ? period.id : (entry as any).periodId ?? null,
+        status: "posted",
+      }).returning();
+      for (const line of lines) {
+        await tx.insert(journalEntryLines).values({ ...line, journalEntryId: created.id });
+      }
+      return created;
+    });
+  }
+  async cancelJournalEntry(id: number, cancelledBy: string, reason: string) {
+    const entryRow = await this.getJournalEntry(id);
+    if (!entryRow) return undefined;
+    if (entryRow.status === "cancelled") throw new Error("This journal entry is already cancelled");
+    if (entryRow.periodId) {
+      const period = await this.getAccountingPeriod(entryRow.periodId);
+      if (period && period.status === "closed") {
+        throw new Error(`Cannot cancel: accounting period "${period.name}" is closed`);
+      }
+    }
+    return (await db.update(journalEntries).set({
+      status: "cancelled",
+      cancelledAt: Date.now(),
+      cancelledBy,
+      cancelReason: reason,
+    }).where(eq(journalEntries.id, id)).returning())[0];
+  }
+
+  // ---------------- Finance: Bank Accounts ----------------
+  async listBankAccounts() {
+    return db.select().from(bankAccounts);
+  }
+  async getBankAccount(id: number) {
+    return (await db.select().from(bankAccounts).where(eq(bankAccounts.id, id)))[0];
+  }
+  async createBankAccount(data: InsertBankAccount) {
+    return (await db.insert(bankAccounts).values(data).returning())[0];
+  }
+  async updateBankAccount(id: number, data: Partial<InsertBankAccount>) {
+    return (await db.update(bankAccounts).set(data).where(eq(bankAccounts.id, id)).returning())[0];
+  }
+  async deleteBankAccount(id: number) {
+    const result = await db.delete(bankAccounts).where(eq(bankAccounts.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  // ---------------- Finance: Bank Reconciliations ----------------
+  async listBankReconciliations() {
+    return db.select().from(bankReconciliations);
+  }
+  async createBankReconciliation(data: InsertBankReconciliation) {
+    return (await db.insert(bankReconciliations).values(data).returning())[0];
+  }
+  async updateBankReconciliation(id: number, data: Partial<InsertBankReconciliation>) {
+    return (await db.update(bankReconciliations).set(data).where(eq(bankReconciliations.id, id)).returning())[0];
+  }
+
+  // ---------------- Finance: Payment Vouchers ----------------
+  async listPaymentVouchers() {
+    return db.select().from(paymentVouchers);
+  }
+  async getPaymentVoucher(id: number) {
+    return (await db.select().from(paymentVouchers).where(eq(paymentVouchers.id, id)))[0];
+  }
+  async createPaymentVoucher(data: Omit<InsertPaymentVoucher, "voucherNumber">) {
+    const voucherNumber = await this.getNextSequenceNumber("payment_voucher");
+    return (await db.insert(paymentVouchers).values({ ...data, voucherNumber } as InsertPaymentVoucher).returning())[0];
+  }
+  async updatePaymentVoucher(id: number, data: Partial<InsertPaymentVoucher>) {
+    const current = await this.getPaymentVoucher(id);
+    if (current && (current.status === "posted" || current.status === "cancelled")) {
+      throw new Error(`Cannot edit a ${current.status} payment voucher`);
+    }
+    return (await db.update(paymentVouchers).set(data).where(eq(paymentVouchers.id, id)).returning())[0];
+  }
+  async postPaymentVoucher(id: number, approvedBy: string) {
+    const voucher = await this.getPaymentVoucher(id);
+    if (!voucher) return undefined;
+    if (voucher.status === "posted") throw new Error("This payment voucher is already posted");
+    if (voucher.status === "cancelled") throw new Error("Cannot post a cancelled payment voucher");
+    const bankAccount = await this.getBankAccount(voucher.bankAccountId);
+    if (!bankAccount) throw new Error("The bank account linked to this voucher no longer exists");
+    const entry = await this.postJournalEntry(
+      {
+        entryDate: voucher.voucherDate,
+        description: `Payment voucher ${voucher.voucherNumber} — ${voucher.description}`,
+        sourceModule: "finance",
+        sourceId: voucher.id,
+        createdBy: approvedBy,
+        createdAt: Date.now(),
+      } as any,
+      [
+        { accountId: voucher.expenseAccountId, debit: voucher.amount, credit: 0, description: voucher.description },
+        { accountId: bankAccount.glAccountId, debit: 0, credit: voucher.amount, description: `Payment to ${voucher.payeeName}` },
+      ],
+    );
+    return (await db.update(paymentVouchers).set({
+      status: "posted",
+      approvedBy,
+      journalEntryId: entry.id,
+    }).where(eq(paymentVouchers.id, id)).returning())[0];
+  }
+  async cancelPaymentVoucher(id: number, reason: string) {
+    const voucher = await this.getPaymentVoucher(id);
+    if (!voucher) return undefined;
+    if (voucher.status === "posted") {
+      throw new Error("Cannot cancel a posted payment voucher — cancel the linked journal entry instead, or raise a reversing entry");
+    }
+    return (await db.update(paymentVouchers).set({
+      status: "cancelled",
+      cancelReason: reason,
+    }).where(eq(paymentVouchers.id, id)).returning())[0];
+  }
+
+  // ---------------- System Administration: Approval Matrix ----------------
+  async listApprovalMatrixRules() {
+    return db.select().from(approvalMatrixRules);
+  }
+  async createApprovalMatrixRule(data: InsertApprovalMatrixRule) {
+    return (await db.insert(approvalMatrixRules).values(data).returning())[0];
+  }
+  async updateApprovalMatrixRule(id: number, data: Partial<InsertApprovalMatrixRule>) {
+    return (await db.update(approvalMatrixRules).set(data).where(eq(approvalMatrixRules.id, id)).returning())[0];
+  }
+  async deleteApprovalMatrixRule(id: number) {
+    const result = await db.delete(approvalMatrixRules).where(eq(approvalMatrixRules.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  // ---------------- System Administration: Table-level permissions ----------------
+  async listPermissionTableRules() {
+    return db.select().from(permissionTableRules);
+  }
+  async listPermissionTableRulesForUser(userId: number) {
+    return db.select().from(permissionTableRules).where(eq(permissionTableRules.userId, userId));
+  }
+  async setPermissionTableRule(userId: number, tableKey: string, canWrite: boolean) {
+    const existing = await db.select().from(permissionTableRules).where(and(eq(permissionTableRules.userId, userId), eq(permissionTableRules.tableKey, tableKey)));
+    if (existing[0]) {
+      return (await db.update(permissionTableRules).set({ canWrite: canWrite ? 1 : 0 }).where(eq(permissionTableRules.id, existing[0].id)).returning())[0];
+    }
+    return (await db.insert(permissionTableRules).values({ userId, tableKey, canWrite: canWrite ? 1 : 0 }).returning())[0];
+  }
+
+  // ---------------- System Administration: Definitions ----------------
+  async listDefinitionLists() {
+    return db.select().from(definitionLists);
+  }
+  async getDefinitionListByKey(listKey: string) {
+    return (await db.select().from(definitionLists).where(eq(definitionLists.listKey, listKey)))[0];
+  }
+  async createDefinitionList(data: InsertDefinitionList) {
+    return (await db.insert(definitionLists).values(data).returning())[0];
+  }
+  async listDefinitionListItems(listId: number) {
+    return db.select().from(definitionListItems).where(eq(definitionListItems.listId, listId));
+  }
+  async createDefinitionListItem(data: InsertDefinitionListItem) {
+    return (await db.insert(definitionListItems).values(data).returning())[0];
+  }
+  async updateDefinitionListItem(id: number, data: Partial<InsertDefinitionListItem>) {
+    return (await db.update(definitionListItems).set(data).where(eq(definitionListItems.id, id)).returning())[0];
+  }
+  async deleteDefinitionListItem(id: number) {
+    const result = await db.delete(definitionListItems).where(eq(definitionListItems.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  // ---------------- Generic document sequence numbering ----------------
+  async getNextSequenceNumber(sequenceKey: string): Promise<string> {
+    const rows = await sql<{ prefix: string; next_number: number; pad_length: number }[]>`
+      UPDATE document_sequences SET next_number = next_number + 1
+      WHERE sequence_key = ${sequenceKey}
+      RETURNING prefix, next_number, pad_length
+    `;
+    if (!rows[0]) {
+      throw new Error(`Unknown document sequence "${sequenceKey}" — add it to document_sequences first`);
+    }
+    const { prefix, next_number, pad_length } = rows[0];
+    const used = next_number - 1;
+    return `${prefix}-${String(used).padStart(pad_length, "0")}`;
+  }
+
+  // ---------------- Finance: Reports (Trial Balance, P&L, Balance Sheet) ----------------
+  // All reports only ever consider status = 'posted' journal entries —
+  // cancelled entries are excluded, never physically deleted.
+  async getTrialBalance(asOfDate?: string) {
+    const rows = await sql<{ id: number; code: string; name: string; type: string; total_debit: number; total_credit: number }[]>`
+      SELECT a.id, a.code, a.name, a.type,
+        COALESCE(SUM(CASE WHEN je.status = 'posted' ${asOfDate ? sql`AND je.entry_date <= ${asOfDate}` : sql``} THEN l.debit ELSE 0 END), 0) AS total_debit,
+        COALESCE(SUM(CASE WHEN je.status = 'posted' ${asOfDate ? sql`AND je.entry_date <= ${asOfDate}` : sql``} THEN l.credit ELSE 0 END), 0) AS total_credit
+      FROM chart_of_accounts a
+      LEFT JOIN journal_entry_lines l ON l.account_id = a.id
+      LEFT JOIN journal_entries je ON je.id = l.journal_entry_id
+      GROUP BY a.id, a.code, a.name, a.type
+      ORDER BY a.code
+    `;
+    return rows.map((r) => ({
+      accountId: r.id,
+      code: r.code,
+      name: r.name,
+      type: r.type,
+      totalDebit: Number(r.total_debit) || 0,
+      totalCredit: Number(r.total_credit) || 0,
+      balance: (Number(r.total_debit) || 0) - (Number(r.total_credit) || 0),
+    }));
+  }
+
+  async getProfitAndLoss(from?: string, to?: string) {
+    const rows = await sql<{ id: number; code: string; name: string; type: string; total_debit: number; total_credit: number }[]>`
+      SELECT a.id, a.code, a.name, a.type,
+        COALESCE(SUM(l.debit), 0) AS total_debit,
+        COALESCE(SUM(l.credit), 0) AS total_credit
+      FROM chart_of_accounts a
+      JOIN journal_entry_lines l ON l.account_id = a.id
+      JOIN journal_entries je ON je.id = l.journal_entry_id AND je.status = 'posted'
+      WHERE a.type IN ('income', 'expense')
+        ${from ? sql`AND je.entry_date >= ${from}` : sql``}
+        ${to ? sql`AND je.entry_date <= ${to}` : sql``}
+      GROUP BY a.id, a.code, a.name, a.type
+      ORDER BY a.type DESC, a.code
+    `;
+    const income: any[] = [];
+    const expense: any[] = [];
+    for (const r of rows) {
+      const net = r.type === "income" ? Number(r.total_credit) - Number(r.total_debit) : Number(r.total_debit) - Number(r.total_credit);
+      const line = { accountId: r.id, code: r.code, name: r.name, amount: net };
+      if (r.type === "income") income.push(line); else expense.push(line);
+    }
+    const totalIncome = income.reduce((s, l) => s + l.amount, 0);
+    const totalExpense = expense.reduce((s, l) => s + l.amount, 0);
+    return { income, expense, totalIncome, totalExpense, netProfit: totalIncome - totalExpense };
+  }
+
+  async getBalanceSheet(asOfDate?: string) {
+    const rows = await sql<{ id: number; code: string; name: string; type: string; total_debit: number; total_credit: number }[]>`
+      SELECT a.id, a.code, a.name, a.type,
+        COALESCE(SUM(CASE WHEN je.status = 'posted' ${asOfDate ? sql`AND je.entry_date <= ${asOfDate}` : sql``} THEN l.debit ELSE 0 END), 0) AS total_debit,
+        COALESCE(SUM(CASE WHEN je.status = 'posted' ${asOfDate ? sql`AND je.entry_date <= ${asOfDate}` : sql``} THEN l.credit ELSE 0 END), 0) AS total_credit
+      FROM chart_of_accounts a
+      LEFT JOIN journal_entry_lines l ON l.account_id = a.id
+      LEFT JOIN journal_entries je ON je.id = l.journal_entry_id
+      WHERE a.type IN ('asset', 'liability', 'equity')
+      GROUP BY a.id, a.code, a.name, a.type
+      ORDER BY a.code
+    `;
+    const assets: any[] = [];
+    const liabilities: any[] = [];
+    const equity: any[] = [];
+    for (const r of rows) {
+      const debit = Number(r.total_debit) || 0;
+      const credit = Number(r.total_credit) || 0;
+      const balance = r.type === "asset" ? debit - credit : credit - debit;
+      const line = { accountId: r.id, code: r.code, name: r.name, balance };
+      if (r.type === "asset") assets.push(line);
+      else if (r.type === "liability") liabilities.push(line);
+      else equity.push(line);
+    }
+    const pnl = await this.getProfitAndLoss(undefined, asOfDate);
+    const totalAssets = assets.reduce((s, l) => s + l.balance, 0);
+    const totalLiabilities = liabilities.reduce((s, l) => s + l.balance, 0);
+    const totalEquityAccounts = equity.reduce((s, l) => s + l.balance, 0);
+    const retainedEarnings = pnl.netProfit;
+    const totalEquity = totalEquityAccounts + retainedEarnings;
+    return {
+      assets, liabilities, equity,
+      retainedEarnings,
+      totalAssets, totalLiabilities, totalEquity,
+      totalLiabilitiesAndEquity: totalLiabilities + totalEquity,
+    };
   }
 }
 

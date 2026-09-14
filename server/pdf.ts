@@ -2,7 +2,7 @@ import PDFDocument from "pdfkit";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import type { Settings } from "@shared/schema";
+import type { Settings, MaintenanceIssue } from "@shared/schema";
 
 // Resolves next to this file in both dev (server/, run via tsx as ESM,
 // where __dirname is undefined) and the production bundle (dist/index.cjs,
@@ -185,6 +185,105 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
     // ---- Footer ----
     doc.font("Helvetica").fontSize(8).fillColor(muted)
       .text(`Thank you for choosing ${settings.hotelName || "The Chekata"}.`, 50, 760, { width: 495, align: "center" });
+
+    doc.end();
+  });
+}
+
+const MAINT_PRIORITY_LABEL: Record<string, string> = {
+  low: "Low",
+  normal: "Normal",
+  high: "High",
+  urgent: "Urgent",
+};
+
+const MAINT_STATUS_LABEL: Record<string, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+
+// Lightweight, non-billing report for a maintenance issue (deliberately kept separate from
+// buildDocumentPdf/DocPayload, which is billing-specific — an issue has no amount/tax concept).
+export function buildMaintenanceReportPdf(settings: Settings, issue: MaintenanceIssue): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 50 });
+    const chunks: Buffer[] = [];
+    doc.on("data", (c) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const accent = "#b5502f";
+    const dark = "#2a2118";
+    const muted = "#6b6157";
+
+    const logoSize = 46;
+    const textX = LOGO_EXISTS ? 50 + logoSize + 12 : 50;
+    if (LOGO_EXISTS) {
+      try {
+        doc.image(LOGO_PATH, 50, 48, { width: logoSize, height: logoSize });
+      } catch {
+        // fall back to text-only header
+      }
+    }
+    doc.fillColor(accent).fontSize(22).font("Helvetica-Bold").text(settings.hotelName || "The Chekata", textX, 50);
+    doc.fillColor(muted).fontSize(9).font("Helvetica");
+    let y = 78;
+    if (settings.hotelAddress) { doc.text(settings.hotelAddress, textX, y); y += 13; }
+    if (settings.hotelPhone) { doc.text(`Tel: ${settings.hotelPhone}`, textX, y); y += 13; }
+    if (settings.hotelEmail) { doc.text(settings.hotelEmail, textX, y); y += 13; }
+
+    doc.fillColor(dark).fontSize(18).font("Helvetica-Bold").text("MAINTENANCE REPORT", 320, 50, { width: 225, align: "right" });
+    doc.fillColor(muted).fontSize(9).font("Helvetica");
+    doc.text(`Ref: MNT-${String(issue.id).padStart(5, "0")}`, 320, 74, { width: 225, align: "right" });
+    doc.text(`Reported: ${new Date(issue.createdAt).toLocaleString("en-KE", { timeZone: "Africa/Nairobi" })}`, 320, 88, { width: 225, align: "right" });
+    doc.text(`Category: ${issue.category}`, 320, 102, { width: 225, align: "right" });
+
+    y = Math.max(y, 116) + 20;
+    doc.moveTo(50, y).lineTo(545, y).strokeColor("#d9d0c4").lineWidth(1).stroke();
+    y += 18;
+
+    doc.fillColor(dark).fontSize(14).font("Helvetica-Bold").text(issue.title, 50, y, { width: 495 });
+    y += 24;
+
+    const row = (label: string, value: string | null | undefined) => {
+      if (!value) return;
+      doc.fillColor(muted).fontSize(9).font("Helvetica-Bold").text(label, 50, y, { width: 110 });
+      doc.fillColor(dark).fontSize(10).font("Helvetica").text(value, 165, y, { width: 380 });
+      y += 18;
+    };
+
+    row("Location", issue.location);
+    row("Priority", MAINT_PRIORITY_LABEL[issue.priority] ?? issue.priority);
+    row("Status", MAINT_STATUS_LABEL[issue.status] ?? issue.status);
+    row("Reported by", issue.reportedBy);
+    row("Contact phone", issue.reportedPhone);
+    row("Assigned to", issue.assignedTo);
+    if (issue.resolvedAt) row("Resolved", new Date(issue.resolvedAt).toLocaleString("en-KE", { timeZone: "Africa/Nairobi" }));
+    if (issue.closedAt) row("Closed", new Date(issue.closedAt).toLocaleString("en-KE", { timeZone: "Africa/Nairobi" }));
+    row("Closed by", issue.closedBy);
+
+    y += 8;
+    doc.moveTo(50, y).lineTo(545, y).strokeColor("#d9d0c4").lineWidth(1).stroke();
+    y += 16;
+
+    if (issue.description) {
+      doc.fillColor(dark).fontSize(10).font("Helvetica-Bold").text("Description", 50, y);
+      y += 14;
+      doc.fillColor(dark).fontSize(10).font("Helvetica").text(issue.description, 50, y, { width: 495 });
+      y += doc.heightOfString(issue.description, { width: 495 }) + 16;
+    }
+
+    if (issue.notes) {
+      doc.fillColor(dark).fontSize(10).font("Helvetica-Bold").text("Notes", 50, y);
+      y += 14;
+      doc.fillColor(dark).fontSize(10).font("Helvetica").text(issue.notes, 50, y, { width: 495 });
+      y += doc.heightOfString(issue.notes, { width: 495 }) + 16;
+    }
+
+    doc.font("Helvetica").fontSize(8).fillColor(muted)
+      .text(`${settings.hotelName || "The Chekata"} — Maintenance & Facilities`, 50, 760, { width: 495, align: "center" });
 
     doc.end();
   });

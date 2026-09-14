@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { IStorage } from "./storage";
 import { buildDocumentPdf, type DocLineItem } from "./pdf";
 import { sendTransactionalEmail } from "./email";
@@ -47,6 +48,9 @@ export async function issueDocument(storage: IStorage, input: IssueDocumentInput
   };
 
   const payloadJson = JSON.stringify(inputWithTax);
+  // Every document gets a public link, regardless of email outcome, so it can be embedded in a
+  // free click-to-send WhatsApp confirmation (which can only carry text, not a real attachment).
+  const publicToken = randomBytes(16).toString("hex");
 
   if (!input.recipientEmail) {
     return storage.createDocument({
@@ -60,6 +64,7 @@ export async function issueDocument(storage: IStorage, input: IssueDocumentInput
       errorMessage: "No email address on file for this guest/client.",
       payloadJson,
       createdAt: Date.now(),
+      publicToken,
     });
   }
 
@@ -75,6 +80,7 @@ export async function issueDocument(storage: IStorage, input: IssueDocumentInput
       errorMessage: "Invoicing/receipts are turned off in Settings.",
       payloadJson,
       createdAt: Date.now(),
+      publicToken,
     });
   }
 
@@ -111,6 +117,7 @@ export async function issueDocument(storage: IStorage, input: IssueDocumentInput
       errorMessage: `PDF generation failed: ${e?.message || e}`,
       payloadJson,
       createdAt: Date.now(),
+      publicToken,
     });
   }
 
@@ -147,6 +154,7 @@ export async function issueDocument(storage: IStorage, input: IssueDocumentInput
     errorMessage: result.ok ? null : result.error,
     payloadJson,
     createdAt: Date.now(),
+    publicToken,
   });
 }
 

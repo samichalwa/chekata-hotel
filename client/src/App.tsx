@@ -24,19 +24,29 @@ import ListsPage from "@/pages/lists";
 import Reports from "@/pages/reports";
 import Documents from "@/pages/documents";
 import SettingsPage from "@/pages/settings";
+import Finance from "@/pages/finance";
+import SystemAdmin from "@/pages/system-admin";
 import LoginPage from "@/pages/login";
 import SetupPage from "@/pages/setup";
 import ResetPasswordPage from "@/pages/reset-password";
 import { useCurrentUser, useSetupStatus, canAccess } from "@/hooks/use-auth";
 import type { ModuleKey } from "@shared/schema";
 
-function Guarded({ moduleKey, component: Component }: { moduleKey: ModuleKey; component: React.ComponentType }) {
+function Guarded({ moduleKey, component: Component, requireAdminUsername }: { moduleKey: ModuleKey; component: React.ComponentType; requireAdminUsername?: boolean }) {
   const { data: user } = useCurrentUser();
   if (!canAccess(user, moduleKey)) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
         <ShieldOff className="h-8 w-8" />
         <p>You don't have access to this section. Ask your administrator to grant access.</p>
+      </div>
+    );
+  }
+  if (requireAdminUsername && user?.username !== "admin") {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
+        <ShieldOff className="h-8 w-8" />
+        <p>This section is restricted to the primary administrator account.</p>
       </div>
     );
   }
@@ -57,7 +67,9 @@ function AppRouter() {
       <Route path="/lists" component={() => <Guarded moduleKey="lists" component={ListsPage} />} />
       <Route path="/reports" component={() => <Guarded moduleKey="reports" component={Reports} />} />
       <Route path="/documents" component={() => <Guarded moduleKey="documents" component={Documents} />} />
-      <Route path="/settings" component={() => <Guarded moduleKey="settings" component={SettingsPage} />} />
+      <Route path="/finance" component={() => <Guarded moduleKey="finance" component={Finance} />} />
+      <Route path="/system-admin" component={() => <Guarded moduleKey="system-admin" component={SystemAdmin} />} />
+      <Route path="/settings" component={() => <Guarded moduleKey="settings" component={SettingsPage} requireAdminUsername />} />
       <Route component={NotFound} />
     </Switch>
   );

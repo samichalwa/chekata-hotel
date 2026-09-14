@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatKES, formatDate, nightsBetween, nowTs, titleCase } from "@/lib/format";
-import { buildWhatsAppLink } from "@/lib/whatsapp";
+import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import type { Room, AccommodationBooking } from "@shared/schema";
 
 const roomFormSchema = z.object({
@@ -342,11 +342,17 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                 type="button"
                 variant="outline"
                 disabled={!buildWhatsAppLink(guestPhone, "x")}
-                onClick={() => {
+                onClick={async () => {
                   const paymentDetail = amountPaidWatch > 0 && (paymentMethodWatch || paymentReferenceWatch)
                     ? ` Payment: ${[paymentMethodWatch, paymentReferenceWatch].filter(Boolean).join(" / ")}.`
                     : "";
-                  const message = `Hi ${guestName || "there"}, this confirms your stay at The Chekata in ${selectedRoom?.name || "your room"}${nights ? ` for ${nights} night${nights === 1 ? "" : "s"}` : ""}. Total: ${formatKES(total)}${status === "checked_out" ? " — Paid in full." : " — Balance may be due."}${paymentDetail} We look forward to hosting you.`;
+                  let message = `Hi ${guestName || "there"}, this confirms your stay at The Chekata in ${selectedRoom?.name || "your room"}${nights ? ` for ${nights} night${nights === 1 ? "" : "s"}` : ""}. Total: ${formatKES(total)}${status === "checked_out" ? " — Paid in full." : " — Balance may be due."}${paymentDetail} We look forward to hosting you.`;
+                  // Existing booking: a document may already exist (created on save) — embed its PDF link.
+                  // New/unsaved booking has no document yet, so we skip the fetch and send text only.
+                  if (booking) {
+                    const pdfUrl = await fetchLatestDocumentPdfUrl("accommodation", booking.id);
+                    if (pdfUrl) message += `\n\nView/download your invoice/receipt: ${pdfUrl}`;
+                  }
                   const link = buildWhatsAppLink(guestPhone, message);
                   if (link) window.open(link, "_blank");
                 }}

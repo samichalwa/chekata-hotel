@@ -22,3 +22,28 @@ export function buildWhatsAppLink(phone: string | null | undefined, message: str
   if (!normalized) return null;
   return `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
 }
+
+// Public, no-login link to a billing document's PDF (invoice/receipt) or a maintenance report,
+// for embedding in WhatsApp message text — wa.me can only carry text, never a real attachment.
+export function buildDocumentPdfUrl(id: number, publicToken: string): string {
+  return `${window.location.origin}/api/public/documents/${id}/pdf?token=${publicToken}`;
+}
+
+export function buildMaintenancePdfUrl(id: number, publicToken: string): string {
+  return `${window.location.origin}/api/public/maintenance/${id}/pdf?token=${publicToken}`;
+}
+
+// Fetches the latest document for a source record (used from edit/detail dialogs where the
+// WhatsApp button fires against live form/booking state, not a fresh mutation response) and
+// returns the PDF link to embed, or null if no document exists yet (e.g. unsaved new booking).
+export async function fetchLatestDocumentPdfUrl(category: string, sourceId: number): Promise<string | null> {
+  try {
+    const res = await fetch(`/api/documents/latest/${category}/${sourceId}`, { credentials: "include" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data?.id || !data?.publicToken) return null;
+    return buildDocumentPdfUrl(data.id, data.publicToken);
+  } catch {
+    return null;
+  }
+}

@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatKES, formatDate, hoursBetween, nowTs, titleCase } from "@/lib/format";
-import { buildWhatsAppLink } from "@/lib/whatsapp";
+import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import type { Facility, FacilityBooking } from "@shared/schema";
 
 const facilityFormSchema = z.object({
@@ -339,11 +339,15 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
                 type="button"
                 variant="outline"
                 disabled={!buildWhatsAppLink(clientPhone, "x")}
-                onClick={() => {
+                onClick={async () => {
                   const paymentDetail = amountPaidWatch > 0 && (paymentMethodWatch || paymentReferenceWatch)
                     ? ` Payment: ${[paymentMethodWatch, paymentReferenceWatch].filter(Boolean).join(" / ")}.`
                     : "";
-                  const message = `Hi ${clientName || "there"}, this confirms your booking for ${facility?.name || "the facility"} at The Chekata. Total: ${formatKES(total)}${status === "completed" ? " — Paid in full." : " — Balance may be due."}${paymentDetail} We look forward to hosting you.`;
+                  let message = `Hi ${clientName || "there"}, this confirms your booking for ${facility?.name || "the facility"} at The Chekata. Total: ${formatKES(total)}${status === "completed" ? " — Paid in full." : " — Balance may be due."}${paymentDetail} We look forward to hosting you.`;
+                  if (booking) {
+                    const pdfUrl = await fetchLatestDocumentPdfUrl("facility", booking.id);
+                    if (pdfUrl) message += `\n\nView/download your invoice/receipt: ${pdfUrl}`;
+                  }
                   const link = buildWhatsAppLink(clientPhone, message);
                   if (link) window.open(link, "_blank");
                 }}

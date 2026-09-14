@@ -18,7 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { titleCase } from "@/lib/format";
-import { buildWhatsAppLink } from "@/lib/whatsapp";
+import { buildWhatsAppLink, buildMaintenancePdfUrl } from "@/lib/whatsapp";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { MAINTENANCE_CATEGORIES, MAINTENANCE_CATEGORY_LABELS, MAINTENANCE_STATUSES } from "@shared/schema";
 import type { MaintenanceIssue, MaintenanceCategory, MaintenanceStatus } from "@shared/schema";
@@ -264,7 +264,10 @@ export default function Maintenance() {
                 {sorted.map((issue) => {
                   const advance = nextStatus(issue.status as MaintenanceStatus);
                   const closingBlocked = advance === "closed" && !canClose;
-                  const message = `The Chekata Maintenance: update on your report "${issue.title}" (ref #${issue.id}) — status is now ${titleCase(issue.status)}.`;
+                  let message = `The Chekata Maintenance: update on your report "${issue.title}" (ref #${issue.id}) — status is now ${titleCase(issue.status)}.`;
+                  if (issue.publicToken) {
+                    message += `\n\nView/download the full report: ${buildMaintenancePdfUrl(issue.id, issue.publicToken)}`;
+                  }
                   const waLink = buildWhatsAppLink(issue.reportedPhone, message);
                   return (
                     <TableRow key={issue.id} data-testid={`row-issue-${issue.id}`}>
