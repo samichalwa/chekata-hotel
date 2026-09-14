@@ -248,22 +248,170 @@ export const insertMaintenanceIssueSchema = createInsertSchema(maintenanceIssues
 export type InsertMaintenanceIssue = z.infer<typeof insertMaintenanceIssueSchema>;
 export type MaintenanceIssue = typeof maintenanceIssues.$inferSelect;
 
-// ---------- Staff ----------
+// ---------- Staff (Employee Register — Phase 4 extends this in place) ----------
 export const staff = pgTable("staff", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   role: text("role").notNull(),
   department: text("department").notNull(), // front_desk | housekeeping | bar | restaurant | maintenance | security | management | other
-  salary: real("salary").notNull(), // monthly KES
+  salary: real("salary").notNull(), // monthly KES — used when employmentType = permanent
   phone: text("phone"),
   status: text("status").notNull().default("active"), // active | inactive
   hireDate: text("hire_date"),
   notes: text("notes"),
+  // ---- Phase 4 additions (additive-only) ----
+  photoUrl: text("photo_url"),
+  employmentType: text("employment_type").notNull().default("permanent"), // permanent | temporary
+  dayRate: real("day_rate"), // KES — used when employmentType = temporary and paid by the day
+  hourRate: real("hour_rate"), // KES — used when employmentType = temporary and paid by the hour
+  nationalId: text("national_id"),
+  nextOfKinName: text("next_of_kin_name"),
+  nextOfKinPhone: text("next_of_kin_phone"),
+  bankName: text("bank_name"),
+  bankAccountNumber: text("bank_account_number"),
+  bankBranch: text("bank_branch"),
+  email: text("email"),
 });
 
 export const insertStaffSchema = createInsertSchema(staff).omit({ id: true });
 export type InsertStaff = z.infer<typeof insertStaffSchema>;
 export type Staff = typeof staff.$inferSelect;
+
+// ---------- Phase 4: Time & Attendance ----------
+export const attendanceRecords = pgTable("attendance_records", {
+  id: serial("id").primaryKey(),
+  staffId: integer("staff_id").notNull(),
+  date: text("date").notNull(), // YYYY-MM-DD
+  status: text("status").notNull().default("present"), // present | absent | half_day | on_leave | rest_day
+  timeIn: text("time_in"),
+  timeOut: text("time_out"),
+  hoursWorked: real("hours_worked").notNull().default(0),
+  notes: text("notes"),
+  recordedBy: text("recorded_by").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertAttendanceRecordSchema = createInsertSchema(attendanceRecords).omit({ id: true, createdAt: true });
+export type InsertAttendanceRecord = z.infer<typeof insertAttendanceRecordSchema>;
+export type AttendanceRecord = typeof attendanceRecords.$inferSelect;
+
+// ---------- Phase 4: Leave Management ----------
+export const leaveTypes = pgTable("leave_types", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  entitlementDaysPerYear: real("entitlement_days_per_year").notNull().default(0),
+  accrualMethod: text("accrual_method").notNull().default("annual"), // annual | monthly
+  isPaid: integer("is_paid").notNull().default(1),
+  genderRestriction: text("gender_restriction"), // null | male | female
+  active: integer("active").notNull().default(1),
+});
+export const insertLeaveTypeSchema = createInsertSchema(leaveTypes).omit({ id: true });
+export type InsertLeaveType = z.infer<typeof insertLeaveTypeSchema>;
+export type LeaveType = typeof leaveTypes.$inferSelect;
+
+export const leaveRequests = pgTable("leave_requests", {
+  id: serial("id").primaryKey(),
+  staffId: integer("staff_id").notNull(),
+  leaveTypeId: integer("leave_type_id").notNull(),
+  startDate: text("start_date").notNull(),
+  endDate: text("end_date").notNull(),
+  days: real("days").notNull(),
+  reason: text("reason"),
+  status: text("status").notNull().default("pending"), // pending | approved | rejected | cancelled
+  approvedBy: text("approved_by"),
+  approvedAt: bigint("approved_at", { mode: "number" }),
+  cancelReason: text("cancel_reason"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertLeaveRequestSchema = createInsertSchema(leaveRequests).omit({ id: true, createdAt: true, status: true, approvedBy: true, approvedAt: true, cancelReason: true });
+export type InsertLeaveRequest = z.infer<typeof insertLeaveRequestSchema>;
+export type LeaveRequest = typeof leaveRequests.$inferSelect;
+
+export const leaveBalances = pgTable("leave_balances", {
+  id: serial("id").primaryKey(),
+  staffId: integer("staff_id").notNull(),
+  leaveTypeId: integer("leave_type_id").notNull(),
+  year: integer("year").notNull(),
+  entitlement: real("entitlement").notNull().default(0),
+  taken: real("taken").notNull().default(0),
+});
+export const insertLeaveBalanceSchema = createInsertSchema(leaveBalances).omit({ id: true });
+export type InsertLeaveBalance = z.infer<typeof insertLeaveBalanceSchema>;
+export type LeaveBalance = typeof leaveBalances.$inferSelect;
+
+// ---------- Phase 4: Payroll ----------
+// Configurable statutory rates — SHIF, NSSF, Housing Levy. PAYE bands live in
+// their own table below since they need band ranges, not a single rate.
+export const statutoryRateTables = pgTable("statutory_rate_tables", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(), // e.g. nssf_employee_tier1, shif_employee, housing_levy_employer
+  label: text("label").notNull(),
+  ratePercent: real("rate_percent").notNull().default(0),
+  lowerLimit: real("lower_limit"), // KES — e.g. NSSF Lower Earnings Limit
+  upperLimit: real("upper_limit"), // KES — e.g. NSSF Upper Earnings Limit / pensionable earnings cap
+  minAmount: real("min_amount"), // KES — optional floor
+  active: integer("active").notNull().default(1),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+});
+export const insertStatutoryRateTableSchema = createInsertSchema(statutoryRateTables).omit({ id: true, updatedAt: true });
+export type InsertStatutoryRateTable = z.infer<typeof insertStatutoryRateTableSchema>;
+export type StatutoryRateTable = typeof statutoryRateTables.$inferSelect;
+
+export const payeBands = pgTable("paye_bands", {
+  id: serial("id").primaryKey(),
+  bandFrom: real("band_from").notNull(),
+  bandTo: real("band_to"), // null = no upper limit
+  ratePercent: real("rate_percent").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+export const insertPayeBandSchema = createInsertSchema(payeBands).omit({ id: true });
+export type InsertPayeBand = z.infer<typeof insertPayeBandSchema>;
+export type PayeBand = typeof payeBands.$inferSelect;
+
+export const payrollRuns = pgTable("payroll_runs", {
+  id: serial("id").primaryKey(),
+  runNumber: text("run_number").notNull().unique(),
+  periodMonth: text("period_month").notNull(), // YYYY-MM
+  periodStart: text("period_start").notNull(),
+  periodEnd: text("period_end").notNull(),
+  status: text("status").notNull().default("draft"), // draft | approved | cancelled
+  totalGross: real("total_gross").notNull().default(0),
+  totalDeductions: real("total_deductions").notNull().default(0),
+  totalNet: real("total_net").notNull().default(0),
+  totalEmployerCost: real("total_employer_cost").notNull().default(0),
+  journalEntryId: integer("journal_entry_id"),
+  approvedBy: text("approved_by"),
+  approvedAt: bigint("approved_at", { mode: "number" }),
+  cancelReason: text("cancel_reason"),
+  createdBy: text("created_by").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertPayrollRunSchema = createInsertSchema(payrollRuns).omit({ id: true, runNumber: true, createdAt: true, status: true, totalGross: true, totalDeductions: true, totalNet: true, totalEmployerCost: true, journalEntryId: true, approvedBy: true, approvedAt: true, cancelReason: true });
+export type InsertPayrollRun = z.infer<typeof insertPayrollRunSchema>;
+export type PayrollRun = typeof payrollRuns.$inferSelect;
+
+export const payrollLines = pgTable("payroll_lines", {
+  id: serial("id").primaryKey(),
+  payrollRunId: integer("payroll_run_id").notNull(),
+  staffId: integer("staff_id").notNull(),
+  employmentType: text("employment_type").notNull(),
+  daysOrHours: real("days_or_hours").notNull().default(0),
+  grossPay: real("gross_pay").notNull().default(0),
+  payeAmount: real("paye_amount").notNull().default(0),
+  nssfEmployeeAmount: real("nssf_employee_amount").notNull().default(0),
+  nssfEmployerAmount: real("nssf_employer_amount").notNull().default(0),
+  shifAmount: real("shif_amount").notNull().default(0),
+  housingLevyEmployeeAmount: real("housing_levy_employee_amount").notNull().default(0),
+  housingLevyEmployerAmount: real("housing_levy_employer_amount").notNull().default(0),
+  totalDeductions: real("total_deductions").notNull().default(0),
+  netPay: real("net_pay").notNull().default(0),
+  bankName: text("bank_name"),
+  bankAccountNumber: text("bank_account_number"),
+  payslipEmailStatus: text("payslip_email_status"), // sent | failed | skipped
+  payslipEmailError: text("payslip_email_error"),
+});
+export const insertPayrollLineSchema = createInsertSchema(payrollLines).omit({ id: true });
+export type InsertPayrollLine = z.infer<typeof insertPayrollLineSchema>;
+export type PayrollLine = typeof payrollLines.$inferSelect;
 
 // ---------- Expenses (maintenance, utilities, supplies, other) ----------
 export const expenses = pgTable("expenses", {
@@ -299,6 +447,7 @@ export const settings = pgTable("settings", {
   smsApiKey: text("sms_api_key"),
   smsSenderId: text("sms_sender_id"), // optional AT short code / sender ID
   smsEnabled: integer("sms_enabled").notNull().default(0),
+  payePersonalRelief: real("paye_personal_relief").notNull().default(2400), // KES/month — Phase 4 payroll
 });
 
 export const insertSettingsSchema = createInsertSchema(settings).omit({ id: true });
@@ -349,6 +498,9 @@ export const MODULE_KEYS = [
   "internal-requisitions",
   "tenants",
   "fnb-costing",
+  "attendance",
+  "leave",
+  "payroll",
 ] as const;
 export type ModuleKey = typeof MODULE_KEYS[number];
 
@@ -372,6 +524,9 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   "internal-requisitions": "Internal Requisitions",
   tenants: "Tenants",
   "fnb-costing": "F&B Costing",
+  attendance: "Time & Attendance",
+  leave: "Leave Management",
+  payroll: "Payroll",
 };
 
 // Tables that can be individually write-restricted per user via the System

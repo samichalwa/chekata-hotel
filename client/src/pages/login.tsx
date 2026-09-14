@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useLogin, useForgotPassword } from "@/hooks/use-auth";
-import chekataLogo from "@/assets/chekata-logo.jpg";
+import { ChaimsMark, ChaimsWordmark } from "@/components/chaims-logo";
 
 const loginSchema = z.object({
   username: z.string().min(1, "Email address is required"),
@@ -111,12 +111,13 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-sm p-8">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <img
-            src={chekataLogo}
-            alt="The Chekata Hotel"
-            className="h-28 w-28 rounded-2xl object-cover shadow-md ring-1 ring-border"
-            data-testid="img-login-logo"
-          />
+          <ChaimsMark className="h-20 w-20" />
+          <div className="flex flex-col items-center gap-1">
+            <ChaimsWordmark className="text-2xl text-foreground" />
+            <p className="text-xs uppercase tracking-[0.08em] text-muted-foreground">
+              Multi-Property Hotel Management Platform
+            </p>
+          </div>
           <p className="text-sm text-muted-foreground">
             {mode === "login" ? "Sign in to the management system" : "Reset your password"}
           </p>
@@ -173,7 +174,7 @@ export default function LoginPage() {
         )}
 
         <p className="mt-6 text-center text-[11px] text-muted-foreground/70" data-testid="text-login-developer-credit">
-          Owned &amp; developed by Sami Chalwa
+          Developed by SAMIC
         </p>
       </Card>
     </div>

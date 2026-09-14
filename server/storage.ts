@@ -11,9 +11,19 @@ import {
   goodsReceipts, goodsReceiptLines, internalRequisitions, internalRequisitionLines, loanReturns,
   guestIdentityDocuments, shops, tenants, tenancyLeases, meterReadings,
   rentInvoices, rentInvoicePayments, recipes, recipeIngredients,
+  attendanceRecords, leaveTypes, leaveRequests, leaveBalances,
+  statutoryRateTables, payeBands, payrollRuns, payrollLines,
 } from '@shared/schema';
 import type {
   Room, InsertRoom,
+  AttendanceRecord, InsertAttendanceRecord,
+  LeaveType, InsertLeaveType,
+  LeaveRequest, InsertLeaveRequest,
+  LeaveBalance, InsertLeaveBalance,
+  StatutoryRateTable, InsertStatutoryRateTable,
+  PayeBand, InsertPayeBand,
+  PayrollRun, InsertPayrollRun,
+  PayrollLine, InsertPayrollLine,
   AccommodationBooking, InsertAccommodationBooking,
   Facility, InsertFacility,
   FacilityBooking, InsertFacilityBooking,
@@ -67,7 +77,7 @@ import type {
 } from '@shared/schema';
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { eq, and, ne, desc } from "drizzle-orm";
+import { eq, and, ne, desc, gte, lte } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
 
@@ -684,6 +694,107 @@ CREATE TABLE IF NOT EXISTS recipe_ingredients (
   quantity_per_serving REAL NOT NULL,
   unit TEXT
 );
+CREATE TABLE IF NOT EXISTS attendance_records (
+  id SERIAL PRIMARY KEY,
+  staff_id INTEGER NOT NULL,
+  date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'present',
+  time_in TEXT,
+  time_out TEXT,
+  hours_worked REAL NOT NULL DEFAULT 0,
+  notes TEXT,
+  recorded_by TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  UNIQUE(staff_id, date)
+);
+CREATE TABLE IF NOT EXISTS leave_types (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  entitlement_days_per_year REAL NOT NULL DEFAULT 0,
+  accrual_method TEXT NOT NULL DEFAULT 'annual',
+  is_paid INTEGER NOT NULL DEFAULT 1,
+  gender_restriction TEXT,
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS leave_requests (
+  id SERIAL PRIMARY KEY,
+  staff_id INTEGER NOT NULL,
+  leave_type_id INTEGER NOT NULL,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  days REAL NOT NULL,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  approved_by TEXT,
+  approved_at BIGINT,
+  cancel_reason TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS leave_balances (
+  id SERIAL PRIMARY KEY,
+  staff_id INTEGER NOT NULL,
+  leave_type_id INTEGER NOT NULL,
+  year INTEGER NOT NULL,
+  entitlement REAL NOT NULL DEFAULT 0,
+  taken REAL NOT NULL DEFAULT 0,
+  UNIQUE(staff_id, leave_type_id, year)
+);
+CREATE TABLE IF NOT EXISTS statutory_rate_tables (
+  id SERIAL PRIMARY KEY,
+  key TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  rate_percent REAL NOT NULL DEFAULT 0,
+  lower_limit REAL,
+  upper_limit REAL,
+  min_amount REAL,
+  active INTEGER NOT NULL DEFAULT 1,
+  updated_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS paye_bands (
+  id SERIAL PRIMARY KEY,
+  band_from REAL NOT NULL,
+  band_to REAL,
+  rate_percent REAL NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS payroll_runs (
+  id SERIAL PRIMARY KEY,
+  run_number TEXT NOT NULL UNIQUE,
+  period_month TEXT NOT NULL,
+  period_start TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  total_gross REAL NOT NULL DEFAULT 0,
+  total_deductions REAL NOT NULL DEFAULT 0,
+  total_net REAL NOT NULL DEFAULT 0,
+  total_employer_cost REAL NOT NULL DEFAULT 0,
+  journal_entry_id INTEGER,
+  approved_by TEXT,
+  approved_at BIGINT,
+  cancel_reason TEXT,
+  created_by TEXT NOT NULL,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payroll_lines (
+  id SERIAL PRIMARY KEY,
+  payroll_run_id INTEGER NOT NULL,
+  staff_id INTEGER NOT NULL,
+  employment_type TEXT NOT NULL,
+  days_or_hours REAL NOT NULL DEFAULT 0,
+  gross_pay REAL NOT NULL DEFAULT 0,
+  paye_amount REAL NOT NULL DEFAULT 0,
+  nssf_employee_amount REAL NOT NULL DEFAULT 0,
+  nssf_employer_amount REAL NOT NULL DEFAULT 0,
+  shif_amount REAL NOT NULL DEFAULT 0,
+  housing_levy_employee_amount REAL NOT NULL DEFAULT 0,
+  housing_levy_employer_amount REAL NOT NULL DEFAULT 0,
+  total_deductions REAL NOT NULL DEFAULT 0,
+  net_pay REAL NOT NULL DEFAULT 0,
+  bank_name TEXT,
+  bank_account_number TEXT,
+  payslip_email_status TEXT,
+  payslip_email_error TEXT
+);
 `);
 
   // ---- Idempotent column additions for installs upgraded from an earlier version ----
@@ -728,6 +839,22 @@ CREATE TABLE IF NOT EXISTS recipe_ingredients (
   await ensureColumn("maintenance_issues", "public_token", "TEXT");
   await ensureColumn("accommodation_bookings", "number_of_guests", "INTEGER NOT NULL DEFAULT 1");
   await ensureColumn("taxes", "applies_tenancy", "INTEGER NOT NULL DEFAULT 0");
+
+  // ---- Phase 4: additive staff (Employee Register) columns ----
+  await ensureColumn("staff", "photo_url", "TEXT");
+  await ensureColumn("staff", "employment_type", "TEXT NOT NULL DEFAULT 'permanent'");
+  await ensureColumn("staff", "day_rate", "REAL");
+  await ensureColumn("staff", "hour_rate", "REAL");
+  await ensureColumn("staff", "national_id", "TEXT");
+  await ensureColumn("staff", "next_of_kin_name", "TEXT");
+  await ensureColumn("staff", "next_of_kin_phone", "TEXT");
+  await ensureColumn("staff", "bank_name", "TEXT");
+  await ensureColumn("staff", "bank_account_number", "TEXT");
+  await ensureColumn("staff", "bank_branch", "TEXT");
+  await ensureColumn("staff", "email", "TEXT");
+  // PAYE personal relief lives on settings (a single configurable figure), not a table —
+  // editable in the Payroll → Statutory Rates screen without a code change.
+  await ensureColumn("settings", "paye_personal_relief", "REAL NOT NULL DEFAULT 2400");
 
   // ---- Backfill public_token for any pre-existing rows created before that column existed ----
   // (each row needs its OWN random token, so this can't be a single UPDATE ... SET public_token = <one value>).
@@ -915,6 +1042,71 @@ CREATE TABLE IF NOT EXISTS recipe_ingredients (
   }
   await seedPhase3Foundations();
 
+  // ---- Phase 4: HR & Payroll foundational data (idempotent) ----
+  // Chart-of-accounts codes for payroll postings, the payroll_run document
+  // sequence, statutory rate rows (Sept 2026 Kenyan rates — KRA/RSM/SmartHR/PayKenya,
+  // see PHASE4_IMPLEMENTATION_PLAN.md for sources), default PAYE bands, and a
+  // starter set of leave types. All editable afterwards from the Payroll/Leave screens.
+  async function seedPhase4Foundations() {
+    const now = Date.now();
+    const coaDefaults: { code: string; name: string; type: string }[] = [
+      { code: "5010", name: "Employer NSSF Contributions", type: "expense" },
+      { code: "5020", name: "Employer Housing Levy Contributions", type: "expense" },
+      { code: "2200", name: "PAYE Payable", type: "liability" },
+      { code: "2210", name: "NSSF Payable", type: "liability" },
+      { code: "2220", name: "SHIF Payable", type: "liability" },
+      { code: "2230", name: "Housing Levy Payable", type: "liability" },
+      { code: "2240", name: "Net Salaries Payable", type: "liability" },
+    ];
+    for (const acc of coaDefaults) {
+      await sql`INSERT INTO chart_of_accounts (code, name, type, active, is_system, created_at) VALUES (${acc.code}, ${acc.name}, ${acc.type}, 1, 1, ${now}) ON CONFLICT (code) DO NOTHING`;
+    }
+    await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('payroll_run', 'PAY', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
+
+    const [{ c: rateCount }] = await sql`SELECT COUNT(*)::int as c FROM statutory_rate_tables`;
+    if (rateCount === 0) {
+      const rates: { key: string; label: string; ratePercent: number; lowerLimit?: number; upperLimit?: number }[] = [
+        { key: "nssf_employee", label: "NSSF — Employee (6%, capped)", ratePercent: 6, lowerLimit: 9000, upperLimit: 108000 },
+        { key: "nssf_employer", label: "NSSF — Employer (6%, capped)", ratePercent: 6, lowerLimit: 9000, upperLimit: 108000 },
+        { key: "shif_employee", label: "SHIF — Employee (2.75% of gross, no cap)", ratePercent: 2.75 },
+        { key: "housing_levy_employee", label: "Affordable Housing Levy — Employee (1.5%)", ratePercent: 1.5 },
+        { key: "housing_levy_employer", label: "Affordable Housing Levy — Employer (1.5%)", ratePercent: 1.5 },
+      ];
+      for (const r of rates) {
+        await sql`INSERT INTO statutory_rate_tables (key, label, rate_percent, lower_limit, upper_limit, active, updated_at) VALUES (${r.key}, ${r.label}, ${r.ratePercent}, ${r.lowerLimit ?? null}, ${r.upperLimit ?? null}, 1, ${now}) ON CONFLICT (key) DO NOTHING`;
+      }
+    }
+
+    const [{ c: bandCount }] = await sql`SELECT COUNT(*)::int as c FROM paye_bands`;
+    if (bandCount === 0) {
+      // Kenya PAYE bands per KRA (Finance Act 2023), confirmed current as of Aug 2026.
+      const bands: { from: number; to: number | null; rate: number; order: number }[] = [
+        { from: 0, to: 24000, rate: 10, order: 0 },
+        { from: 24000, to: 32333, rate: 25, order: 1 },
+        { from: 32333, to: 500000, rate: 30, order: 2 },
+        { from: 500000, to: 800000, rate: 32.5, order: 3 },
+        { from: 800000, to: null, rate: 35, order: 4 },
+      ];
+      for (const b of bands) {
+        await sql`INSERT INTO paye_bands (band_from, band_to, rate_percent, sort_order) VALUES (${b.from}, ${b.to}, ${b.rate}, ${b.order})`;
+      }
+    }
+
+    const [{ c: leaveTypeCount }] = await sql`SELECT COUNT(*)::int as c FROM leave_types`;
+    if (leaveTypeCount === 0) {
+      const types: { name: string; days: number; paid: number }[] = [
+        { name: "Annual Leave", days: 21, paid: 1 },
+        { name: "Sick Leave", days: 14, paid: 1 },
+        { name: "Compassionate Leave", days: 3, paid: 1 },
+        { name: "Unpaid Leave", days: 0, paid: 0 },
+      ];
+      for (const t of types) {
+        await sql`INSERT INTO leave_types (name, entitlement_days_per_year, accrual_method, is_paid, active) VALUES (${t.name}, ${t.days}, 'annual', ${t.paid}, 1) ON CONFLICT (name) DO NOTHING`;
+      }
+    }
+  }
+  await seedPhase4Foundations();
+
   // ---- Seed default rooms & facilities to match The Chekata's layout (idempotent) ----
   async function seed() {
     const [{ c: roomCount }] = await sql`SELECT COUNT(*)::int as c FROM rooms`;
@@ -1020,9 +1212,43 @@ export interface IStorage {
 
   // Staff
   listStaff(): Promise<Staff[]>;
+  getStaff(id: number): Promise<Staff | undefined>;
   createStaff(data: InsertStaff): Promise<Staff>;
   updateStaff(id: number, data: Partial<InsertStaff>): Promise<Staff | undefined>;
   deleteStaff(id: number): Promise<{ changes: number }>;
+
+  // Attendance (Phase 4)
+  listAttendanceRecords(filters?: { staffId?: number; from?: string; to?: string }): Promise<AttendanceRecord[]>;
+  upsertAttendanceRecord(data: InsertAttendanceRecord): Promise<AttendanceRecord>;
+  deleteAttendanceRecord(id: number): Promise<{ changes: number }>;
+
+  // Leave (Phase 4)
+  listLeaveTypes(): Promise<LeaveType[]>;
+  createLeaveType(data: InsertLeaveType): Promise<LeaveType>;
+  updateLeaveType(id: number, data: Partial<InsertLeaveType>): Promise<LeaveType | undefined>;
+  deleteLeaveType(id: number): Promise<{ changes: number }>;
+  listLeaveRequests(staffId?: number): Promise<LeaveRequest[]>;
+  getLeaveRequest(id: number): Promise<LeaveRequest | undefined>;
+  createLeaveRequest(data: InsertLeaveRequest): Promise<LeaveRequest>;
+  decideLeaveRequest(id: number, status: "approved" | "rejected", decidedBy: string): Promise<LeaveRequest | undefined>;
+  cancelLeaveRequest(id: number, reason: string): Promise<LeaveRequest | undefined>;
+  listLeaveBalances(staffId?: number, year?: number): Promise<LeaveBalance[]>;
+  upsertLeaveBalance(data: InsertLeaveBalance): Promise<LeaveBalance>;
+
+  // Payroll (Phase 4)
+  listStatutoryRates(): Promise<StatutoryRateTable[]>;
+  updateStatutoryRate(id: number, data: Partial<InsertStatutoryRateTable>): Promise<StatutoryRateTable | undefined>;
+  listPayeBands(): Promise<PayeBand[]>;
+  createPayeBand(data: InsertPayeBand): Promise<PayeBand>;
+  updatePayeBand(id: number, data: Partial<InsertPayeBand>): Promise<PayeBand | undefined>;
+  deletePayeBand(id: number): Promise<{ changes: number }>;
+  listPayrollRuns(): Promise<PayrollRun[]>;
+  getPayrollRun(id: number): Promise<PayrollRun | undefined>;
+  listPayrollLines(payrollRunId: number): Promise<PayrollLine[]>;
+  createPayrollRun(periodMonth: string, periodStart: string, periodEnd: string, createdBy: string): Promise<PayrollRun>;
+  approvePayrollRun(id: number, approvedBy: string): Promise<PayrollRun>;
+  cancelPayrollRun(id: number, reason: string): Promise<PayrollRun | undefined>;
+  setPayslipEmailStatus(lineId: number, status: string, error?: string): Promise<void>;
 
   // Expenses
   listExpenses(): Promise<Expense[]>;
@@ -1412,6 +1638,9 @@ export class DatabaseStorage implements IStorage {
   async listStaff() {
     return db.select().from(staff);
   }
+  async getStaff(id: number) {
+    return (await db.select().from(staff).where(eq(staff.id, id)))[0];
+  }
   async createStaff(data: InsertStaff) {
     return (await db.insert(staff).values(data).returning())[0];
   }
@@ -1421,6 +1650,305 @@ export class DatabaseStorage implements IStorage {
   async deleteStaff(id: number) {
     const result = await db.delete(staff).where(eq(staff.id, id));
     return { changes: result.count ?? 0 };
+  }
+
+  // ---- Attendance (Phase 4) ----
+  async listAttendanceRecords(filters?: { staffId?: number; from?: string; to?: string }) {
+    const conditions = [];
+    if (filters?.staffId) conditions.push(eq(attendanceRecords.staffId, filters.staffId));
+    if (filters?.from) conditions.push(gte(attendanceRecords.date, filters.from));
+    if (filters?.to) conditions.push(lte(attendanceRecords.date, filters.to));
+    const query = db.select().from(attendanceRecords);
+    if (conditions.length) return query.where(and(...conditions)).orderBy(desc(attendanceRecords.date));
+    return query.orderBy(desc(attendanceRecords.date));
+  }
+  async upsertAttendanceRecord(data: InsertAttendanceRecord) {
+    const [existing] = await db.select().from(attendanceRecords).where(and(eq(attendanceRecords.staffId, data.staffId), eq(attendanceRecords.date, data.date)));
+    if (existing) {
+      return (await db.update(attendanceRecords).set({ ...data, createdAt: existing.createdAt }).where(eq(attendanceRecords.id, existing.id)).returning())[0];
+    }
+    return (await db.insert(attendanceRecords).values({ ...data, createdAt: Date.now() } as InsertAttendanceRecord & { createdAt: number }).returning())[0];
+  }
+  async deleteAttendanceRecord(id: number) {
+    const result = await db.delete(attendanceRecords).where(eq(attendanceRecords.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  // ---- Leave (Phase 4) ----
+  async listLeaveTypes() {
+    return db.select().from(leaveTypes).orderBy(leaveTypes.id);
+  }
+  async createLeaveType(data: InsertLeaveType) {
+    return (await db.insert(leaveTypes).values(data).returning())[0];
+  }
+  async updateLeaveType(id: number, data: Partial<InsertLeaveType>) {
+    return (await db.update(leaveTypes).set(data).where(eq(leaveTypes.id, id)).returning())[0];
+  }
+  async deleteLeaveType(id: number) {
+    const result = await db.delete(leaveTypes).where(eq(leaveTypes.id, id));
+    return { changes: result.count ?? 0 };
+  }
+  async listLeaveRequests(staffId?: number) {
+    if (staffId) return db.select().from(leaveRequests).where(eq(leaveRequests.staffId, staffId)).orderBy(desc(leaveRequests.id));
+    return db.select().from(leaveRequests).orderBy(desc(leaveRequests.id));
+  }
+  async getLeaveRequest(id: number) {
+    return (await db.select().from(leaveRequests).where(eq(leaveRequests.id, id)))[0];
+  }
+  async createLeaveRequest(data: InsertLeaveRequest) {
+    return (await db.insert(leaveRequests).values({ ...data, status: "pending", createdAt: Date.now() } as InsertLeaveRequest & { status: string; createdAt: number }).returning())[0];
+  }
+  async decideLeaveRequest(id: number, status: "approved" | "rejected", decidedBy: string) {
+    const current = await this.getLeaveRequest(id);
+    if (!current) return undefined;
+    if (current.status !== "pending") throw new Error(`This leave request is already ${current.status}`);
+    const updated = (await db.update(leaveRequests).set({ status, approvedBy: decidedBy, approvedAt: Date.now() }).where(eq(leaveRequests.id, id)).returning())[0];
+    if (status === "approved") {
+      const year = Number(current.startDate.slice(0, 4));
+      const [balance] = await db.select().from(leaveBalances).where(and(eq(leaveBalances.staffId, current.staffId), eq(leaveBalances.leaveTypeId, current.leaveTypeId), eq(leaveBalances.year, year)));
+      if (balance) {
+        await db.update(leaveBalances).set({ taken: balance.taken + current.days }).where(eq(leaveBalances.id, balance.id));
+      } else {
+        const [leaveType] = await db.select().from(leaveTypes).where(eq(leaveTypes.id, current.leaveTypeId));
+        await db.insert(leaveBalances).values({ staffId: current.staffId, leaveTypeId: current.leaveTypeId, year, entitlement: leaveType?.entitlementDaysPerYear ?? 0, taken: current.days } as InsertLeaveBalance);
+      }
+    }
+    return updated;
+  }
+  async cancelLeaveRequest(id: number, reason: string) {
+    const current = await this.getLeaveRequest(id);
+    if (!current) return undefined;
+    if (current.status === "cancelled") throw new Error("This leave request is already cancelled");
+    if (current.status === "approved") {
+      const year = Number(current.startDate.slice(0, 4));
+      const [balance] = await db.select().from(leaveBalances).where(and(eq(leaveBalances.staffId, current.staffId), eq(leaveBalances.leaveTypeId, current.leaveTypeId), eq(leaveBalances.year, year)));
+      if (balance) await db.update(leaveBalances).set({ taken: Math.max(0, balance.taken - current.days) }).where(eq(leaveBalances.id, balance.id));
+    }
+    return (await db.update(leaveRequests).set({ status: "cancelled", cancelReason: reason }).where(eq(leaveRequests.id, id)).returning())[0];
+  }
+  async listLeaveBalances(staffId?: number, year?: number) {
+    const conditions = [];
+    if (staffId) conditions.push(eq(leaveBalances.staffId, staffId));
+    if (year) conditions.push(eq(leaveBalances.year, year));
+    const query = db.select().from(leaveBalances);
+    if (conditions.length) return query.where(and(...conditions));
+    return query;
+  }
+  async upsertLeaveBalance(data: InsertLeaveBalance) {
+    const [existing] = await db.select().from(leaveBalances).where(and(eq(leaveBalances.staffId, data.staffId), eq(leaveBalances.leaveTypeId, data.leaveTypeId), eq(leaveBalances.year, data.year)));
+    if (existing) return (await db.update(leaveBalances).set(data).where(eq(leaveBalances.id, existing.id)).returning())[0];
+    return (await db.insert(leaveBalances).values(data).returning())[0];
+  }
+
+  // ---- Payroll (Phase 4) ----
+  async listStatutoryRates() {
+    return db.select().from(statutoryRateTables).orderBy(statutoryRateTables.id);
+  }
+  async updateStatutoryRate(id: number, data: Partial<InsertStatutoryRateTable>) {
+    return (await db.update(statutoryRateTables).set({ ...data, updatedAt: Date.now() }).where(eq(statutoryRateTables.id, id)).returning())[0];
+  }
+  async listPayeBands() {
+    return db.select().from(payeBands).orderBy(payeBands.sortOrder);
+  }
+  async createPayeBand(data: InsertPayeBand) {
+    return (await db.insert(payeBands).values(data).returning())[0];
+  }
+  async updatePayeBand(id: number, data: Partial<InsertPayeBand>) {
+    return (await db.update(payeBands).set(data).where(eq(payeBands.id, id)).returning())[0];
+  }
+  async deletePayeBand(id: number) {
+    const result = await db.delete(payeBands).where(eq(payeBands.id, id));
+    return { changes: result.count ?? 0 };
+  }
+  async listPayrollRuns() {
+    return db.select().from(payrollRuns).orderBy(desc(payrollRuns.id));
+  }
+  async getPayrollRun(id: number) {
+    return (await db.select().from(payrollRuns).where(eq(payrollRuns.id, id)))[0];
+  }
+  async listPayrollLines(payrollRunId: number) {
+    return db.select().from(payrollLines).where(eq(payrollLines.payrollRunId, payrollRunId)).orderBy(payrollLines.id);
+  }
+  async setPayslipEmailStatus(lineId: number, status: string, error?: string) {
+    await db.update(payrollLines).set({ payslipEmailStatus: status, payslipEmailError: error ?? null }).where(eq(payrollLines.id, lineId));
+  }
+  private async getAccountIdByCode(code: string): Promise<number> {
+    const [acc] = await db.select().from(chartOfAccounts).where(eq(chartOfAccounts.code, code));
+    if (!acc) throw new Error(`Chart-of-accounts code ${code} is missing — re-run setup or add it in Finance → Chart of Accounts`);
+    return acc.id;
+  }
+  async createPayrollRun(periodMonth: string, periodStart: string, periodEnd: string, createdBy: string) {
+    const existingActive = (await db.select().from(payrollRuns).where(eq(payrollRuns.periodMonth, periodMonth))).find((r) => r.status !== "cancelled");
+    if (existingActive) throw new Error(`A payroll run for ${periodMonth} already exists (run ${existingActive.runNumber})`);
+
+    const [settingsRow] = await db.select().from(settings);
+    const personalRelief = settingsRow?.payePersonalRelief ?? 2400;
+    const rates = await this.listStatutoryRates();
+    const rateMap: Record<string, StatutoryRateTable> = {};
+    for (const r of rates) rateMap[r.key] = r;
+    const bands = await this.listPayeBands();
+    const activeStaff = (await db.select().from(staff)).filter((s) => s.status === "active");
+
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const calcPaye = (taxablePay: number): number => {
+      let tax = 0;
+      for (const band of bands) {
+        if (taxablePay <= band.bandFrom) break;
+        const upper = band.bandTo ?? Infinity;
+        const taxableInBand = Math.min(taxablePay, upper) - band.bandFrom;
+        if (taxableInBand > 0) tax += taxableInBand * (band.ratePercent / 100);
+      }
+      return round2(Math.max(0, tax - personalRelief));
+    };
+    const daysOverlap = (aStart: string, aEnd: string, bStart: string, bEnd: string): number => {
+      const s = Math.max(new Date(aStart).getTime(), new Date(bStart).getTime());
+      const e = Math.min(new Date(aEnd).getTime(), new Date(bEnd).getTime());
+      if (e < s) return 0;
+      return Math.round((e - s) / 86400000) + 1;
+    };
+
+    const allLeaveRequests = await db.select().from(leaveRequests).where(eq(leaveRequests.status, "approved"));
+    const allLeaveTypes = await db.select().from(leaveTypes);
+    const unpaidLeaveTypeIds = new Set(allLeaveTypes.filter((t) => t.isPaid === 0).map((t) => t.id));
+    const attendanceInPeriod = await db.select().from(attendanceRecords).where(and(gte(attendanceRecords.date, periodStart), lte(attendanceRecords.date, periodEnd)));
+
+    const nssfEmployeeRate = rateMap["nssf_employee"];
+    const nssfEmployerRate = rateMap["nssf_employer"];
+    const shifRate = rateMap["shif_employee"];
+    const ahlEmployeeRate = rateMap["housing_levy_employee"];
+    const ahlEmployerRate = rateMap["housing_levy_employer"];
+
+    const lineInputs: (InsertPayrollLine & { payrollRunId: 0 })[] = [];
+    for (const s of activeStaff) {
+      let gross = 0;
+      let daysOrHours = 0;
+      if (s.employmentType === "temporary") {
+        const myAttendance = attendanceInPeriod.filter((a) => a.staffId === s.id);
+        if (s.dayRate && s.dayRate > 0) {
+          const daysWorked = myAttendance.reduce((sum, a) => sum + (a.status === "present" ? 1 : a.status === "half_day" ? 0.5 : 0), 0);
+          daysOrHours = daysWorked;
+          gross = round2(daysWorked * s.dayRate);
+        } else if (s.hourRate && s.hourRate > 0) {
+          const hoursWorked = myAttendance.reduce((sum, a) => sum + (a.hoursWorked || 0), 0);
+          daysOrHours = hoursWorked;
+          gross = round2(hoursWorked * s.hourRate);
+        }
+      } else {
+        gross = s.salary || 0;
+        const myUnpaidLeave = allLeaveRequests.filter((lr) => lr.staffId === s.id && unpaidLeaveTypeIds.has(lr.leaveTypeId));
+        let unpaidDays = 0;
+        for (const lr of myUnpaidLeave) {
+          unpaidDays += daysOverlap(lr.startDate, lr.endDate, periodStart, periodEnd);
+        }
+        if (unpaidDays > 0) gross = round2(Math.max(0, gross - (gross / 30) * unpaidDays));
+      }
+
+      const nssfEmployeeAmount = nssfEmployeeRate ? round2(Math.min(gross, nssfEmployeeRate.upperLimit ?? gross) * (nssfEmployeeRate.ratePercent / 100)) : 0;
+      const nssfEmployerAmount = nssfEmployerRate ? round2(Math.min(gross, nssfEmployerRate.upperLimit ?? gross) * (nssfEmployerRate.ratePercent / 100)) : 0;
+      const shifAmount = shifRate ? round2(Math.max(gross * (shifRate.ratePercent / 100), shifRate.minAmount ?? 0)) : 0;
+      const housingLevyEmployeeAmount = ahlEmployeeRate ? round2(gross * (ahlEmployeeRate.ratePercent / 100)) : 0;
+      const housingLevyEmployerAmount = ahlEmployerRate ? round2(gross * (ahlEmployerRate.ratePercent / 100)) : 0;
+      const taxablePay = Math.max(0, gross - nssfEmployeeAmount - shifAmount - housingLevyEmployeeAmount);
+      const payeAmount = calcPaye(taxablePay);
+      const totalDeductions = round2(payeAmount + nssfEmployeeAmount + shifAmount + housingLevyEmployeeAmount);
+      const netPay = round2(gross - totalDeductions);
+
+      lineInputs.push({
+        payrollRunId: 0,
+        staffId: s.id,
+        employmentType: s.employmentType,
+        daysOrHours,
+        grossPay: gross,
+        payeAmount,
+        nssfEmployeeAmount,
+        nssfEmployerAmount,
+        shifAmount,
+        housingLevyEmployeeAmount,
+        housingLevyEmployerAmount,
+        totalDeductions,
+        netPay,
+        bankName: s.bankName ?? null,
+        bankAccountNumber: s.bankAccountNumber ?? null,
+        payslipEmailStatus: null,
+        payslipEmailError: null,
+      } as any);
+    }
+
+    const totalGross = round2(lineInputs.reduce((sum, l) => sum + (l.grossPay ?? 0), 0));
+    const totalDeductionsSum = round2(lineInputs.reduce((sum, l) => sum + (l.totalDeductions ?? 0), 0));
+    const totalNet = round2(lineInputs.reduce((sum, l) => sum + (l.netPay ?? 0), 0));
+    const totalEmployerCost = round2(lineInputs.reduce((sum, l) => sum + (l.nssfEmployerAmount ?? 0) + (l.housingLevyEmployerAmount ?? 0), 0));
+    const runNumber = await this.getNextSequenceNumber("payroll_run");
+
+    return db.transaction(async (tx) => {
+      const [run] = await tx.insert(payrollRuns).values({
+        runNumber, periodMonth, periodStart, periodEnd, status: "draft",
+        totalGross, totalDeductions: totalDeductionsSum, totalNet, totalEmployerCost,
+        createdBy, createdAt: Date.now(),
+      } as InsertPayrollRun & { runNumber: string; status: string; totalGross: number; totalDeductions: number; totalNet: number; totalEmployerCost: number; createdAt: number }).returning();
+      for (const line of lineInputs) {
+        await tx.insert(payrollLines).values({ ...line, payrollRunId: run.id });
+      }
+      return run;
+    });
+  }
+  async approvePayrollRun(id: number, approvedBy: string) {
+    const run = await this.getPayrollRun(id);
+    if (!run) throw new Error("Payroll run not found");
+    if (run.status !== "draft") throw new Error(`This payroll run is already ${run.status}`);
+    const lines = await this.listPayrollLines(id);
+    if (lines.length === 0) throw new Error("This payroll run has no employee lines to post");
+
+    const [salariesExpense, nssfEmployerExpense, ahlEmployerExpense, payePayable, nssfPayable, shifPayable, ahlPayable, netPayable] = await Promise.all([
+      this.getAccountIdByCode("5000"), this.getAccountIdByCode("5010"), this.getAccountIdByCode("5020"),
+      this.getAccountIdByCode("2200"), this.getAccountIdByCode("2210"), this.getAccountIdByCode("2220"),
+      this.getAccountIdByCode("2230"), this.getAccountIdByCode("2240"),
+    ]);
+
+    const sum = (f: (l: PayrollLine) => number) => round2ForJournal(lines.reduce((s2, l) => s2 + f(l), 0));
+    function round2ForJournal(n: number) { return Math.round(n * 100) / 100; }
+    const gross = sum((l) => l.grossPay);
+    const nssfEmployer = sum((l) => l.nssfEmployerAmount);
+    const ahlEmployer = sum((l) => l.housingLevyEmployerAmount);
+    const paye = sum((l) => l.payeAmount);
+    const nssfEmployee = sum((l) => l.nssfEmployeeAmount);
+    const shif = sum((l) => l.shifAmount);
+    const ahlEmployee = sum((l) => l.housingLevyEmployeeAmount);
+    const net = sum((l) => l.netPay);
+
+    const debitLines = [
+      { accountId: salariesExpense, debit: gross, credit: 0, description: `Payroll ${run.runNumber} — gross pay` },
+      { accountId: nssfEmployerExpense, debit: nssfEmployer, credit: 0, description: `Payroll ${run.runNumber} — employer NSSF` },
+      { accountId: ahlEmployerExpense, debit: ahlEmployer, credit: 0, description: `Payroll ${run.runNumber} — employer AHL` },
+    ].filter((l) => l.debit > 0);
+    const creditLines = [
+      { accountId: payePayable, debit: 0, credit: paye, description: `Payroll ${run.runNumber} — PAYE payable` },
+      { accountId: nssfPayable, debit: 0, credit: round2ForJournal(nssfEmployee + nssfEmployer), description: `Payroll ${run.runNumber} — NSSF payable` },
+      { accountId: shifPayable, debit: 0, credit: shif, description: `Payroll ${run.runNumber} — SHIF payable` },
+      { accountId: ahlPayable, debit: 0, credit: round2ForJournal(ahlEmployee + ahlEmployer), description: `Payroll ${run.runNumber} — AHL payable` },
+      { accountId: netPayable, debit: 0, credit: net, description: `Payroll ${run.runNumber} — net pay payable` },
+    ].filter((l) => l.credit > 0);
+
+    const entry = await this.postJournalEntry(
+      {
+        entryDate: new Date().toISOString().slice(0, 10),
+        description: `Payroll run ${run.runNumber} — ${run.periodMonth}`,
+        sourceModule: "payroll",
+        sourceId: run.id,
+        createdBy: approvedBy,
+        createdAt: Date.now(),
+      } as any,
+      [...debitLines, ...creditLines],
+    );
+
+    return (await db.update(payrollRuns).set({ status: "approved", approvedBy, approvedAt: Date.now(), journalEntryId: entry.id }).where(eq(payrollRuns.id, id)).returning())[0];
+  }
+  async cancelPayrollRun(id: number, reason: string) {
+    const run = await this.getPayrollRun(id);
+    if (!run) return undefined;
+    if (run.status === "approved") throw new Error("Cannot cancel an approved payroll run — it has already posted to the general ledger");
+    if (run.status === "cancelled") throw new Error("This payroll run is already cancelled");
+    return (await db.update(payrollRuns).set({ status: "cancelled", cancelReason: reason }).where(eq(payrollRuns.id, id)).returning())[0];
   }
 
   // Expenses

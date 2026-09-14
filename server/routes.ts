@@ -26,10 +26,14 @@ import {
   insertGuestIdentityDocumentSchema, ID_DOCUMENT_TYPES,
   insertShopSchema, insertTenantSchema, insertTenancyLeaseSchema, insertMeterReadingSchema,
   insertRecipeSchema, insertRecipeIngredientSchema,
+  insertAttendanceRecordSchema, insertLeaveTypeSchema, insertLeaveRequestSchema, insertLeaveBalanceSchema,
+  insertStatutoryRateTableSchema, insertPayeBandSchema,
 } from "@shared/schema";
 import { issueDocument } from "./documents";
-import { buildDocumentPdf, buildMaintenanceReportPdf } from "./pdf";
+import { buildDocumentPdf, buildMaintenanceReportPdf, buildPayslipPdf } from "./pdf";
+import { emailPayslipsForRun } from "./payroll-pdf-email";
 import { sendTransactionalEmail } from "./email";
+import ExcelJS from "exceljs";
 import { sendSms } from "./sms";
 import { saveBase64Upload, UploadValidationError, UPLOADS_ROOT } from "./uploads";
 import { runTenantBillingCycle } from "./billing";
@@ -249,6 +253,7 @@ export async function registerRoutes(
   }
   app.post("/api/tenants/uploads", requireModule("tenants"), handleUpload("tenants"));
   app.post("/api/accommodation/uploads", requireModule("accommodation"), handleUpload("accommodation"));
+  app.post("/api/staff/uploads", requireModule("staff"), handleUpload("staff"));
 
   // Lets an admin trigger the tenant billing cycle on demand (QA / "I don't want to wait for
   // the hourly tick") instead of only running automatically at boot + hourly (see server/index.ts).
@@ -1999,6 +2004,275 @@ export async function registerRoutes(
     res.status(204).end();
   });
 
+
+  // ---------- Attendance (Phase 4) ----------
+  app.get("/api/attendance", requireModule("attendance"), async (req, res) => {
+    const staffId = req.query.staffId ? Number(req.query.staffId) : undefined;
+    const from = typeof req.query.from === "string" ? req.query.from : undefined;
+    const to = typeof req.query.to === "string" ? req.query.to : undefined;
+    res.json(await storage.listAttendanceRecords({ staffId, from, to }));
+  });
+  app.post("/api/attendance", requireModule("attendance"), async (req, res) => {
+    try {
+      const data = insertAttendanceRecordSchema.parse(req.body);
+      res.status(201).json(await storage.upsertAttendanceRecord(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/attendance/:id", requireModule("attendance"), async (req, res) => {
+    await storage.deleteAttendanceRecord(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---------- Leave (Phase 4) ----------
+  app.get("/api/leave-types", requireModule("leave"), async (_req, res) => {
+    res.json(await storage.listLeaveTypes());
+  });
+  app.post("/api/leave-types", requireModule("leave"), async (req, res) => {
+    try {
+      const data = insertLeaveTypeSchema.parse(req.body);
+      res.status(201).json(await storage.createLeaveType(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/leave-types/:id", requireModule("leave"), async (req, res) => {
+    try {
+      const data = insertLeaveTypeSchema.partial().parse(req.body);
+      const updated = await storage.updateLeaveType(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Leave type not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/leave-types/:id", requireModule("leave"), async (req, res) => {
+    await storage.deleteLeaveType(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  app.get("/api/leave-requests", requireModule("leave"), async (req, res) => {
+    const staffId = req.query.staffId ? Number(req.query.staffId) : undefined;
+    res.json(await storage.listLeaveRequests(staffId));
+  });
+  app.post("/api/leave-requests", requireModule("leave"), async (req, res) => {
+    try {
+      const data = insertLeaveRequestSchema.parse(req.body);
+      res.status(201).json(await storage.createLeaveRequest(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.post("/api/leave-requests/:id/approve", requireModule("leave"), async (req, res) => {
+    try {
+      const decidedBy = req.session.userId ? String(req.session.userId) : "system";
+      const updated = await storage.decideLeaveRequest(Number(req.params.id), "approved", decidedBy);
+      if (!updated) return res.status(404).json({ error: "Leave request not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to approve leave request" }); }
+  });
+  app.post("/api/leave-requests/:id/reject", requireModule("leave"), async (req, res) => {
+    try {
+      const decidedBy = req.session.userId ? String(req.session.userId) : "system";
+      const updated = await storage.decideLeaveRequest(Number(req.params.id), "rejected", decidedBy);
+      if (!updated) return res.status(404).json({ error: "Leave request not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to reject leave request" }); }
+  });
+  app.post("/api/leave-requests/:id/cancel", requireModule("leave"), async (req, res) => {
+    try {
+      const { reason } = req.body as { reason?: string };
+      const updated = await storage.cancelLeaveRequest(Number(req.params.id), reason ?? "");
+      if (!updated) return res.status(404).json({ error: "Leave request not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to cancel leave request" }); }
+  });
+
+  app.get("/api/leave-balances", requireModule("leave"), async (req, res) => {
+    const staffId = req.query.staffId ? Number(req.query.staffId) : undefined;
+    const year = req.query.year ? Number(req.query.year) : undefined;
+    res.json(await storage.listLeaveBalances(staffId, year));
+  });
+  app.post("/api/leave-balances", requireModule("leave"), async (req, res) => {
+    try {
+      const data = insertLeaveBalanceSchema.parse(req.body);
+      res.status(201).json(await storage.upsertLeaveBalance(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+
+  // ---------- Payroll (Phase 4) ----------
+  app.get("/api/payroll/statutory-rates", requireModule("payroll"), async (_req, res) => {
+    res.json(await storage.listStatutoryRates());
+  });
+  app.patch("/api/payroll/statutory-rates/:id", requireModule("payroll"), async (req, res) => {
+    try {
+      const data = insertStatutoryRateTableSchema.partial().parse(req.body);
+      const updated = await storage.updateStatutoryRate(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Statutory rate not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+
+  app.get("/api/payroll/paye-bands", requireModule("payroll"), async (_req, res) => {
+    res.json(await storage.listPayeBands());
+  });
+  app.post("/api/payroll/paye-bands", requireModule("payroll"), async (req, res) => {
+    try {
+      const data = insertPayeBandSchema.parse(req.body);
+      res.status(201).json(await storage.createPayeBand(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/payroll/paye-bands/:id", requireModule("payroll"), async (req, res) => {
+    try {
+      const data = insertPayeBandSchema.partial().parse(req.body);
+      const updated = await storage.updatePayeBand(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "PAYE band not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/payroll/paye-bands/:id", requireModule("payroll"), async (req, res) => {
+    await storage.deletePayeBand(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  // Personal relief lives on the settings table but is editable from the
+  // Payroll screen too (per Phase 4 decision #8), gated only by the payroll
+  // module — no separate settings/admin access required.
+  app.get("/api/payroll/personal-relief", requireModule("payroll"), async (_req, res) => {
+    const settings = await storage.getSettings();
+    res.json({ payePersonalRelief: settings.payePersonalRelief ?? 2400 });
+  });
+  app.patch("/api/payroll/personal-relief", requireModule("payroll"), async (req, res) => {
+    const value = Number(req.body?.payePersonalRelief);
+    if (!Number.isFinite(value) || value < 0) {
+      res.status(400).json({ error: "payePersonalRelief must be a non-negative number." });
+      return;
+    }
+    const updated = await storage.updateSettings({ payePersonalRelief: value });
+    res.json({ payePersonalRelief: updated.payePersonalRelief });
+  });
+
+  app.get("/api/payroll/runs", requireModule("payroll"), async (_req, res) => {
+    res.json(await storage.listPayrollRuns());
+  });
+  app.post("/api/payroll/runs", requireModule("payroll"), async (req, res) => {
+    try {
+      const { periodMonth, periodStart, periodEnd } = req.body as { periodMonth?: string; periodStart?: string; periodEnd?: string };
+      if (!periodMonth || !periodStart || !periodEnd) return res.status(400).json({ error: "periodMonth, periodStart and periodEnd are required." });
+      const createdBy = req.session.userId ? String(req.session.userId) : "system";
+      const run = await storage.createPayrollRun(periodMonth, periodStart, periodEnd, createdBy);
+      res.status(201).json(run);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to create payroll run" }); }
+  });
+  app.get("/api/payroll/runs/:id", requireModule("payroll"), async (req, res) => {
+    const run = await storage.getPayrollRun(Number(req.params.id));
+    if (!run) return res.status(404).json({ error: "Payroll run not found" });
+    res.json(run);
+  });
+  app.get("/api/payroll/runs/:id/lines", requireModule("payroll"), async (req, res) => {
+    res.json(await storage.listPayrollLines(Number(req.params.id)));
+  });
+  app.post("/api/payroll/runs/:id/approve", requireModule("payroll"), async (req, res) => {
+    try {
+      const approvedBy = req.session.userId ? String(req.session.userId) : "system";
+      const run = await storage.approvePayrollRun(Number(req.params.id), approvedBy);
+      const settings = await storage.getSettings();
+      // Fire-and-forget-ish: we await it so the response reflects real send status, but a slow
+      // email provider never blocks the ledger posting above, which has already committed.
+      const payslipEmailSummary = await emailPayslipsForRun(storage, settings, run);
+      res.json({ ...run, payslipEmailSummary });
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to approve payroll run" }); }
+  });
+  app.post("/api/payroll/runs/:id/cancel", requireModule("payroll"), async (req, res) => {
+    try {
+      const { reason } = req.body as { reason?: string };
+      const updated = await storage.cancelPayrollRun(Number(req.params.id), reason ?? "");
+      if (!updated) return res.status(404).json({ error: "Payroll run not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to cancel payroll run" }); }
+  });
+
+  // Dedicated payslip PDF download — deliberately NOT routed through the generic
+  // documents/issueDocument/public-token system (privacy-by-design; gated only by requireModule("payroll")).
+  app.get("/api/payroll/lines/:id/payslip-pdf", requireModule("payroll"), async (req, res) => {
+    try {
+      const lineId = Number(req.params.id);
+      const runs = await storage.listPayrollRuns();
+      let line: Awaited<ReturnType<typeof storage.listPayrollLines>>[number] | undefined;
+      let run: Awaited<ReturnType<typeof storage.getPayrollRun>> | undefined;
+      for (const r of runs) {
+        const lines = await storage.listPayrollLines(r.id);
+        const found = lines.find((l) => l.id === lineId);
+        if (found) { line = found; run = r; break; }
+      }
+      if (!line || !run) return res.status(404).json({ error: "Payslip not found" });
+      const staffMember = await storage.getStaff(line.staffId);
+      if (!staffMember) return res.status(404).json({ error: "Staff record not found" });
+      const settings = await storage.getSettings();
+      const [y, m] = run.periodMonth.split("-").map(Number);
+      const periodLabel = y && m ? new Date(y, m - 1, 1).toLocaleDateString("en-KE", { month: "long", year: "numeric" }) : run.periodMonth;
+      const pdf = await buildPayslipPdf(settings, {
+        runNumber: run.runNumber,
+        periodLabel,
+        staffName: staffMember.name,
+        staffRole: staffMember.role,
+        staffDepartment: staffMember.department,
+        employmentType: line.employmentType,
+        daysOrHours: line.daysOrHours,
+        nationalId: staffMember.nationalId,
+        bankName: line.bankName,
+        bankAccountNumber: line.bankAccountNumber,
+        grossPay: line.grossPay,
+        payeAmount: line.payeAmount,
+        nssfEmployeeAmount: line.nssfEmployeeAmount,
+        shifAmount: line.shifAmount,
+        housingLevyEmployeeAmount: line.housingLevyEmployeeAmount,
+        totalDeductions: line.totalDeductions,
+        netPay: line.netPay,
+        nssfEmployerAmount: line.nssfEmployerAmount,
+        housingLevyEmployerAmount: line.housingLevyEmployerAmount,
+      });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="Payslip-${run.runNumber}-${staffMember.name.replace(/\s+/g, "_")}.pdf"`);
+      res.send(pdf);
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to generate payslip" }); }
+  });
+
+  // Bank-advice Excel export for a pay run (in scope for Phase 4).
+  app.get("/api/payroll/runs/:id/bank-advice", requireModule("payroll"), async (req, res) => {
+    try {
+      const run = await storage.getPayrollRun(Number(req.params.id));
+      if (!run) return res.status(404).json({ error: "Payroll run not found" });
+      const lines = await storage.listPayrollLines(run.id);
+      const staffList = await storage.listStaff();
+      const staffMap = new Map(staffList.map((s) => [s.id, s]));
+
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("Bank Advice");
+      sheet.columns = [
+        { header: "Employee Name", key: "name", width: 28 },
+        { header: "National ID", key: "nationalId", width: 16 },
+        { header: "Bank Name", key: "bankName", width: 22 },
+        { header: "Account Number", key: "accountNumber", width: 20 },
+        { header: "Net Pay (KES)", key: "netPay", width: 16 },
+      ];
+      sheet.getRow(1).font = { bold: true };
+      let totalNet = 0;
+      for (const line of lines) {
+        const s = staffMap.get(line.staffId);
+        sheet.addRow({
+          name: s?.name ?? `Staff #${line.staffId}`,
+          nationalId: s?.nationalId ?? "",
+          bankName: line.bankName ?? "",
+          accountNumber: line.bankAccountNumber ?? "",
+          netPay: line.netPay,
+        });
+        totalNet += line.netPay;
+      }
+      const totalRow = sheet.addRow({ name: "TOTAL", netPay: Math.round(totalNet * 100) / 100 });
+      totalRow.font = { bold: true };
+      sheet.getColumn("netPay").numFmt = "#,##0.00";
+
+      const filename = `Bank-Advice-${run.runNumber}.xlsx`;
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to generate bank advice export" }); }
+  });
 
   return httpServer;
 }

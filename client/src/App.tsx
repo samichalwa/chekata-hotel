@@ -20,6 +20,9 @@ import BarRestaurant from "@/pages/bar-restaurant";
 import FnbCosting from "@/pages/fnb-costing";
 import Tenants from "@/pages/tenants";
 import Staff from "@/pages/staff";
+import AttendancePage from "@/pages/attendance";
+import LeavePage from "@/pages/leave";
+import PayrollPage from "@/pages/payroll";
 import Expenses from "@/pages/expenses";
 import Maintenance from "@/pages/maintenance";
 import ListsPage from "@/pages/lists";
@@ -69,6 +72,9 @@ function AppRouter() {
       <Route path="/fnb-costing" component={() => <Guarded moduleKey="fnb-costing" component={FnbCosting} />} />
       <Route path="/tenants" component={() => <Guarded moduleKey="tenants" component={Tenants} />} />
       <Route path="/staff" component={() => <Guarded moduleKey="staff" component={Staff} />} />
+      <Route path="/attendance" component={() => <Guarded moduleKey="attendance" component={AttendancePage} />} />
+      <Route path="/leave" component={() => <Guarded moduleKey="leave" component={LeavePage} />} />
+      <Route path="/payroll" component={() => <Guarded moduleKey="payroll" component={PayrollPage} />} />
       <Route path="/expenses" component={() => <Guarded moduleKey="expenses" component={Expenses} />} />
       <Route path="/maintenance" component={() => <Guarded moduleKey="maintenance" component={Maintenance} />} />
       <Route path="/lists" component={() => <Guarded moduleKey="lists" component={ListsPage} />} />

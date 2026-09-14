@@ -192,6 +192,140 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
   });
 }
 
+export interface PayslipPdfPayload {
+  runNumber: string;
+  periodLabel: string; // e.g. "September 2026"
+  staffName: string;
+  staffRole: string;
+  staffDepartment: string;
+  employmentType: string; // "permanent" | "temporary"
+  daysOrHours: number;
+  nationalId?: string | null;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  grossPay: number;
+  payeAmount: number;
+  nssfEmployeeAmount: number;
+  shifAmount: number;
+  housingLevyEmployeeAmount: number;
+  totalDeductions: number;
+  netPay: number;
+  nssfEmployerAmount: number;
+  housingLevyEmployerAmount: number;
+}
+
+// Payslips are deliberately NOT built on DocPayload/issueDocument — payroll data is
+// sensitive and bypasses the generic documents/public-token system entirely. This PDF is
+// generated on demand and emailed as a direct attachment (see server/payroll-pdf-email.ts).
+export function buildPayslipPdf(settings: Settings, p: PayslipPdfPayload): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 50 });
+    const chunks: Buffer[] = [];
+    doc.on("data", (c) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const accent = "#b5502f";
+    const dark = "#2a2118";
+    const muted = "#6b6157";
+
+    const logoSize = 46;
+    const textX = LOGO_EXISTS ? 50 + logoSize + 12 : 50;
+    if (LOGO_EXISTS) {
+      try {
+        doc.image(LOGO_PATH, 50, 48, { width: logoSize, height: logoSize });
+      } catch {
+        // fall back to text-only header
+      }
+    }
+    doc.fillColor(accent).fontSize(22).font("Helvetica-Bold").text(settings.hotelName || "The Chekata", textX, 50);
+    doc.fillColor(muted).fontSize(9).font("Helvetica");
+    let y = 78;
+    if (settings.hotelAddress) { doc.text(settings.hotelAddress, textX, y); y += 13; }
+    if (settings.hotelPhone) { doc.text(`Tel: ${settings.hotelPhone}`, textX, y); y += 13; }
+
+    doc.fillColor(dark).fontSize(18).font("Helvetica-Bold").text("PAYSLIP", 320, 50, { width: 225, align: "right" });
+    doc.fillColor(muted).fontSize(9).font("Helvetica");
+    doc.text(`Run: ${p.runNumber}`, 320, 74, { width: 225, align: "right" });
+    doc.text(`Period: ${p.periodLabel}`, 320, 88, { width: 225, align: "right" });
+
+    y = Math.max(y, 116) + 20;
+    doc.moveTo(50, y).lineTo(545, y).strokeColor("#d9d0c4").lineWidth(1).stroke();
+    y += 18;
+
+    // ---- Employee details ----
+    doc.fillColor(dark).fontSize(10).font("Helvetica-Bold").text("Employee", 50, y);
+    y += 14;
+    doc.fillColor(dark).fontSize(12).font("Helvetica-Bold").text(p.staffName, 50, y);
+    y += 16;
+    doc.fillColor(muted).fontSize(9).font("Helvetica");
+    doc.text(`${p.staffRole}${p.staffDepartment ? ` \u2014 ${p.staffDepartment}` : ""}`, 50, y);
+    y += 13;
+    doc.text(`Employment type: ${p.employmentType === "temporary" ? "Temporary" : "Permanent"}`, 50, y);
+    y += 13;
+    if (p.employmentType === "temporary") {
+      doc.text(`Days/hours worked: ${p.daysOrHours}`, 50, y);
+      y += 13;
+    }
+    if (p.nationalId) { doc.text(`National ID: ${p.nationalId}`, 50, y); y += 13; }
+    if (p.bankName || p.bankAccountNumber) {
+      doc.text(`Bank: ${p.bankName ?? "\u2014"}  Acc: ${p.bankAccountNumber ?? "\u2014"}`, 50, y);
+      y += 13;
+    }
+
+    y += 12;
+
+    // ---- Earnings & deductions table ----
+    const tableTop = y;
+    doc.fillColor("#ffffff").rect(50, tableTop, 495, 20).fill(accent);
+    doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold");
+    doc.text("Description", 58, tableTop + 6);
+    doc.text("Amount (KES)", 400, tableTop + 6, { width: 137, align: "right" });
+    y = tableTop + 20;
+
+    const row = (label: string, amount: number, bold = false) => {
+      doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(10).fillColor(dark).text(label, 58, y + 5, { width: 330 });
+      doc.text(fmtKES(amount), 400, y + 5, { width: 137, align: "right" });
+      doc.moveTo(50, y + 20).lineTo(545, y + 20).strokeColor("#eee5d8").lineWidth(0.5).stroke();
+      y += 20;
+    };
+
+    doc.font("Helvetica-Bold").fontSize(9).fillColor(muted).text("Earnings", 58, y + 4);
+    y += 18;
+    row("Gross pay", p.grossPay, true);
+
+    y += 8;
+    doc.font("Helvetica-Bold").fontSize(9).fillColor(muted).text("Statutory deductions", 58, y + 4);
+    y += 18;
+    row("PAYE", p.payeAmount);
+    row("NSSF (employee)", p.nssfEmployeeAmount);
+    row("SHIF", p.shifAmount);
+    row("Affordable Housing Levy (employee)", p.housingLevyEmployeeAmount);
+    row("Total deductions", p.totalDeductions, true);
+
+    y += 16;
+    doc.moveTo(350, y).lineTo(545, y).strokeColor("#d9d0c4").lineWidth(1).stroke();
+    y += 8;
+    doc.font("Helvetica-Bold").fontSize(12).fillColor("#2f7a4f");
+    doc.text("NET PAY", 350, y, { width: 90 });
+    doc.text(fmtKES(p.netPay), 440, y, { width: 97, align: "right" });
+    y += 30;
+
+    // ---- Employer contributions (informational, not deducted from employee) ----
+    doc.font("Helvetica-Bold").fontSize(9).fillColor(muted).text("Employer contributions (for your information \u2014 not deducted from net pay)", 50, y, { width: 495 });
+    y += 14;
+    doc.font("Helvetica").fontSize(9).fillColor(muted);
+    doc.text(`NSSF (employer): ${fmtKES(p.nssfEmployerAmount)}`, 50, y, { width: 240 });
+    doc.text(`AHL (employer): ${fmtKES(p.housingLevyEmployerAmount)}`, 300, y, { width: 245 });
+    y += 30;
+
+    doc.font("Helvetica").fontSize(8).fillColor(muted)
+      .text(`This payslip is confidential and intended solely for ${p.staffName}. Issued by ${settings.hotelName || "The Chekata"}.`, 50, 760, { width: 495, align: "center" });
+
+    doc.end();
+  });
+}
+
 const MAINT_PRIORITY_LABEL: Record<string, string> = {
   low: "Low",
   normal: "Normal",

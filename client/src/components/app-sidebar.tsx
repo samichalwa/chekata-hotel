@@ -20,6 +20,9 @@ import {
   ClipboardCheck,
   Building2,
   ChefHat,
+  CalendarClock,
+  CalendarDays,
+  Landmark,
 } from "lucide-react";
 import {
   Sidebar,
@@ -47,6 +50,9 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "F&B Costing", url: "/fnb-costing", icon: ChefHat, key: "fnb-costing" },
   { title: "Tenants", url: "/tenants", icon: Building2, key: "tenants" },
   { title: "Staff", url: "/staff", icon: Users, key: "staff" },
+  { title: "Attendance", url: "/attendance", icon: CalendarClock, key: "attendance" },
+  { title: "Leave", url: "/leave", icon: CalendarDays, key: "leave" },
+  { title: "Payroll", url: "/payroll", icon: Landmark, key: "payroll" },
   { title: "Expenses", url: "/expenses", icon: Receipt, key: "expenses" },
   { title: "Maintenance", url: "/maintenance", icon: Wrench, key: "maintenance" },
   { title: "Lists", url: "/lists", icon: ClipboardList, key: "lists" },
@@ -127,10 +133,10 @@ export function AppSidebar() {
           Currency: KES · All figures in Kenyan Shillings
         </div>
         <div className="px-2 pb-1.5 text-[11px] text-sidebar-foreground/40 group-data-[collapsible=icon]:hidden" data-testid="text-copyright">
-          © {copyrightYear} {hotelName}. All rights reserved.
+          © {copyrightYear} CHAIMS (Chalwa Integrated Hotel Management System).
         </div>
         <div className="px-2 pb-2 text-[11px] text-sidebar-foreground/40 group-data-[collapsible=icon]:hidden" data-testid="text-developer-credit">
-          Owned &amp; developed by Sami Chalwa
+          Developed by SAMIC
         </div>
       </SidebarFooter>
     </Sidebar>
