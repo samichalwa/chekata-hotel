@@ -17,6 +17,11 @@ import {
   insertPaymentVoucherSchema, insertApprovalMatrixRuleSchema,
   insertDefinitionListSchema, insertDefinitionListItemSchema,
   PERMISSION_TABLE_KEYS, type PermissionTableKey,
+  insertStoreSchema, insertInventoryItemSchema, insertSupplierSchema,
+  insertPurchaseRequisitionSchema, insertPurchaseRequisitionLineSchema,
+  insertPurchaseOrderSchema, insertPurchaseOrderLineSchema,
+  insertInternalRequisitionSchema, insertInternalRequisitionLineSchema,
+  PR_TYPES, IR_TYPES,
 } from "@shared/schema";
 import { issueDocument } from "./documents";
 import { buildDocumentPdf, buildMaintenanceReportPdf } from "./pdf";
@@ -26,7 +31,7 @@ import { buildReportsWorkbook, REPORT_SHEET_LABELS, type ReportSheetKey } from "
 import {
   requireAuth, requireModule, requireAdmin, requireCanEditMovieBookings,
   requireAnyModule, requireCanManageTablesList, requireCanManageMenuItemsList, requireCanCloseMaintenanceIssues,
-  requireAdminUsername, requireTablePermission,
+  requireAdminUsername, requireTablePermission, requireCanAdjustInventory,
   hashPassword, verifyPassword, toSafeUser, parsePermissions, resolveUserIdFromHeaderToken,
 } from "./auth";
 
@@ -1318,6 +1323,339 @@ export async function registerRoutes(
     await storage.deleteDefinitionListItem(Number(req.params.id));
     res.status(204).end();
   });
+
+
+  // ================= Phase 2: Inventory, Purchasing, Internal Requisitions =================
+
+  // ---------- Shared read-only lookups (needed by more than one Phase 2 module) ----------
+  app.get("/api/inventory/stores", requireAnyModule(["inventory", "purchasing", "internal-requisitions"]), async (_req, res) => {
+    res.json(await storage.listStores());
+  });
+  app.get("/api/inventory/items", requireAnyModule(["inventory", "purchasing", "internal-requisitions"]), async (_req, res) => {
+    res.json(await storage.listInventoryItems());
+  });
+  app.get("/api/inventory/stock-balances", requireAnyModule(["inventory", "purchasing", "internal-requisitions"]), async (_req, res) => {
+    res.json(await storage.getStockBalancesByItem());
+  });
+  app.get("/api/purchasing/gl-accounts", requireAnyModule(["purchasing", "internal-requisitions"]), async (_req, res) => {
+    res.json(await storage.listChartOfAccounts());
+  });
+  app.get("/api/definitions/:listKey/items", requireAuth, async (req, res) => {
+    const list = await storage.getDefinitionListByKey(String(req.params.listKey));
+    if (!list) return res.json([]);
+    res.json(await storage.listDefinitionListItems(list.id));
+  });
+
+  // ---------- Inventory: Stores (master data) ----------
+  app.post("/api/inventory/stores", requireModule("inventory"), async (req, res) => {
+    try {
+      const data = insertStoreSchema.parse(req.body);
+      res.status(201).json(await storage.createStore(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/inventory/stores/:id", requireModule("inventory"), async (req, res) => {
+    try {
+      const data = insertStoreSchema.partial().parse(req.body);
+      const updated = await storage.updateStore(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Store not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/inventory/stores/:id", requireModule("inventory"), requireCanAdjustInventory, async (req, res) => {
+    await storage.deleteStore(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---------- Inventory: Items (master data) ----------
+  app.post("/api/inventory/items", requireModule("inventory"), async (req, res) => {
+    try {
+      const data = insertInventoryItemSchema.parse({ ...req.body, createdAt: Date.now() });
+      res.status(201).json(await storage.createInventoryItem(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/inventory/items/:id", requireModule("inventory"), async (req, res) => {
+    try {
+      const data = insertInventoryItemSchema.partial().parse(req.body);
+      const updated = await storage.updateInventoryItem(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Inventory item not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/inventory/items/:id", requireModule("inventory"), requireCanAdjustInventory, async (req, res) => {
+    await storage.deleteInventoryItem(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---------- Inventory: Stock Ledger & Adjustments ----------
+  app.get("/api/inventory/stock-ledger", requireModule("inventory"), async (req, res) => {
+    const itemId = req.query.itemId ? Number(req.query.itemId) : undefined;
+    const storeId = req.query.storeId ? Number(req.query.storeId) : undefined;
+    res.json(await storage.listStockLedger({ itemId, storeId }));
+  });
+  app.post("/api/inventory/stock-adjustments", requireModule("inventory"), requireCanAdjustInventory, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { itemId, storeId, direction, quantity, notes } = req.body as {
+        itemId: number; storeId: number; direction: "in" | "out"; quantity: number; notes?: string;
+      };
+      if (!itemId || !storeId || (direction !== "in" && direction !== "out") || !quantity || quantity <= 0) {
+        return res.status(400).json({ error: "itemId, storeId, direction (in/out), and a positive quantity are required" });
+      }
+      const entry = await storage.createStockAdjustment({ itemId, storeId, direction, quantity, notes, createdBy: user.fullName ?? user.username });
+      res.status(201).json(entry);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to record stock adjustment" }); }
+  });
+
+  // ---------- Purchasing: Suppliers (master data) ----------
+  app.get("/api/purchasing/suppliers", requireModule("purchasing"), async (_req, res) => {
+    res.json(await storage.listSuppliers());
+  });
+  app.post("/api/purchasing/suppliers", requireModule("purchasing"), async (req, res) => {
+    try {
+      const data = insertSupplierSchema.parse(req.body);
+      res.status(201).json(await storage.createSupplier(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/purchasing/suppliers/:id", requireModule("purchasing"), async (req, res) => {
+    try {
+      const data = insertSupplierSchema.partial().parse(req.body);
+      const updated = await storage.updateSupplier(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Supplier not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/purchasing/suppliers/:id", requireModule("purchasing"), requireCanAdjustInventory, async (req, res) => {
+    await storage.deleteSupplier(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  // ---------- Purchasing: Purchase Requisitions ----------
+  app.get("/api/purchasing/requisitions", requireModule("purchasing"), async (_req, res) => {
+    res.json(await storage.listPurchaseRequisitions());
+  });
+  app.get("/api/purchasing/requisitions/:id/lines", requireModule("purchasing"), async (req, res) => {
+    res.json(await storage.getPurchaseRequisitionLines(Number(req.params.id)));
+  });
+  app.post("/api/purchasing/requisitions", requireModule("purchasing"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { lines, ...body } = req.body as { lines: any[] } & Record<string, any>;
+      if (!Array.isArray(lines) || lines.length === 0) return res.status(400).json({ error: "At least one requisition line is required" });
+      if (body.type && !(PR_TYPES as readonly string[]).includes(body.type)) return res.status(400).json({ error: "Invalid requisition type" });
+      const data = insertPurchaseRequisitionSchema.omit({ prNumber: true, requestedBy: true, createdAt: true, status: true, approvedBy: true, approvedAt: true, rejectedReason: true, cancelReason: true }).parse(body);
+      const parsedLines = lines.map((l) => insertPurchaseRequisitionLineSchema.omit({ requisitionId: true }).parse(l));
+      const created = await storage.createPurchaseRequisition(
+        { ...data, requestedBy: user.fullName ?? user.username, createdAt: Date.now(), status: "draft" } as any,
+        parsedLines as any,
+      );
+      res.status(201).json(created);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/purchasing/requisitions/:id", requireModule("purchasing"), async (req, res) => {
+    try {
+      const { lines, ...body } = req.body as { lines?: any[] } & Record<string, any>;
+      const data = insertPurchaseRequisitionSchema.partial().parse(body);
+      const parsedLines = Array.isArray(lines) ? lines.map((l) => insertPurchaseRequisitionLineSchema.omit({ requisitionId: true }).parse(l)) : undefined;
+      const updated = await storage.updatePurchaseRequisition(Number(req.params.id), data, parsedLines as any);
+      if (!updated) return res.status(404).json({ error: "Purchase requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to update purchase requisition" }); }
+  });
+  app.post("/api/purchasing/requisitions/:id/submit", requireModule("purchasing"), async (req, res) => {
+    try {
+      const updated = await storage.submitPurchaseRequisition(Number(req.params.id));
+      if (!updated) return res.status(404).json({ error: "Purchase requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to submit purchase requisition" }); }
+  });
+  app.post("/api/purchasing/requisitions/:id/approve", requireModule("purchasing"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { supplierId, payableAccountId, expenseAccountId } = req.body as { supplierId: number; payableAccountId: number; expenseAccountId?: number };
+      if (!supplierId || !payableAccountId) return res.status(400).json({ error: "supplierId and payableAccountId are required" });
+      const result = await storage.approvePurchaseRequisition(Number(req.params.id), user.fullName ?? user.username, { supplierId, payableAccountId, expenseAccountId: expenseAccountId ?? null });
+      res.json(result);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to approve purchase requisition" }); }
+  });
+  app.post("/api/purchasing/requisitions/:id/reject", requireModule("purchasing"), async (req, res) => {
+    try {
+      const { reason } = req.body as { reason?: string };
+      if (!reason) return res.status(400).json({ error: "A rejection reason is required" });
+      const updated = await storage.rejectPurchaseRequisition(Number(req.params.id), reason);
+      if (!updated) return res.status(404).json({ error: "Purchase requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to reject purchase requisition" }); }
+  });
+  app.post("/api/purchasing/requisitions/:id/cancel", requireModule("purchasing"), requireCanAdjustInventory, async (req, res) => {
+    try {
+      const { reason } = req.body as { reason?: string };
+      if (!reason) return res.status(400).json({ error: "A cancellation reason is required" });
+      const updated = await storage.cancelPurchaseRequisition(Number(req.params.id), reason);
+      if (!updated) return res.status(404).json({ error: "Purchase requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to cancel purchase requisition" }); }
+  });
+
+  // ---------- Purchasing: Purchase Orders ----------
+  app.get("/api/purchasing/orders", requireModule("purchasing"), async (_req, res) => {
+    res.json(await storage.listPurchaseOrders());
+  });
+  app.get("/api/purchasing/orders/:id/lines", requireModule("purchasing"), async (req, res) => {
+    res.json(await storage.getPurchaseOrderLines(Number(req.params.id)));
+  });
+  app.post("/api/purchasing/orders", requireModule("purchasing"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { lines, ...body } = req.body as { lines: any[] } & Record<string, any>;
+      if (!Array.isArray(lines) || lines.length === 0) return res.status(400).json({ error: "At least one order line is required" });
+      const data = insertPurchaseOrderSchema.omit({ poNumber: true, createdBy: true, createdAt: true, status: true, approvedBy: true, approvedAt: true, cancelReason: true, totalAmount: true }).parse(body);
+      if (data.type === "direct" && !data.expenseAccountId) return res.status(400).json({ error: "expenseAccountId is required for a direct-type purchase order" });
+      const parsedLines = lines.map((l) => insertPurchaseOrderLineSchema.omit({ poId: true, quantityReceived: true }).parse(l));
+      const totalAmount = parsedLines.reduce((sum, l: any) => sum + (l.lineTotal ?? l.quantity * l.unitCost), 0);
+      const created = await storage.createPurchaseOrder(
+        { ...data, createdBy: user.fullName ?? user.username, createdAt: Date.now(), status: "draft", totalAmount } as any,
+        parsedLines as any,
+      );
+      res.status(201).json(created);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/purchasing/orders/:id", requireModule("purchasing"), async (req, res) => {
+    try {
+      const { lines, ...body } = req.body as { lines?: any[] } & Record<string, any>;
+      const data = insertPurchaseOrderSchema.partial().parse(body);
+      const parsedLines = Array.isArray(lines) ? lines.map((l) => insertPurchaseOrderLineSchema.omit({ poId: true, quantityReceived: true }).parse(l)) : undefined;
+      const updated = await storage.updatePurchaseOrder(Number(req.params.id), data, parsedLines as any);
+      if (!updated) return res.status(404).json({ error: "Purchase order not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to update purchase order" }); }
+  });
+  app.post("/api/purchasing/orders/:id/approve", requireModule("purchasing"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const updated = await storage.approvePurchaseOrder(Number(req.params.id), user.fullName ?? user.username);
+      if (!updated) return res.status(404).json({ error: "Purchase order not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to approve purchase order" }); }
+  });
+  app.post("/api/purchasing/orders/:id/receive", requireModule("purchasing"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { storeId, lines, notes } = req.body as { storeId: number; lines: { poLineId: number; quantityReceived: number; unitCost: number }[]; notes?: string };
+      if (!storeId || !Array.isArray(lines) || lines.length === 0) return res.status(400).json({ error: "storeId and at least one received line are required" });
+      const grn = await storage.receiveGoods(Number(req.params.id), { storeId, receivedBy: user.fullName ?? user.username, lines, notes });
+      res.status(201).json(grn);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to receive goods" }); }
+  });
+  app.post("/api/purchasing/orders/:id/receive-direct", requireModule("purchasing"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const updated = await storage.receivePurchaseOrderDirect(Number(req.params.id), user.fullName ?? user.username);
+      if (!updated) return res.status(404).json({ error: "Purchase order not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to receive purchase order" }); }
+  });
+  app.post("/api/purchasing/orders/:id/cancel", requireModule("purchasing"), requireCanAdjustInventory, async (req, res) => {
+    try {
+      const { reason } = req.body as { reason?: string };
+      if (!reason) return res.status(400).json({ error: "A cancellation reason is required" });
+      const updated = await storage.cancelPurchaseOrder(Number(req.params.id), reason);
+      if (!updated) return res.status(404).json({ error: "Purchase order not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to cancel purchase order" }); }
+  });
+
+  // ---------- Purchasing: Goods Receipts (read-only trail) ----------
+  app.get("/api/purchasing/goods-receipts", requireModule("purchasing"), async (_req, res) => {
+    res.json(await storage.listGoodsReceipts());
+  });
+  app.get("/api/purchasing/goods-receipts/:id/lines", requireModule("purchasing"), async (req, res) => {
+    res.json(await storage.getGoodsReceiptLines(Number(req.params.id)));
+  });
+
+  // ---------- Internal Requisitions ----------
+  app.get("/api/internal-requisitions", requireModule("internal-requisitions"), async (_req, res) => {
+    res.json(await storage.listInternalRequisitions());
+  });
+  app.get("/api/internal-requisitions/:id/lines", requireModule("internal-requisitions"), async (req, res) => {
+    res.json(await storage.getInternalRequisitionLines(Number(req.params.id)));
+  });
+  app.post("/api/internal-requisitions", requireModule("internal-requisitions"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { lines, ...body } = req.body as { lines: any[] } & Record<string, any>;
+      if (!Array.isArray(lines) || lines.length === 0) return res.status(400).json({ error: "At least one requisition line is required" });
+      if (body.type && !(IR_TYPES as readonly string[]).includes(body.type)) return res.status(400).json({ error: "Invalid requisition type" });
+      const data = insertInternalRequisitionSchema.omit({ irNumber: true, requestedBy: true, createdAt: true, status: true, approvedBy: true, approvedAt: true, rejectedReason: true, cancelReason: true }).parse(body);
+      if (data.type === "permanent" && !data.expenseAccountId) return res.status(400).json({ error: "expenseAccountId is required for a permanent internal requisition" });
+      const parsedLines = lines.map((l) => insertInternalRequisitionLineSchema.omit({ requisitionId: true, quantityIssued: true, quantityReturned: true }).parse(l));
+      const created = await storage.createInternalRequisition(
+        { ...data, requestedBy: user.fullName ?? user.username, createdAt: Date.now(), status: "draft" } as any,
+        parsedLines as any,
+      );
+      res.status(201).json(created);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/internal-requisitions/:id", requireModule("internal-requisitions"), async (req, res) => {
+    try {
+      const { lines, ...body } = req.body as { lines?: any[] } & Record<string, any>;
+      const data = insertInternalRequisitionSchema.partial().parse(body);
+      const parsedLines = Array.isArray(lines) ? lines.map((l) => insertInternalRequisitionLineSchema.omit({ requisitionId: true, quantityIssued: true, quantityReturned: true }).parse(l)) : undefined;
+      const updated = await storage.updateInternalRequisition(Number(req.params.id), data, parsedLines as any);
+      if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to update internal requisition" }); }
+  });
+  app.post("/api/internal-requisitions/:id/submit", requireModule("internal-requisitions"), async (req, res) => {
+    try {
+      const updated = await storage.submitInternalRequisition(Number(req.params.id));
+      if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to submit internal requisition" }); }
+  });
+  app.post("/api/internal-requisitions/:id/approve", requireModule("internal-requisitions"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const updated = await storage.approveInternalRequisition(Number(req.params.id), user.fullName ?? user.username);
+      if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to approve internal requisition" }); }
+  });
+  app.post("/api/internal-requisitions/:id/reject", requireModule("internal-requisitions"), async (req, res) => {
+    try {
+      const { reason } = req.body as { reason?: string };
+      if (!reason) return res.status(400).json({ error: "A rejection reason is required" });
+      const updated = await storage.rejectInternalRequisition(Number(req.params.id), reason);
+      if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to reject internal requisition" }); }
+  });
+  app.post("/api/internal-requisitions/:id/issue", requireModule("internal-requisitions"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const updated = await storage.issueInternalRequisition(Number(req.params.id), user.fullName ?? user.username);
+      if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to issue internal requisition" }); }
+  });
+  app.post("/api/internal-requisition-lines/:lineId/return", requireModule("internal-requisitions"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { quantityReturned, condition, notes } = req.body as { quantityReturned: number; condition?: string; notes?: string };
+      if (!quantityReturned || quantityReturned <= 0) return res.status(400).json({ error: "A positive quantityReturned is required" });
+      const result = await storage.returnLoanItem(Number(req.params.lineId), { quantityReturned, returnedBy: user.fullName ?? user.username, condition, notes });
+      res.status(201).json(result);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to record loan return" }); }
+  });
+  app.post("/api/internal-requisitions/:id/cancel", requireModule("internal-requisitions"), requireCanAdjustInventory, async (req, res) => {
+    try {
+      const { reason } = req.body as { reason?: string };
+      if (!reason) return res.status(400).json({ error: "A cancellation reason is required" });
+      const updated = await storage.cancelInternalRequisition(Number(req.params.id), reason);
+      if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to cancel internal requisition" }); }
+  });
+
 
   return httpServer;
 }

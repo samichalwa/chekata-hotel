@@ -6,6 +6,9 @@ import {
   chartOfAccounts, accountingPeriods, journalEntries, journalEntryLines,
   bankAccounts, bankReconciliations, paymentVouchers, documentSequences,
   approvalMatrixRules, permissionTableRules, definitionLists, definitionListItems,
+  stores, inventoryItems, stockLedger, suppliers,
+  purchaseRequisitions, purchaseRequisitionLines, purchaseOrders, purchaseOrderLines,
+  goodsReceipts, goodsReceiptLines, internalRequisitions, internalRequisitionLines, loanReturns,
 } from '@shared/schema';
 import type {
   Room, InsertRoom,
@@ -37,6 +40,19 @@ import type {
   PermissionTableRule, InsertPermissionTableRule,
   DefinitionList, InsertDefinitionList,
   DefinitionListItem, InsertDefinitionListItem,
+  Store, InsertStore,
+  InventoryItem, InsertInventoryItem,
+  StockLedgerEntry, InsertStockLedger,
+  Supplier, InsertSupplier,
+  PurchaseRequisition, InsertPurchaseRequisition,
+  PurchaseRequisitionLine, InsertPurchaseRequisitionLine,
+  PurchaseOrder, InsertPurchaseOrder,
+  PurchaseOrderLine, InsertPurchaseOrderLine,
+  GoodsReceipt, InsertGoodsReceipt,
+  GoodsReceiptLine, InsertGoodsReceiptLine,
+  InternalRequisition, InsertInternalRequisition,
+  InternalRequisitionLine, InsertInternalRequisitionLine,
+  LoanReturn, InsertLoanReturn,
 } from '@shared/schema';
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -403,6 +419,155 @@ CREATE TABLE IF NOT EXISTS definition_list_items (
   sort_order INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS stores (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  location TEXT,
+  description TEXT,
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS inventory_items (
+  id SERIAL PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  category TEXT,
+  unit_of_measure TEXT NOT NULL,
+  reorder_level REAL NOT NULL DEFAULT 0,
+  last_unit_cost REAL NOT NULL DEFAULT 0,
+  gl_asset_account_id INTEGER,
+  active INTEGER NOT NULL DEFAULT 1,
+  notes TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS stock_ledger (
+  id SERIAL PRIMARY KEY,
+  item_id INTEGER NOT NULL,
+  store_id INTEGER NOT NULL,
+  transaction_type TEXT NOT NULL,
+  quantity REAL NOT NULL,
+  direction TEXT NOT NULL,
+  unit_cost REAL NOT NULL DEFAULT 0,
+  reference_type TEXT,
+  reference_id INTEGER,
+  balance_after REAL NOT NULL,
+  notes TEXT,
+  created_by TEXT NOT NULL,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS suppliers (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  contact_person TEXT,
+  phone TEXT,
+  email TEXT,
+  payment_terms TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  notes TEXT
+);
+CREATE TABLE IF NOT EXISTS purchase_requisitions (
+  id SERIAL PRIMARY KEY,
+  pr_number TEXT NOT NULL UNIQUE,
+  requested_by TEXT NOT NULL,
+  department TEXT,
+  purpose TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'stock',
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_at BIGINT NOT NULL,
+  approved_by TEXT,
+  approved_at BIGINT,
+  rejected_reason TEXT,
+  cancel_reason TEXT
+);
+CREATE TABLE IF NOT EXISTS purchase_requisition_lines (
+  id SERIAL PRIMARY KEY,
+  requisition_id INTEGER NOT NULL,
+  item_id INTEGER,
+  description TEXT NOT NULL,
+  quantity REAL NOT NULL,
+  unit_of_measure TEXT,
+  estimated_unit_cost REAL NOT NULL DEFAULT 0,
+  notes TEXT
+);
+CREATE TABLE IF NOT EXISTS purchase_orders (
+  id SERIAL PRIMARY KEY,
+  po_number TEXT NOT NULL UNIQUE,
+  requisition_id INTEGER,
+  supplier_id INTEGER NOT NULL,
+  type TEXT NOT NULL DEFAULT 'stock',
+  status TEXT NOT NULL DEFAULT 'draft',
+  payable_account_id INTEGER NOT NULL,
+  expense_account_id INTEGER,
+  total_amount REAL NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  approved_by TEXT,
+  approved_at BIGINT,
+  cancel_reason TEXT,
+  notes TEXT
+);
+CREATE TABLE IF NOT EXISTS purchase_order_lines (
+  id SERIAL PRIMARY KEY,
+  po_id INTEGER NOT NULL,
+  item_id INTEGER,
+  description TEXT NOT NULL,
+  quantity REAL NOT NULL,
+  unit_of_measure TEXT,
+  unit_cost REAL NOT NULL DEFAULT 0,
+  line_total REAL NOT NULL DEFAULT 0,
+  quantity_received REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS goods_receipts (
+  id SERIAL PRIMARY KEY,
+  grn_number TEXT NOT NULL UNIQUE,
+  po_id INTEGER NOT NULL,
+  store_id INTEGER NOT NULL,
+  received_by TEXT NOT NULL,
+  received_at BIGINT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'completed',
+  notes TEXT
+);
+CREATE TABLE IF NOT EXISTS goods_receipt_lines (
+  id SERIAL PRIMARY KEY,
+  grn_id INTEGER NOT NULL,
+  po_line_id INTEGER NOT NULL,
+  item_id INTEGER NOT NULL,
+  quantity_received REAL NOT NULL,
+  unit_cost REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS internal_requisitions (
+  id SERIAL PRIMARY KEY,
+  ir_number TEXT NOT NULL UNIQUE,
+  requested_by TEXT NOT NULL,
+  department TEXT,
+  store_id INTEGER NOT NULL,
+  type TEXT NOT NULL DEFAULT 'permanent',
+  expense_account_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'draft',
+  purpose TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  approved_by TEXT,
+  approved_at BIGINT,
+  rejected_reason TEXT,
+  cancel_reason TEXT
+);
+CREATE TABLE IF NOT EXISTS internal_requisition_lines (
+  id SERIAL PRIMARY KEY,
+  requisition_id INTEGER NOT NULL,
+  item_id INTEGER NOT NULL,
+  quantity_requested REAL NOT NULL,
+  quantity_issued REAL NOT NULL DEFAULT 0,
+  quantity_returned REAL NOT NULL DEFAULT 0,
+  notes TEXT
+);
+CREATE TABLE IF NOT EXISTS loan_returns (
+  id SERIAL PRIMARY KEY,
+  requisition_line_id INTEGER NOT NULL,
+  quantity_returned REAL NOT NULL,
+  returned_at BIGINT NOT NULL,
+  returned_by TEXT NOT NULL,
+  condition TEXT,
+  notes TEXT
+);
 `);
 
   // ---- Idempotent column additions for installs upgraded from an earlier version ----
@@ -430,6 +595,7 @@ CREATE TABLE IF NOT EXISTS definition_list_items (
   await ensureColumn("users", "can_manage_tables_list", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("users", "can_manage_menu_items_list", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("users", "can_close_maintenance_issues", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("users", "can_adjust_inventory", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("settings", "sms_provider", "TEXT NOT NULL DEFAULT ''");
   await ensureColumn("settings", "sms_username", "TEXT");
   await ensureColumn("settings", "sms_api_key", "TEXT");
@@ -546,6 +712,77 @@ CREATE TABLE IF NOT EXISTS definition_list_items (
   }
   await seedFinanceFoundations();
 
+  // ---- Seed Phase 2 (Inventory/Purchasing/Internal Requisitions) foundations ----
+  // Per-row ON CONFLICT DO NOTHING rather than a whole-table count===0 gate, since
+  // installs that already ran seedFinanceFoundations() must still pick up these new
+  // chart-of-accounts/document-sequence/definition-list rows on upgrade.
+  async function seedPhase2Foundations() {
+    const now = Date.now();
+    const coaDefaults: { code: string; name: string; type: string }[] = [
+      { code: "1300", name: "Inventory - Stores", type: "asset" },
+      { code: "5210", name: "Supplies & Consumables Expense", type: "expense" },
+    ];
+    for (const acc of coaDefaults) {
+      await sql`INSERT INTO chart_of_accounts (code, name, type, active, is_system, created_at) VALUES (${acc.code}, ${acc.name}, ${acc.type}, 1, 1, ${now}) ON CONFLICT (code) DO NOTHING`;
+    }
+
+    const seqDefaults: { key: string; prefix: string }[] = [
+      { key: "purchase_requisition", prefix: "PR" },
+      { key: "purchase_order", prefix: "PO" },
+      { key: "internal_requisition", prefix: "IR" },
+      { key: "goods_receipt", prefix: "GRN" },
+    ];
+    for (const seq of seqDefaults) {
+      await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES (${seq.key}, ${seq.prefix}, 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
+    }
+
+    const listDefs: { key: string; label: string; items: { code: string; label: string }[] }[] = [
+      {
+        key: "inventory_category",
+        label: "Inventory Category",
+        items: [
+          { code: "consumables", label: "Consumables" },
+          { code: "spare_parts", label: "Spare Parts" },
+          { code: "tools_equipment", label: "Tools & Equipment" },
+          { code: "stationery", label: "Stationery" },
+          { code: "cleaning_supplies", label: "Cleaning Supplies" },
+        ],
+      },
+      {
+        key: "unit_of_measure",
+        label: "Unit of Measure",
+        items: [
+          { code: "pcs", label: "Pieces" },
+          { code: "kg", label: "Kilograms" },
+          { code: "litre", label: "Litres" },
+          { code: "box", label: "Box" },
+          { code: "carton", label: "Carton" },
+          { code: "roll", label: "Roll" },
+          { code: "set", label: "Set" },
+        ],
+      },
+    ];
+    for (const list of listDefs) {
+      const existing = await sql`SELECT id FROM definition_lists WHERE list_key = ${list.key}`;
+      let listId: number;
+      if (existing.length === 0) {
+        const [{ id }] = await sql`INSERT INTO definition_lists (list_key, label, is_system) VALUES (${list.key}, ${list.label}, 1) RETURNING id`;
+        listId = id;
+      } else {
+        listId = (existing[0] as { id: number }).id;
+      }
+      const [{ c: itemCount }] = await sql`SELECT COUNT(*)::int as c FROM definition_list_items WHERE list_id = ${listId}`;
+      if (itemCount === 0) {
+        let sortOrder = 0;
+        for (const item of list.items) {
+          await sql`INSERT INTO definition_list_items (list_id, code, label, sort_order, active) VALUES (${listId}, ${item.code}, ${item.label}, ${sortOrder}, 1)`;
+          sortOrder += 1;
+        }
+      }
+    }
+  }
+  await seedPhase2Foundations();
+
   // ---- Seed default rooms & facilities to match The Chekata's layout (idempotent) ----
   async function seed() {
     const [{ c: roomCount }] = await sql`SELECT COUNT(*)::int as c FROM rooms`;
@@ -574,7 +811,7 @@ CREATE TABLE IF NOT EXISTS definition_list_items (
       const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD || "admin123";
       const hash = bcrypt.hashSync(defaultPassword, 10);
       const allPermissions = JSON.stringify(MODULE_KEYS);
-      await sql`INSERT INTO users (username, password_hash, full_name, is_admin, permissions, can_edit_movie_bookings, can_manage_tables_list, can_manage_menu_items_list, can_close_maintenance_issues, active, created_at) VALUES ('admin', ${hash}, 'Administrator', 1, ${allPermissions}, 1, 1, 1, 1, 1, ${Date.now()})`;
+      await sql`INSERT INTO users (username, password_hash, full_name, is_admin, permissions, can_edit_movie_bookings, can_manage_tables_list, can_manage_menu_items_list, can_close_maintenance_issues, can_adjust_inventory, active, created_at) VALUES ('admin', ${hash}, 'Administrator', 1, ${allPermissions}, 1, 1, 1, 1, 1, 1, ${Date.now()})`;
       console.log(
         `[storage] No users found — created default administrator (username: admin, password: ${defaultPassword}). Change this password after first login.`,
       );
@@ -772,6 +1009,68 @@ export interface IStorage {
   getTrialBalance(asOfDate?: string): Promise<any[]>;
   getProfitAndLoss(from?: string, to?: string): Promise<any>;
   getBalanceSheet(asOfDate?: string): Promise<any>;
+
+  // ---------------- Phase 2: Inventory ----------------
+  listStores(): Promise<Store[]>;
+  getStore(id: number): Promise<Store | undefined>;
+  createStore(data: InsertStore): Promise<Store>;
+  updateStore(id: number, data: Partial<InsertStore>): Promise<Store | undefined>;
+  deleteStore(id: number): Promise<{ changes: number }>;
+
+  listInventoryItems(): Promise<InventoryItem[]>;
+  getInventoryItem(id: number): Promise<InventoryItem | undefined>;
+  createInventoryItem(data: InsertInventoryItem): Promise<InventoryItem>;
+  updateInventoryItem(id: number, data: Partial<InsertInventoryItem>): Promise<InventoryItem | undefined>;
+  deleteInventoryItem(id: number): Promise<{ changes: number }>;
+
+  listStockLedger(filter?: { itemId?: number; storeId?: number }): Promise<StockLedgerEntry[]>;
+  getStockBalance(itemId: number, storeId: number): Promise<number>;
+  getStockBalancesByItem(): Promise<{ itemId: number; storeId: number; balance: number }[]>;
+  createStockAdjustment(data: { itemId: number; storeId: number; direction: "in" | "out"; quantity: number; notes?: string; createdBy: string }): Promise<StockLedgerEntry>;
+
+  // ---------------- Phase 2: Purchasing ----------------
+  listSuppliers(): Promise<Supplier[]>;
+  getSupplier(id: number): Promise<Supplier | undefined>;
+  createSupplier(data: InsertSupplier): Promise<Supplier>;
+  updateSupplier(id: number, data: Partial<InsertSupplier>): Promise<Supplier | undefined>;
+  deleteSupplier(id: number): Promise<{ changes: number }>;
+
+  listPurchaseRequisitions(): Promise<PurchaseRequisition[]>;
+  getPurchaseRequisition(id: number): Promise<PurchaseRequisition | undefined>;
+  getPurchaseRequisitionLines(requisitionId: number): Promise<PurchaseRequisitionLine[]>;
+  createPurchaseRequisition(data: Omit<InsertPurchaseRequisition, "prNumber">, lines: Omit<InsertPurchaseRequisitionLine, "requisitionId">[]): Promise<PurchaseRequisition>;
+  updatePurchaseRequisition(id: number, data: Partial<InsertPurchaseRequisition>, lines?: Omit<InsertPurchaseRequisitionLine, "requisitionId">[]): Promise<PurchaseRequisition | undefined>;
+  submitPurchaseRequisition(id: number): Promise<PurchaseRequisition | undefined>;
+  approvePurchaseRequisition(id: number, approvedBy: string, poDetails: { supplierId: number; payableAccountId: number; expenseAccountId?: number | null }): Promise<{ requisition: PurchaseRequisition; purchaseOrder: PurchaseOrder }>;
+  rejectPurchaseRequisition(id: number, reason: string): Promise<PurchaseRequisition | undefined>;
+  cancelPurchaseRequisition(id: number, reason: string): Promise<PurchaseRequisition | undefined>;
+
+  listPurchaseOrders(): Promise<PurchaseOrder[]>;
+  getPurchaseOrder(id: number): Promise<PurchaseOrder | undefined>;
+  getPurchaseOrderLines(poId: number): Promise<PurchaseOrderLine[]>;
+  createPurchaseOrder(data: Omit<InsertPurchaseOrder, "poNumber">, lines: Omit<InsertPurchaseOrderLine, "poId">[]): Promise<PurchaseOrder>;
+  updatePurchaseOrder(id: number, data: Partial<InsertPurchaseOrder>, lines?: Omit<InsertPurchaseOrderLine, "poId">[]): Promise<PurchaseOrder | undefined>;
+  approvePurchaseOrder(id: number, approvedBy: string): Promise<PurchaseOrder | undefined>;
+  cancelPurchaseOrder(id: number, reason: string): Promise<PurchaseOrder | undefined>;
+  receiveGoods(poId: number, data: { storeId: number; receivedBy: string; lines: { poLineId: number; quantityReceived: number; unitCost: number }[]; notes?: string }): Promise<GoodsReceipt>;
+  receivePurchaseOrderDirect(poId: number, receivedBy: string): Promise<PurchaseOrder | undefined>;
+
+  listGoodsReceipts(): Promise<GoodsReceipt[]>;
+  getGoodsReceipt(id: number): Promise<GoodsReceipt | undefined>;
+  getGoodsReceiptLines(grnId: number): Promise<GoodsReceiptLine[]>;
+
+  // ---------------- Phase 2: Internal Requisitions ----------------
+  listInternalRequisitions(): Promise<InternalRequisition[]>;
+  getInternalRequisition(id: number): Promise<InternalRequisition | undefined>;
+  getInternalRequisitionLines(requisitionId: number): Promise<InternalRequisitionLine[]>;
+  createInternalRequisition(data: Omit<InsertInternalRequisition, "irNumber">, lines: Omit<InsertInternalRequisitionLine, "requisitionId">[]): Promise<InternalRequisition>;
+  updateInternalRequisition(id: number, data: Partial<InsertInternalRequisition>, lines?: Omit<InsertInternalRequisitionLine, "requisitionId">[]): Promise<InternalRequisition | undefined>;
+  submitInternalRequisition(id: number): Promise<InternalRequisition | undefined>;
+  approveInternalRequisition(id: number, approvedBy: string): Promise<InternalRequisition | undefined>;
+  rejectInternalRequisition(id: number, reason: string): Promise<InternalRequisition | undefined>;
+  issueInternalRequisition(id: number, issuedBy: string): Promise<InternalRequisition | undefined>;
+  returnLoanItem(lineId: number, data: { quantityReturned: number; returnedBy: string; condition?: string; notes?: string }): Promise<LoanReturn>;
+  cancelInternalRequisition(id: number, reason: string): Promise<InternalRequisition | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1422,6 +1721,535 @@ export class DatabaseStorage implements IStorage {
       totalAssets, totalLiabilities, totalEquity,
       totalLiabilitiesAndEquity: totalLiabilities + totalEquity,
     };
+  }
+
+  // ================= Phase 2: Inventory =================
+  async listStores() {
+    return db.select().from(stores);
+  }
+  async getStore(id: number) {
+    return (await db.select().from(stores).where(eq(stores.id, id)))[0];
+  }
+  async createStore(data: InsertStore) {
+    return (await db.insert(stores).values(data).returning())[0];
+  }
+  async updateStore(id: number, data: Partial<InsertStore>) {
+    return (await db.update(stores).set(data).where(eq(stores.id, id)).returning())[0];
+  }
+  async deleteStore(id: number) {
+    const result = await db.delete(stores).where(eq(stores.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  async listInventoryItems() {
+    return db.select().from(inventoryItems);
+  }
+  async getInventoryItem(id: number) {
+    return (await db.select().from(inventoryItems).where(eq(inventoryItems.id, id)))[0];
+  }
+  async createInventoryItem(data: InsertInventoryItem) {
+    return (await db.insert(inventoryItems).values(data).returning())[0];
+  }
+  async updateInventoryItem(id: number, data: Partial<InsertInventoryItem>) {
+    return (await db.update(inventoryItems).set(data).where(eq(inventoryItems.id, id)).returning())[0];
+  }
+  async deleteInventoryItem(id: number) {
+    const result = await db.delete(inventoryItems).where(eq(inventoryItems.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  async listStockLedger(filter?: { itemId?: number; storeId?: number }) {
+    if (filter?.itemId && filter?.storeId) {
+      return db.select().from(stockLedger).where(and(eq(stockLedger.itemId, filter.itemId), eq(stockLedger.storeId, filter.storeId))).orderBy(desc(stockLedger.id));
+    }
+    if (filter?.itemId) {
+      return db.select().from(stockLedger).where(eq(stockLedger.itemId, filter.itemId)).orderBy(desc(stockLedger.id));
+    }
+    if (filter?.storeId) {
+      return db.select().from(stockLedger).where(eq(stockLedger.storeId, filter.storeId)).orderBy(desc(stockLedger.id));
+    }
+    return db.select().from(stockLedger).orderBy(desc(stockLedger.id));
+  }
+  async getStockBalance(itemId: number, storeId: number) {
+    const rows = await sql<{ balance: number }[]>`
+      SELECT COALESCE(SUM(CASE WHEN direction = 'in' THEN quantity ELSE -quantity END), 0) AS balance
+      FROM stock_ledger WHERE item_id = ${itemId} AND store_id = ${storeId}
+    `;
+    return Number(rows[0]?.balance) || 0;
+  }
+  async getStockBalancesByItem() {
+    const rows = await sql<{ item_id: number; store_id: number; balance: number }[]>`
+      SELECT item_id, store_id, COALESCE(SUM(CASE WHEN direction = 'in' THEN quantity ELSE -quantity END), 0) AS balance
+      FROM stock_ledger GROUP BY item_id, store_id
+    `;
+    return rows.map((r) => ({ itemId: r.item_id, storeId: r.store_id, balance: Number(r.balance) || 0 }));
+  }
+  async createStockAdjustment(data: { itemId: number; storeId: number; direction: "in" | "out"; quantity: number; notes?: string; createdBy: string }) {
+    const currentBalance = await this.getStockBalance(data.itemId, data.storeId);
+    if (data.direction === "out" && data.quantity > currentBalance + 0.0001) {
+      throw new Error(`Cannot adjust out ${data.quantity} — only ${currentBalance} in stock`);
+    }
+    const balanceAfter = data.direction === "in" ? currentBalance + data.quantity : currentBalance - data.quantity;
+    return (await db.insert(stockLedger).values({
+      itemId: data.itemId,
+      storeId: data.storeId,
+      transactionType: "adjustment",
+      quantity: data.quantity,
+      direction: data.direction,
+      unitCost: 0,
+      referenceType: "adjustment",
+      referenceId: null,
+      balanceAfter,
+      notes: data.notes,
+      createdBy: data.createdBy,
+      createdAt: Date.now(),
+    } as InsertStockLedger).returning())[0];
+  }
+
+  // ================= Phase 2: Purchasing =================
+  async listSuppliers() {
+    return db.select().from(suppliers);
+  }
+  async getSupplier(id: number) {
+    return (await db.select().from(suppliers).where(eq(suppliers.id, id)))[0];
+  }
+  async createSupplier(data: InsertSupplier) {
+    return (await db.insert(suppliers).values(data).returning())[0];
+  }
+  async updateSupplier(id: number, data: Partial<InsertSupplier>) {
+    return (await db.update(suppliers).set(data).where(eq(suppliers.id, id)).returning())[0];
+  }
+  async deleteSupplier(id: number) {
+    const result = await db.delete(suppliers).where(eq(suppliers.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  async listPurchaseRequisitions() {
+    return db.select().from(purchaseRequisitions).orderBy(desc(purchaseRequisitions.id));
+  }
+  async getPurchaseRequisition(id: number) {
+    return (await db.select().from(purchaseRequisitions).where(eq(purchaseRequisitions.id, id)))[0];
+  }
+  async getPurchaseRequisitionLines(requisitionId: number) {
+    return db.select().from(purchaseRequisitionLines).where(eq(purchaseRequisitionLines.requisitionId, requisitionId));
+  }
+  async createPurchaseRequisition(data: Omit<InsertPurchaseRequisition, "prNumber">, lines: Omit<InsertPurchaseRequisitionLine, "requisitionId">[]) {
+    if (!lines || lines.length === 0) throw new Error("A purchase requisition needs at least one line");
+    const prNumber = await this.getNextSequenceNumber("purchase_requisition");
+    return db.transaction(async (tx) => {
+      const [created] = await tx.insert(purchaseRequisitions).values({ ...data, prNumber, status: "draft" } as InsertPurchaseRequisition).returning();
+      for (const line of lines) {
+        await tx.insert(purchaseRequisitionLines).values({ ...line, requisitionId: created.id });
+      }
+      return created;
+    });
+  }
+  async updatePurchaseRequisition(id: number, data: Partial<InsertPurchaseRequisition>, lines?: Omit<InsertPurchaseRequisitionLine, "requisitionId">[]) {
+    const current = await this.getPurchaseRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "draft") throw new Error(`Cannot edit a purchase requisition that is ${current.status.replace("_", " ")}`);
+    return db.transaction(async (tx) => {
+      const [updated] = await tx.update(purchaseRequisitions).set(data).where(eq(purchaseRequisitions.id, id)).returning();
+      if (lines) {
+        await tx.delete(purchaseRequisitionLines).where(eq(purchaseRequisitionLines.requisitionId, id));
+        for (const line of lines) {
+          await tx.insert(purchaseRequisitionLines).values({ ...line, requisitionId: id });
+        }
+      }
+      return updated;
+    });
+  }
+  async submitPurchaseRequisition(id: number) {
+    const current = await this.getPurchaseRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "draft") throw new Error(`Only a draft purchase requisition can be submitted (this one is ${current.status.replace("_", " ")})`);
+    return (await db.update(purchaseRequisitions).set({ status: "pending_approval" }).where(eq(purchaseRequisitions.id, id)).returning())[0];
+  }
+  async approvePurchaseRequisition(id: number, approvedBy: string, poDetails: { supplierId: number; payableAccountId: number; expenseAccountId?: number | null }) {
+    const current = await this.getPurchaseRequisition(id);
+    if (!current) throw new Error("Purchase requisition not found");
+    if (current.status !== "pending_approval" && current.status !== "draft") {
+      throw new Error(`Cannot approve a purchase requisition that is ${current.status.replace("_", " ")}`);
+    }
+    const lines = await this.getPurchaseRequisitionLines(id);
+    if (lines.length === 0) throw new Error("Cannot approve a purchase requisition with no lines");
+    if (current.type === "direct" && !poDetails.expenseAccountId) {
+      throw new Error("A direct-type purchase requisition requires an expense account to raise its purchase order");
+    }
+    const poNumber = await this.getNextSequenceNumber("purchase_order");
+    const totalAmount = lines.reduce((s, l) => s + l.quantity * l.estimatedUnitCost, 0);
+    return db.transaction(async (tx) => {
+      const [updatedPr] = await tx.update(purchaseRequisitions).set({
+        status: "approved", approvedBy, approvedAt: Date.now(),
+      }).where(eq(purchaseRequisitions.id, id)).returning();
+      const [po] = await tx.insert(purchaseOrders).values({
+        poNumber,
+        requisitionId: id,
+        supplierId: poDetails.supplierId,
+        type: current.type,
+        status: "approved",
+        payableAccountId: poDetails.payableAccountId,
+        expenseAccountId: poDetails.expenseAccountId ?? null,
+        totalAmount,
+        createdBy: approvedBy,
+        createdAt: Date.now(),
+        approvedBy,
+        approvedAt: Date.now(),
+      } as InsertPurchaseOrder).returning();
+      for (const line of lines) {
+        await tx.insert(purchaseOrderLines).values({
+          poId: po.id,
+          itemId: line.itemId,
+          description: line.description,
+          quantity: line.quantity,
+          unitOfMeasure: line.unitOfMeasure,
+          unitCost: line.estimatedUnitCost,
+          lineTotal: line.quantity * line.estimatedUnitCost,
+          quantityReceived: 0,
+        });
+      }
+      return { requisition: updatedPr, purchaseOrder: po };
+    });
+  }
+  async rejectPurchaseRequisition(id: number, reason: string) {
+    const current = await this.getPurchaseRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "pending_approval" && current.status !== "draft") {
+      throw new Error(`Cannot reject a purchase requisition that is ${current.status.replace("_", " ")}`);
+    }
+    return (await db.update(purchaseRequisitions).set({ status: "rejected", rejectedReason: reason }).where(eq(purchaseRequisitions.id, id)).returning())[0];
+  }
+  async cancelPurchaseRequisition(id: number, reason: string) {
+    const current = await this.getPurchaseRequisition(id);
+    if (!current) return undefined;
+    if (current.status === "approved") throw new Error("Cannot cancel an approved purchase requisition — cancel its linked purchase order instead");
+    if (current.status === "cancelled") throw new Error("This purchase requisition is already cancelled");
+    return (await db.update(purchaseRequisitions).set({ status: "cancelled", cancelReason: reason }).where(eq(purchaseRequisitions.id, id)).returning())[0];
+  }
+
+  async listPurchaseOrders() {
+    return db.select().from(purchaseOrders).orderBy(desc(purchaseOrders.id));
+  }
+  async getPurchaseOrder(id: number) {
+    return (await db.select().from(purchaseOrders).where(eq(purchaseOrders.id, id)))[0];
+  }
+  async getPurchaseOrderLines(poId: number) {
+    return db.select().from(purchaseOrderLines).where(eq(purchaseOrderLines.poId, poId));
+  }
+  async createPurchaseOrder(data: Omit<InsertPurchaseOrder, "poNumber">, lines: Omit<InsertPurchaseOrderLine, "poId">[]) {
+    if (!lines || lines.length === 0) throw new Error("A purchase order needs at least one line");
+    if (data.type === "direct" && !data.expenseAccountId) {
+      throw new Error("A direct-type purchase order requires an expense account");
+    }
+    const poNumber = await this.getNextSequenceNumber("purchase_order");
+    const totalAmount = lines.reduce((s, l) => s + l.quantity * (l.unitCost ?? 0), 0);
+    return db.transaction(async (tx) => {
+      const [created] = await tx.insert(purchaseOrders).values({ ...data, poNumber, status: "draft", totalAmount } as InsertPurchaseOrder).returning();
+      for (const line of lines) {
+        await tx.insert(purchaseOrderLines).values({ ...line, poId: created.id, lineTotal: line.quantity * (line.unitCost ?? 0), quantityReceived: 0 });
+      }
+      return created;
+    });
+  }
+  async updatePurchaseOrder(id: number, data: Partial<InsertPurchaseOrder>, lines?: Omit<InsertPurchaseOrderLine, "poId">[]) {
+    const current = await this.getPurchaseOrder(id);
+    if (!current) return undefined;
+    if (current.status !== "draft") throw new Error(`Cannot edit a purchase order that is ${current.status.replace("_", " ")}`);
+    return db.transaction(async (tx) => {
+      let totalAmount: number | undefined = data.totalAmount as number | undefined;
+      if (lines) {
+        totalAmount = lines.reduce((s, l) => s + l.quantity * (l.unitCost ?? 0), 0);
+        await tx.delete(purchaseOrderLines).where(eq(purchaseOrderLines.poId, id));
+        for (const line of lines) {
+          await tx.insert(purchaseOrderLines).values({ ...line, poId: id, lineTotal: line.quantity * (line.unitCost ?? 0), quantityReceived: 0 });
+        }
+      }
+      const [updated] = await tx.update(purchaseOrders).set({ ...data, ...(totalAmount !== undefined ? { totalAmount } : {}) }).where(eq(purchaseOrders.id, id)).returning();
+      return updated;
+    });
+  }
+  async approvePurchaseOrder(id: number, approvedBy: string) {
+    const current = await this.getPurchaseOrder(id);
+    if (!current) return undefined;
+    if (current.status !== "draft") throw new Error(`Cannot approve a purchase order that is ${current.status.replace("_", " ")}`);
+    return (await db.update(purchaseOrders).set({ status: "approved", approvedBy, approvedAt: Date.now() }).where(eq(purchaseOrders.id, id)).returning())[0];
+  }
+  async cancelPurchaseOrder(id: number, reason: string) {
+    const current = await this.getPurchaseOrder(id);
+    if (!current) return undefined;
+    if (current.status === "received" || current.status === "partially_received") {
+      throw new Error("Cannot cancel a purchase order that has already received goods");
+    }
+    if (current.status === "cancelled") throw new Error("This purchase order is already cancelled");
+    return (await db.update(purchaseOrders).set({ status: "cancelled", cancelReason: reason }).where(eq(purchaseOrders.id, id)).returning())[0];
+  }
+  async receiveGoods(poId: number, data: { storeId: number; receivedBy: string; lines: { poLineId: number; quantityReceived: number; unitCost: number }[]; notes?: string }) {
+    const po = await this.getPurchaseOrder(poId);
+    if (!po) throw new Error("Purchase order not found");
+    if (po.type !== "stock") throw new Error("Only a stock-type purchase order can receive goods into a store — use direct receipt instead");
+    if (po.status !== "approved" && po.status !== "partially_received") {
+      throw new Error(`Cannot receive goods against a purchase order that is ${po.status.replace("_", " ")}`);
+    }
+    if (!data.lines || data.lines.length === 0) throw new Error("At least one line must be received");
+    const poLines = await this.getPurchaseOrderLines(poId);
+    const grnNumber = await this.getNextSequenceNumber("goods_receipt");
+
+    const { grn, jeLines, totalReceivedValue } = await db.transaction(async (tx) => {
+      const [grnRow] = await tx.insert(goodsReceipts).values({
+        grnNumber, poId, storeId: data.storeId, receivedBy: data.receivedBy, receivedAt: Date.now(), status: "completed", notes: data.notes,
+      } as InsertGoodsReceipt).returning();
+
+      const lines: { accountId: number; debit: number; credit: number; description: string }[] = [];
+      let totalValue = 0;
+
+      for (const recvLine of data.lines) {
+        const poLine = poLines.find((l) => l.id === recvLine.poLineId);
+        if (!poLine) throw new Error(`Purchase order line ${recvLine.poLineId} not found on this order`);
+        if (!poLine.itemId) throw new Error(`Purchase order line ${recvLine.poLineId} has no catalogued item and cannot be received into stock`);
+        const remaining = poLine.quantity - poLine.quantityReceived;
+        if (recvLine.quantityReceived > remaining + 0.0001) {
+          throw new Error(`Cannot receive ${recvLine.quantityReceived} against line ${recvLine.poLineId} — only ${remaining} remaining`);
+        }
+        await tx.insert(goodsReceiptLines).values({
+          grnId: grnRow.id, poLineId: poLine.id, itemId: poLine.itemId, quantityReceived: recvLine.quantityReceived, unitCost: recvLine.unitCost,
+        });
+        await tx.update(purchaseOrderLines).set({ quantityReceived: poLine.quantityReceived + recvLine.quantityReceived }).where(eq(purchaseOrderLines.id, poLine.id));
+
+        const [item] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, poLine.itemId));
+        if (!item) throw new Error(`Inventory item ${poLine.itemId} not found`);
+        if (!item.glAssetAccountId) throw new Error(`Item "${item.name}" has no GL asset account configured — set one before receiving stock`);
+
+        const priorRows = await tx.select().from(stockLedger).where(and(eq(stockLedger.itemId, poLine.itemId), eq(stockLedger.storeId, data.storeId)));
+        const currentBalance = priorRows.reduce((s, r) => s + (r.direction === "in" ? r.quantity : -r.quantity), 0);
+        const balanceAfter = currentBalance + recvLine.quantityReceived;
+        await tx.insert(stockLedger).values({
+          itemId: poLine.itemId, storeId: data.storeId, transactionType: "goods_receipt",
+          quantity: recvLine.quantityReceived, direction: "in", unitCost: recvLine.unitCost,
+          referenceType: "goods_receipt", referenceId: grnRow.id, balanceAfter,
+          notes: data.notes, createdBy: data.receivedBy, createdAt: Date.now(),
+        } as InsertStockLedger);
+
+        await tx.update(inventoryItems).set({ lastUnitCost: recvLine.unitCost }).where(eq(inventoryItems.id, poLine.itemId));
+
+        const lineValue = recvLine.quantityReceived * recvLine.unitCost;
+        totalValue += lineValue;
+        const existingAssetLine = lines.find((l) => l.accountId === item.glAssetAccountId);
+        if (existingAssetLine) existingAssetLine.debit += lineValue;
+        else lines.push({ accountId: item.glAssetAccountId as number, debit: lineValue, credit: 0, description: `Goods receipt ${grnNumber} — ${item.name}` });
+      }
+
+      const refreshedLines = await tx.select().from(purchaseOrderLines).where(eq(purchaseOrderLines.poId, poId));
+      const allReceived = refreshedLines.every((l) => l.quantityReceived >= l.quantity - 0.0001);
+      await tx.update(purchaseOrders).set({ status: allReceived ? "received" : "partially_received" }).where(eq(purchaseOrders.id, poId));
+
+      return { grn: grnRow, jeLines: lines, totalReceivedValue: totalValue };
+    });
+
+    if (totalReceivedValue > 0) {
+      jeLines.push({ accountId: po.payableAccountId, debit: 0, credit: totalReceivedValue, description: `Goods receipt ${grnNumber} — PO ${po.poNumber}` });
+      await this.postJournalEntry(
+        {
+          entryDate: new Date().toISOString().slice(0, 10),
+          description: `Goods receipt ${grnNumber} against PO ${po.poNumber}`,
+          sourceModule: "inventory",
+          sourceId: grn.id,
+          createdBy: data.receivedBy,
+          createdAt: Date.now(),
+        } as any,
+        jeLines,
+      );
+    }
+
+    return grn;
+  }
+  async receivePurchaseOrderDirect(poId: number, receivedBy: string) {
+    const po = await this.getPurchaseOrder(poId);
+    if (!po) return undefined;
+    if (po.type !== "direct") throw new Error("Only a direct-type purchase order can be received without stock movement — use goods receipt instead");
+    if (po.status !== "approved") throw new Error(`Cannot receive a purchase order that is ${po.status.replace("_", " ")}`);
+    if (!po.expenseAccountId) throw new Error("This purchase order has no expense account configured");
+    await this.postJournalEntry(
+      {
+        entryDate: new Date().toISOString().slice(0, 10),
+        description: `Direct purchase order ${po.poNumber} received`,
+        sourceModule: "purchasing",
+        sourceId: po.id,
+        createdBy: receivedBy,
+        createdAt: Date.now(),
+      } as any,
+      [
+        { accountId: po.expenseAccountId, debit: po.totalAmount, credit: 0, description: `Direct PO ${po.poNumber}` },
+        { accountId: po.payableAccountId, debit: 0, credit: po.totalAmount, description: `Direct PO ${po.poNumber}` },
+      ],
+    );
+    return (await db.update(purchaseOrders).set({ status: "received" }).where(eq(purchaseOrders.id, poId)).returning())[0];
+  }
+
+  async listGoodsReceipts() {
+    return db.select().from(goodsReceipts).orderBy(desc(goodsReceipts.id));
+  }
+  async getGoodsReceipt(id: number) {
+    return (await db.select().from(goodsReceipts).where(eq(goodsReceipts.id, id)))[0];
+  }
+  async getGoodsReceiptLines(grnId: number) {
+    return db.select().from(goodsReceiptLines).where(eq(goodsReceiptLines.grnId, grnId));
+  }
+
+  // ================= Phase 2: Internal Requisitions =================
+  async listInternalRequisitions() {
+    return db.select().from(internalRequisitions).orderBy(desc(internalRequisitions.id));
+  }
+  async getInternalRequisition(id: number) {
+    return (await db.select().from(internalRequisitions).where(eq(internalRequisitions.id, id)))[0];
+  }
+  async getInternalRequisitionLines(requisitionId: number) {
+    return db.select().from(internalRequisitionLines).where(eq(internalRequisitionLines.requisitionId, requisitionId));
+  }
+  async createInternalRequisition(data: Omit<InsertInternalRequisition, "irNumber">, lines: Omit<InsertInternalRequisitionLine, "requisitionId">[]) {
+    if (!lines || lines.length === 0) throw new Error("An internal requisition needs at least one line");
+    if (data.type === "permanent" && !data.expenseAccountId) {
+      throw new Error("A permanent-type internal requisition requires an expense account");
+    }
+    const irNumber = await this.getNextSequenceNumber("internal_requisition");
+    return db.transaction(async (tx) => {
+      const [created] = await tx.insert(internalRequisitions).values({ ...data, irNumber, status: "draft" } as InsertInternalRequisition).returning();
+      for (const line of lines) {
+        await tx.insert(internalRequisitionLines).values({ ...line, requisitionId: created.id, quantityIssued: 0, quantityReturned: 0 });
+      }
+      return created;
+    });
+  }
+  async updateInternalRequisition(id: number, data: Partial<InsertInternalRequisition>, lines?: Omit<InsertInternalRequisitionLine, "requisitionId">[]) {
+    const current = await this.getInternalRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "draft") throw new Error(`Cannot edit an internal requisition that is ${current.status.replace("_", " ")}`);
+    return db.transaction(async (tx) => {
+      const [updated] = await tx.update(internalRequisitions).set(data).where(eq(internalRequisitions.id, id)).returning();
+      if (lines) {
+        await tx.delete(internalRequisitionLines).where(eq(internalRequisitionLines.requisitionId, id));
+        for (const line of lines) {
+          await tx.insert(internalRequisitionLines).values({ ...line, requisitionId: id, quantityIssued: 0, quantityReturned: 0 });
+        }
+      }
+      return updated;
+    });
+  }
+  async submitInternalRequisition(id: number) {
+    const current = await this.getInternalRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "draft") throw new Error(`Only a draft internal requisition can be submitted (this one is ${current.status.replace("_", " ")})`);
+    return (await db.update(internalRequisitions).set({ status: "pending_approval" }).where(eq(internalRequisitions.id, id)).returning())[0];
+  }
+  async approveInternalRequisition(id: number, approvedBy: string) {
+    const current = await this.getInternalRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "pending_approval" && current.status !== "draft") {
+      throw new Error(`Cannot approve an internal requisition that is ${current.status.replace("_", " ")}`);
+    }
+    return (await db.update(internalRequisitions).set({ status: "approved", approvedBy, approvedAt: Date.now() }).where(eq(internalRequisitions.id, id)).returning())[0];
+  }
+  async rejectInternalRequisition(id: number, reason: string) {
+    const current = await this.getInternalRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "pending_approval" && current.status !== "draft") {
+      throw new Error(`Cannot reject an internal requisition that is ${current.status.replace("_", " ")}`);
+    }
+    return (await db.update(internalRequisitions).set({ status: "rejected", rejectedReason: reason }).where(eq(internalRequisitions.id, id)).returning())[0];
+  }
+  async issueInternalRequisition(id: number, issuedBy: string) {
+    const current = await this.getInternalRequisition(id);
+    if (!current) throw new Error("Internal requisition not found");
+    if (current.status !== "approved") throw new Error(`Cannot issue an internal requisition that is ${current.status.replace("_", " ")}`);
+    const lines = await this.getInternalRequisitionLines(id);
+    if (lines.length === 0) throw new Error("Cannot issue an internal requisition with no lines");
+
+    const jeLines: { accountId: number; debit: number; credit: number; description: string }[] = [];
+    let totalValue = 0;
+
+    await db.transaction(async (tx) => {
+      for (const line of lines) {
+        const [item] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, line.itemId));
+        if (!item) throw new Error(`Inventory item ${line.itemId} not found`);
+        const priorRows = await tx.select().from(stockLedger).where(and(eq(stockLedger.itemId, line.itemId), eq(stockLedger.storeId, current.storeId)));
+        const currentBalance = priorRows.reduce((s, r) => s + (r.direction === "in" ? r.quantity : -r.quantity), 0);
+        if (currentBalance < line.quantityRequested - 0.0001) {
+          throw new Error(`Insufficient stock for "${item.name}" — available ${currentBalance}, requested ${line.quantityRequested}`);
+        }
+        const balanceAfter = currentBalance - line.quantityRequested;
+        await tx.insert(stockLedger).values({
+          itemId: line.itemId, storeId: current.storeId,
+          transactionType: current.type === "loan" ? "loan_issue" : "internal_issue",
+          quantity: line.quantityRequested, direction: "out", unitCost: item.lastUnitCost,
+          referenceType: "internal_requisition", referenceId: current.id,
+          balanceAfter, notes: null, createdBy: issuedBy, createdAt: Date.now(),
+        } as InsertStockLedger);
+        await tx.update(internalRequisitionLines).set({ quantityIssued: line.quantityRequested }).where(eq(internalRequisitionLines.id, line.id));
+
+        if (current.type === "permanent") {
+          const lineValue = line.quantityRequested * item.lastUnitCost;
+          totalValue += lineValue;
+          if (!item.glAssetAccountId) throw new Error(`Item "${item.name}" has no GL asset account configured`);
+          const existing = jeLines.find((l) => l.accountId === item.glAssetAccountId);
+          if (existing) existing.credit += lineValue;
+          else jeLines.push({ accountId: item.glAssetAccountId as number, debit: 0, credit: lineValue, description: `Internal requisition ${current.irNumber} — ${item.name}` });
+        }
+      }
+      await tx.update(internalRequisitions).set({ status: "issued" }).where(eq(internalRequisitions.id, id));
+    });
+
+    if (current.type === "permanent" && totalValue > 0) {
+      if (!current.expenseAccountId) throw new Error("This requisition has no expense account configured");
+      jeLines.unshift({ accountId: current.expenseAccountId, debit: totalValue, credit: 0, description: `Internal requisition ${current.irNumber}` });
+      await this.postJournalEntry(
+        {
+          entryDate: new Date().toISOString().slice(0, 10),
+          description: `Internal requisition ${current.irNumber} issued`,
+          sourceModule: "internal-requisitions",
+          sourceId: current.id,
+          createdBy: issuedBy,
+          createdAt: Date.now(),
+        } as any,
+        jeLines,
+      );
+    }
+
+    return this.getInternalRequisition(id);
+  }
+  async returnLoanItem(lineId: number, data: { quantityReturned: number; returnedBy: string; condition?: string; notes?: string }) {
+    const [line] = await db.select().from(internalRequisitionLines).where(eq(internalRequisitionLines.id, lineId));
+    if (!line) throw new Error("Internal requisition line not found");
+    const [requisition] = await db.select().from(internalRequisitions).where(eq(internalRequisitions.id, line.requisitionId));
+    if (!requisition) throw new Error("Internal requisition not found");
+    if (requisition.type !== "loan") throw new Error("Only loan-type internal requisitions accept returns");
+    if (requisition.status !== "issued") throw new Error(`Cannot return items for a requisition that is ${requisition.status.replace("_", " ")}`);
+    const outstandingQty = line.quantityIssued - line.quantityReturned;
+    if (data.quantityReturned > outstandingQty + 0.0001) {
+      throw new Error(`Cannot return ${data.quantityReturned} — only ${outstandingQty} outstanding on loan`);
+    }
+    return db.transaction(async (tx) => {
+      const priorRows = await tx.select().from(stockLedger).where(and(eq(stockLedger.itemId, line.itemId), eq(stockLedger.storeId, requisition.storeId)));
+      const currentBalance = priorRows.reduce((s, r) => s + (r.direction === "in" ? r.quantity : -r.quantity), 0);
+      const balanceAfter = currentBalance + data.quantityReturned;
+      await tx.insert(stockLedger).values({
+        itemId: line.itemId, storeId: requisition.storeId, transactionType: "loan_return",
+        quantity: data.quantityReturned, direction: "in", unitCost: 0,
+        referenceType: "internal_requisition", referenceId: requisition.id,
+        balanceAfter, notes: data.notes, createdBy: data.returnedBy, createdAt: Date.now(),
+      } as InsertStockLedger);
+      await tx.update(internalRequisitionLines).set({ quantityReturned: line.quantityReturned + data.quantityReturned }).where(eq(internalRequisitionLines.id, lineId));
+      const [created] = await tx.insert(loanReturns).values({
+        requisitionLineId: lineId, quantityReturned: data.quantityReturned, returnedAt: Date.now(),
+        returnedBy: data.returnedBy, condition: data.condition, notes: data.notes,
+      } as InsertLoanReturn).returning();
+      return created;
+    });
+  }
+  async cancelInternalRequisition(id: number, reason: string) {
+    const current = await this.getInternalRequisition(id);
+    if (!current) return undefined;
+    if (current.status === "issued") throw new Error("Cannot cancel an internal requisition that has already been issued");
+    if (current.status === "cancelled") throw new Error("This internal requisition is already cancelled");
+    return (await db.update(internalRequisitions).set({ status: "cancelled", cancelReason: reason }).where(eq(internalRequisitions.id, id)).returning())[0];
   }
 }
 

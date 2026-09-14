@@ -56,6 +56,7 @@ export function toSafeUser(user: {
   canManageTablesList?: number;
   canManageMenuItemsList?: number;
   canCloseMaintenanceIssues?: number;
+  canAdjustInventory?: number;
   active: number;
   createdAt: number;
 }): SafeUser {
@@ -69,6 +70,7 @@ export function toSafeUser(user: {
     canManageTablesList: user.canManageTablesList ?? 0,
     canManageMenuItemsList: user.canManageMenuItemsList ?? 0,
     canCloseMaintenanceIssues: user.canCloseMaintenanceIssues ?? 0,
+    canAdjustInventory: user.canAdjustInventory ?? 0,
     active: user.active,
     createdAt: user.createdAt,
   };
@@ -180,6 +182,17 @@ export function requireCanCloseMaintenanceIssues(req: Request, res: Response, ne
   if (!user) return res.status(401).json({ error: "Not signed in" });
   if (user.isAdmin || user.canCloseMaintenanceIssues) return next();
   return res.status(403).json({ error: "You don't have rights to close maintenance issues" });
+}
+
+// Requires the signed-in user to be an administrator OR to hold the dedicated
+// "adjust inventory" right — used to gate manual stock adjustments and the
+// cancellation of Purchase Requisitions, Purchase Orders, and Internal
+// Requisitions, separate from the module access needed to view/create them.
+export function requireCanAdjustInventory(req: Request, res: Response, next: NextFunction) {
+  const user = (req as any).user;
+  if (!user) return res.status(401).json({ error: "Not signed in" });
+  if (user.isAdmin || user.canAdjustInventory) return next();
+  return res.status(403).json({ error: "You don't have rights to adjust inventory or cancel this document" });
 }
 
 // Settings is restricted to the literal "admin" account only, per governance

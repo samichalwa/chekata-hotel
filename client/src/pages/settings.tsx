@@ -552,6 +552,7 @@ const userFormSchema = z.object({
   canManageTablesList: z.boolean(),
   canManageMenuItemsList: z.boolean(),
   canCloseMaintenanceIssues: z.boolean(),
+  canAdjustInventory: z.boolean(),
 }).refine((v) => v.isAdmin || STAFF_EMAIL_REGEX.test(v.username), {
   message: "Staff accounts must use a @thechekata.com email address",
   path: ["username"],
@@ -574,9 +575,9 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
           fullName: user.fullName, username: user.username, password: "", isAdmin: !!user.isAdmin, active: !!user.active,
           permissions: JSON.parse(user.permissions || "[]"), canEditMovieBookings: !!user.canEditMovieBookings,
           canManageTablesList: !!user.canManageTablesList, canManageMenuItemsList: !!user.canManageMenuItemsList,
-          canCloseMaintenanceIssues: !!user.canCloseMaintenanceIssues,
+          canCloseMaintenanceIssues: !!user.canCloseMaintenanceIssues, canAdjustInventory: !!user.canAdjustInventory,
         }
-      : { fullName: "", username: "", password: "", isAdmin: false, active: true, permissions: [], canEditMovieBookings: false, canManageTablesList: false, canManageMenuItemsList: false, canCloseMaintenanceIssues: false },
+      : { fullName: "", username: "", password: "", isAdmin: false, active: true, permissions: [], canEditMovieBookings: false, canManageTablesList: false, canManageMenuItemsList: false, canCloseMaintenanceIssues: false, canAdjustInventory: false },
   });
 
   const isAdminWatch = form.watch("isAdmin");
@@ -584,6 +585,9 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
   const hasMovieRoomAccess = isAdminWatch || (permissionsWatch as string[]).includes("movie-room");
   const hasListsAccess = isAdminWatch || (permissionsWatch as string[]).includes("lists");
   const hasMaintenanceAccess = isAdminWatch || (permissionsWatch as string[]).includes("maintenance");
+  const hasInventoryAccess = isAdminWatch || (permissionsWatch as string[]).includes("inventory");
+  const hasPurchasingAccess = isAdminWatch || (permissionsWatch as string[]).includes("purchasing");
+  const hasInternalRequisitionsAccess = isAdminWatch || (permissionsWatch as string[]).includes("internal-requisitions");
 
   const mutation = useMutation({
     mutationFn: async (values: UserFormValues) => {
@@ -716,6 +720,19 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
                   </div>
                   <FormControl>
                     <Switch checked={isAdminWatch || field.value} disabled={isAdminWatch} onCheckedChange={field.onChange} data-testid="switch-user-can-close-maintenance-issues" />
+                  </FormControl>
+                </FormItem>
+              )} />
+            )}
+            {(hasInventoryAccess || hasPurchasingAccess || hasInternalRequisitionsAccess) && (
+              <FormField control={form.control} name="canAdjustInventory" render={({ field }) => (
+                <FormItem className="flex items-center justify-between rounded-md border border-border p-3">
+                  <div>
+                    <FormLabel className="mb-0">Can adjust inventory &amp; cancel documents</FormLabel>
+                    <FormDescription>Allows manual stock adjustments and cancelling Purchase Requisitions, Purchase Orders, and Internal Requisitions. Admins always have this right.</FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch checked={isAdminWatch || field.value} disabled={isAdminWatch} onCheckedChange={field.onChange} data-testid="switch-user-can-adjust-inventory" />
                   </FormControl>
                 </FormItem>
               )} />

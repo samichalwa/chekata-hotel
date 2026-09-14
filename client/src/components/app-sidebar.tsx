@@ -15,6 +15,9 @@ import {
   ClipboardList,
   Wallet,
   ShieldCheck,
+  Package,
+  ShoppingCart,
+  ClipboardCheck,
 } from "lucide-react";
 import {
   Sidebar,
@@ -46,6 +49,9 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Reports", url: "/reports", icon: FileBarChart, key: "reports" },
   { title: "Invoices & Receipts", url: "/documents", icon: FileText, key: "documents" },
   { title: "Finance", url: "/finance", icon: Wallet, key: "finance" },
+  { title: "Inventory", url: "/inventory", icon: Package, key: "inventory" },
+  { title: "Purchasing", url: "/purchasing", icon: ShoppingCart, key: "purchasing" },
+  { title: "Internal Requisitions", url: "/internal-requisitions", icon: ClipboardCheck, key: "internal-requisitions" },
   { title: "System Administration", url: "/system-admin", icon: ShieldCheck, key: "system-admin" },
   { title: "Settings", url: "/settings", icon: SettingsIcon, key: "settings" },
 ];

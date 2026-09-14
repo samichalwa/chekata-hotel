@@ -26,6 +26,9 @@ import Documents from "@/pages/documents";
 import SettingsPage from "@/pages/settings";
 import Finance from "@/pages/finance";
 import SystemAdmin from "@/pages/system-admin";
+import Inventory from "@/pages/inventory";
+import Purchasing from "@/pages/purchasing";
+import InternalRequisitions from "@/pages/internal-requisitions";
 import LoginPage from "@/pages/login";
 import SetupPage from "@/pages/setup";
 import ResetPasswordPage from "@/pages/reset-password";
@@ -68,6 +71,9 @@ function AppRouter() {
       <Route path="/reports" component={() => <Guarded moduleKey="reports" component={Reports} />} />
       <Route path="/documents" component={() => <Guarded moduleKey="documents" component={Documents} />} />
       <Route path="/finance" component={() => <Guarded moduleKey="finance" component={Finance} />} />
+      <Route path="/inventory" component={() => <Guarded moduleKey="inventory" component={Inventory} />} />
+      <Route path="/purchasing" component={() => <Guarded moduleKey="purchasing" component={Purchasing} />} />
+      <Route path="/internal-requisitions" component={() => <Guarded moduleKey="internal-requisitions" component={InternalRequisitions} />} />
       <Route path="/system-admin" component={() => <Guarded moduleKey="system-admin" component={SystemAdmin} />} />
       <Route path="/settings" component={() => <Guarded moduleKey="settings" component={SettingsPage} requireAdminUsername />} />
       <Route component={NotFound} />

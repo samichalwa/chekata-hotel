@@ -325,6 +325,9 @@ export const MODULE_KEYS = [
   "settings",
   "finance",
   "system-admin",
+  "inventory",
+  "purchasing",
+  "internal-requisitions",
 ] as const;
 export type ModuleKey = typeof MODULE_KEYS[number];
 
@@ -343,6 +346,9 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   settings: "Settings",
   finance: "Finance",
   "system-admin": "System Administration",
+  inventory: "Inventory",
+  purchasing: "Purchasing",
+  "internal-requisitions": "Internal Requisitions",
 };
 
 // Tables that can be individually write-restricted per user via the System
@@ -368,10 +374,13 @@ export const PERMISSION_TABLE_LABELS: Record<PermissionTableKey, string> = {
 // Document types the Approval Matrix can route. Grows in later phases
 // (purchase_order, internal_requisition, leave_request join once those
 // modules exist).
-export const APPROVAL_DOCUMENT_TYPES = ["payment_voucher"] as const;
+export const APPROVAL_DOCUMENT_TYPES = ["payment_voucher", "purchase_requisition", "purchase_order", "internal_requisition"] as const;
 export type ApprovalDocumentType = typeof APPROVAL_DOCUMENT_TYPES[number];
 export const APPROVAL_DOCUMENT_TYPE_LABELS: Record<ApprovalDocumentType, string> = {
   payment_voucher: "Payment Voucher",
+  purchase_requisition: "Purchase Requisition",
+  purchase_order: "Purchase Order",
+  internal_requisition: "Internal Requisition",
 };
 
 // ---------- Finance: Chart of Accounts ----------
@@ -601,6 +610,7 @@ export const users = pgTable("users", {
   canManageTablesList: integer("can_manage_tables_list").notNull().default(0), // Lists module: edit the Tables list
   canManageMenuItemsList: integer("can_manage_menu_items_list").notNull().default(0), // Lists module: edit the Menu Items list
   canCloseMaintenanceIssues: integer("can_close_maintenance_issues").notNull().default(0), // Maintenance module: close a reported issue
+  canAdjustInventory: integer("can_adjust_inventory").notNull().default(0), // Inventory/Purchasing/Internal Requisitions: cancel PR/PO/IR and make manual stock adjustments
   active: integer("active").notNull().default(1),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
@@ -640,3 +650,238 @@ export const insertTaxSchema = createInsertSchema(taxes).omit({ id: true });
 export type InsertTax = z.infer<typeof insertTaxSchema>;
 export type Tax = typeof taxes.$inferSelect;
 export type TaxCategory = "accommodation" | "facilities" | "bar" | "restaurant";
+
+// ============================================================================
+// Phase 2: Inventory, Purchasing, Internal Requisitions
+// ============================================================================
+
+// ---------- Inventory: Stores ----------
+export const stores = pgTable("stores", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  location: text("location"),
+  description: text("description"),
+  active: integer("active").notNull().default(1),
+});
+export const insertStoreSchema = createInsertSchema(stores).omit({ id: true });
+export type InsertStore = z.infer<typeof insertStoreSchema>;
+export type Store = typeof stores.$inferSelect;
+
+// ---------- Inventory: Items ----------
+// category / unitOfMeasure are free-text codes drawn from admin-editable
+// definition lists ("inventory_category", "unit_of_measure") — never hardcoded.
+export const inventoryItems = pgTable("inventory_items", {
+  id: serial("id").primaryKey(),
+  code: text("code").notNull().unique(), // SKU
+  name: text("name").notNull(),
+  category: text("category"),
+  unitOfMeasure: text("unit_of_measure").notNull(),
+  reorderLevel: real("reorder_level").notNull().default(0),
+  lastUnitCost: real("last_unit_cost").notNull().default(0), // updated on every goods receipt; used to value permanent-issue GL postings
+  glAssetAccountId: integer("gl_asset_account_id"), // Chart of Accounts asset account this item's stock value posts to (mirrors bankAccounts.glAccountId)
+  active: integer("active").notNull().default(1),
+  notes: text("notes"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertInventoryItemSchema = createInsertSchema(inventoryItems).omit({ id: true });
+export type InsertInventoryItem = z.infer<typeof insertInventoryItemSchema>;
+export type InventoryItem = typeof inventoryItems.$inferSelect;
+
+// ---------- Inventory: Stock Ledger (perpetual, one row per movement) ----------
+export const STOCK_TRANSACTION_TYPES = ["goods_receipt", "internal_issue", "loan_issue", "loan_return", "adjustment"] as const;
+export type StockTransactionType = typeof STOCK_TRANSACTION_TYPES[number];
+
+export const stockLedger = pgTable("stock_ledger", {
+  id: serial("id").primaryKey(),
+  itemId: integer("item_id").notNull(),
+  storeId: integer("store_id").notNull(),
+  transactionType: text("transaction_type").notNull(), // one of STOCK_TRANSACTION_TYPES
+  quantity: real("quantity").notNull(), // always positive; direction says which way it moved
+  direction: text("direction").notNull(), // in | out
+  unitCost: real("unit_cost").notNull().default(0),
+  referenceType: text("reference_type"), // goods_receipt | internal_requisition | adjustment
+  referenceId: integer("reference_id"),
+  balanceAfter: real("balance_after").notNull(), // running quantity balance for this item+store after this movement
+  notes: text("notes"),
+  createdBy: text("created_by").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertStockLedgerSchema = createInsertSchema(stockLedger).omit({ id: true });
+export type InsertStockLedger = z.infer<typeof insertStockLedgerSchema>;
+export type StockLedgerEntry = typeof stockLedger.$inferSelect;
+
+// ---------- Purchasing: Suppliers ----------
+export const suppliers = pgTable("suppliers", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  contactPerson: text("contact_person"),
+  phone: text("phone"),
+  email: text("email"),
+  paymentTerms: text("payment_terms"),
+  active: integer("active").notNull().default(1),
+  notes: text("notes"),
+});
+export const insertSupplierSchema = createInsertSchema(suppliers).omit({ id: true });
+export type InsertSupplier = z.infer<typeof insertSupplierSchema>;
+export type Supplier = typeof suppliers.$inferSelect;
+
+// ---------- Purchasing: Purchase Requisitions ----------
+// type "stock" replenishes a store (feeds Goods Receipt); type "direct" is a
+// one-off expense purchase that skips stock entirely once its PO is received.
+export const PR_TYPES = ["stock", "direct"] as const;
+export type PrType = typeof PR_TYPES[number];
+export const PR_STATUSES = ["draft", "pending_approval", "approved", "rejected", "cancelled"] as const;
+export type PrStatus = typeof PR_STATUSES[number];
+
+export const purchaseRequisitions = pgTable("purchase_requisitions", {
+  id: serial("id").primaryKey(),
+  prNumber: text("pr_number").notNull().unique(),
+  requestedBy: text("requested_by").notNull(),
+  department: text("department"),
+  purpose: text("purpose").notNull(),
+  type: text("type").notNull().default("stock"), // stock | direct
+  status: text("status").notNull().default("draft"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  approvedBy: text("approved_by"),
+  approvedAt: bigint("approved_at", { mode: "number" }),
+  rejectedReason: text("rejected_reason"),
+  cancelReason: text("cancel_reason"),
+});
+export const insertPurchaseRequisitionSchema = createInsertSchema(purchaseRequisitions).omit({ id: true });
+export type InsertPurchaseRequisition = z.infer<typeof insertPurchaseRequisitionSchema>;
+export type PurchaseRequisition = typeof purchaseRequisitions.$inferSelect;
+
+export const purchaseRequisitionLines = pgTable("purchase_requisition_lines", {
+  id: serial("id").primaryKey(),
+  requisitionId: integer("requisition_id").notNull(),
+  itemId: integer("item_id"), // nullable — a direct-type line may describe a non-catalogued purchase
+  description: text("description").notNull(),
+  quantity: real("quantity").notNull(),
+  unitOfMeasure: text("unit_of_measure"),
+  estimatedUnitCost: real("estimated_unit_cost").notNull().default(0),
+  notes: text("notes"),
+});
+export const insertPurchaseRequisitionLineSchema = createInsertSchema(purchaseRequisitionLines).omit({ id: true });
+export type InsertPurchaseRequisitionLine = z.infer<typeof insertPurchaseRequisitionLineSchema>;
+export type PurchaseRequisitionLine = typeof purchaseRequisitionLines.$inferSelect;
+
+// ---------- Purchasing: Purchase Orders ----------
+export const PO_STATUSES = ["draft", "approved", "partially_received", "received", "cancelled"] as const;
+export type PoStatus = typeof PO_STATUSES[number];
+
+export const purchaseOrders = pgTable("purchase_orders", {
+  id: serial("id").primaryKey(),
+  poNumber: text("po_number").notNull().unique(),
+  requisitionId: integer("requisition_id"), // nullable — a PO can also be raised directly without a PR
+  supplierId: integer("supplier_id").notNull(),
+  type: text("type").notNull().default("stock"), // stock | direct
+  status: text("status").notNull().default("draft"),
+  payableAccountId: integer("payable_account_id").notNull(), // liability account, credit side on receipt
+  expenseAccountId: integer("expense_account_id"), // required only for type "direct"; debit side on receipt
+  totalAmount: real("total_amount").notNull().default(0),
+  createdBy: text("created_by").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  approvedBy: text("approved_by"),
+  approvedAt: bigint("approved_at", { mode: "number" }),
+  cancelReason: text("cancel_reason"),
+  notes: text("notes"),
+});
+export const insertPurchaseOrderSchema = createInsertSchema(purchaseOrders).omit({ id: true });
+export type InsertPurchaseOrder = z.infer<typeof insertPurchaseOrderSchema>;
+export type PurchaseOrder = typeof purchaseOrders.$inferSelect;
+
+export const purchaseOrderLines = pgTable("purchase_order_lines", {
+  id: serial("id").primaryKey(),
+  poId: integer("po_id").notNull(),
+  itemId: integer("item_id"),
+  description: text("description").notNull(),
+  quantity: real("quantity").notNull(),
+  unitOfMeasure: text("unit_of_measure"),
+  unitCost: real("unit_cost").notNull().default(0),
+  lineTotal: real("line_total").notNull().default(0),
+  quantityReceived: real("quantity_received").notNull().default(0),
+});
+export const insertPurchaseOrderLineSchema = createInsertSchema(purchaseOrderLines).omit({ id: true });
+export type InsertPurchaseOrderLine = z.infer<typeof insertPurchaseOrderLineSchema>;
+export type PurchaseOrderLine = typeof purchaseOrderLines.$inferSelect;
+
+// ---------- Purchasing: Goods Receipts (stock-type POs only) ----------
+export const goodsReceipts = pgTable("goods_receipts", {
+  id: serial("id").primaryKey(),
+  grnNumber: text("grn_number").notNull().unique(),
+  poId: integer("po_id").notNull(),
+  storeId: integer("store_id").notNull(),
+  receivedBy: text("received_by").notNull(),
+  receivedAt: bigint("received_at", { mode: "number" }).notNull(),
+  status: text("status").notNull().default("completed"), // completed | cancelled
+  notes: text("notes"),
+});
+export const insertGoodsReceiptSchema = createInsertSchema(goodsReceipts).omit({ id: true });
+export type InsertGoodsReceipt = z.infer<typeof insertGoodsReceiptSchema>;
+export type GoodsReceipt = typeof goodsReceipts.$inferSelect;
+
+export const goodsReceiptLines = pgTable("goods_receipt_lines", {
+  id: serial("id").primaryKey(),
+  grnId: integer("grn_id").notNull(),
+  poLineId: integer("po_line_id").notNull(),
+  itemId: integer("item_id").notNull(),
+  quantityReceived: real("quantity_received").notNull(),
+  unitCost: real("unit_cost").notNull().default(0),
+});
+export const insertGoodsReceiptLineSchema = createInsertSchema(goodsReceiptLines).omit({ id: true });
+export type InsertGoodsReceiptLine = z.infer<typeof insertGoodsReceiptLineSchema>;
+export type GoodsReceiptLine = typeof goodsReceiptLines.$inferSelect;
+
+// ---------- Internal Requisitions ----------
+// type "permanent" consumes stock and posts an expense JE; type "loan" only
+// relocates stock (goods remain company property) and posts no JE at all.
+export const IR_TYPES = ["permanent", "loan"] as const;
+export type IrType = typeof IR_TYPES[number];
+export const IR_STATUSES = ["draft", "pending_approval", "approved", "rejected", "cancelled", "issued"] as const;
+export type IrStatus = typeof IR_STATUSES[number];
+
+export const internalRequisitions = pgTable("internal_requisitions", {
+  id: serial("id").primaryKey(),
+  irNumber: text("ir_number").notNull().unique(),
+  requestedBy: text("requested_by").notNull(),
+  department: text("department"),
+  storeId: integer("store_id").notNull(),
+  type: text("type").notNull().default("permanent"), // permanent | loan
+  expenseAccountId: integer("expense_account_id"), // required for type "permanent"
+  status: text("status").notNull().default("draft"),
+  purpose: text("purpose").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  approvedBy: text("approved_by"),
+  approvedAt: bigint("approved_at", { mode: "number" }),
+  rejectedReason: text("rejected_reason"),
+  cancelReason: text("cancel_reason"),
+});
+export const insertInternalRequisitionSchema = createInsertSchema(internalRequisitions).omit({ id: true });
+export type InsertInternalRequisition = z.infer<typeof insertInternalRequisitionSchema>;
+export type InternalRequisition = typeof internalRequisitions.$inferSelect;
+
+export const internalRequisitionLines = pgTable("internal_requisition_lines", {
+  id: serial("id").primaryKey(),
+  requisitionId: integer("requisition_id").notNull(),
+  itemId: integer("item_id").notNull(),
+  quantityRequested: real("quantity_requested").notNull(),
+  quantityIssued: real("quantity_issued").notNull().default(0),
+  quantityReturned: real("quantity_returned").notNull().default(0),
+  notes: text("notes"),
+});
+export const insertInternalRequisitionLineSchema = createInsertSchema(internalRequisitionLines).omit({ id: true });
+export type InsertInternalRequisitionLine = z.infer<typeof insertInternalRequisitionLineSchema>;
+export type InternalRequisitionLine = typeof internalRequisitionLines.$inferSelect;
+
+export const loanReturns = pgTable("loan_returns", {
+  id: serial("id").primaryKey(),
+  requisitionLineId: integer("requisition_line_id").notNull(),
+  quantityReturned: real("quantity_returned").notNull(),
+  returnedAt: bigint("returned_at", { mode: "number" }).notNull(),
+  returnedBy: text("returned_by").notNull(),
+  condition: text("condition"),
+  notes: text("notes"),
+});
+export const insertLoanReturnSchema = createInsertSchema(loanReturns).omit({ id: true });
+export type InsertLoanReturn = z.infer<typeof insertLoanReturnSchema>;
+export type LoanReturn = typeof loanReturns.$inferSelect;
