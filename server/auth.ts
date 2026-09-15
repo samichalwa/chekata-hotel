@@ -72,6 +72,8 @@ export function toSafeUser(user: {
   canManageMenuItemsList?: number;
   canCloseMaintenanceIssues?: number;
   canAdjustInventory?: number;
+  canAccessLive?: number;
+  canAccessTest?: number;
   active: number;
   createdAt: number;
 }): SafeUser {
@@ -86,6 +88,8 @@ export function toSafeUser(user: {
     canManageMenuItemsList: user.canManageMenuItemsList ?? 0,
     canCloseMaintenanceIssues: user.canCloseMaintenanceIssues ?? 0,
     canAdjustInventory: user.canAdjustInventory ?? 0,
+    canAccessLive: user.canAccessLive ?? 1,
+    canAccessTest: user.canAccessTest ?? 0,
     active: user.active,
     createdAt: user.createdAt,
   };
@@ -137,12 +141,17 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     req.session.userId = undefined;
     return res.status(401).json({ error: "Not signed in" });
   }
-  // Test is admin-only, enforced again here (not just at login) so an
-  // account that loses admin rights mid-session is immediately cut off from
-  // Test on its very next request, rather than only at its next login.
-  if (req.session.environment === "test" && !user.isAdmin) {
+  // Environment access is enforced again here (not just at login) so an
+  // account that loses canAccessTest/canAccessLive mid-session is immediately
+  // cut off on its very next request, rather than only at its next login.
+  // Admins always bypass both checks.
+  if (req.session.environment === "test" && !user.isAdmin && !user.canAccessTest) {
     req.session.userId = undefined;
-    return res.status(403).json({ error: "Test environment access is limited to administrators." });
+    return res.status(403).json({ error: "You don't have Test environment access. Ask an administrator to grant it." });
+  }
+  if (req.session.environment !== "test" && !user.isAdmin && !user.canAccessLive) {
+    req.session.userId = undefined;
+    return res.status(403).json({ error: "You don't have Live environment access. Ask an administrator to grant it." });
   }
   (req as any).user = user;
   next();

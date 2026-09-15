@@ -542,6 +542,20 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   assets: "Assets",
 };
 
+// Cosmetic grouping used both by the Settings > Users module-access checkboxes
+// and by the main sidebar navigation, so the two stay in sync automatically.
+// Every module key except "settings" (which is never permission-assignable
+// and always sits outside these categories) must appear in exactly one
+// group here — all 23 operational modules, covered exactly once.
+export const MODULE_CATEGORY_GROUPS: { label: string; keys: ModuleKey[] }[] = [
+  { label: "Operations", keys: ["dashboard", "accommodation", "maintenance"] },
+  { label: "Facilities", keys: ["facilities", "movie-room", "bar-restaurant", "fnb-costing"] },
+  { label: "Finance & Accounting", keys: ["finance", "budgeting", "documents", "expenses"] },
+  { label: "HR", keys: ["staff", "attendance", "leave", "payroll"] },
+  { label: "Supply", keys: ["purchasing", "internal-requisitions", "inventory", "assets"] },
+  { label: "Administration", keys: ["lists", "reports", "tenants", "system-admin"] },
+];
+
 // Tables that can be individually write-restricted per user via the System
 // Administration → Table Permissions grid. A user may have module access
 // but be blocked from writing to a specific table within it. Admins always
@@ -803,6 +817,8 @@ export const users = pgTable("users", {
   canManageMenuItemsList: integer("can_manage_menu_items_list").notNull().default(0), // Lists module: edit the Menu Items list
   canCloseMaintenanceIssues: integer("can_close_maintenance_issues").notNull().default(0), // Maintenance module: close a reported issue
   canAdjustInventory: integer("can_adjust_inventory").notNull().default(0), // Inventory/Purchasing/Internal Requisitions: cancel PR/PO/IR and make manual stock adjustments
+  canAccessLive: integer("can_access_live").notNull().default(1), // Environment access: log in to the Live (production) environment
+  canAccessTest: integer("can_access_test").notNull().default(0), // Environment access: log in to the Test environment. Admins always bypass both checks.
   active: integer("active").notNull().default(1),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });

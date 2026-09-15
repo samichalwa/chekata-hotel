@@ -152,7 +152,7 @@ export default function LoginPage() {
                   </ToggleGroup>
                   {environment === "test" && (
                     <p className="text-xs text-muted-foreground" data-testid="text-test-environment-note">
-                      Test mode is for administrators only and never sends real emails, SMS, or WhatsApp messages.
+                      Test mode never sends real emails, SMS, or WhatsApp messages. Requires Test environment access, granted per-user in Settings (administrators always have it).
                     </p>
                   )}
                 </div>

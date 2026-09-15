@@ -629,6 +629,18 @@ export default function MovieRoom() {
   const sortedBookings = [...bookings].sort((a, b) => b.createdAt - a.createdAt);
   const sortedShows = [...shows].sort((a, b) => (b.showDate + b.startTime).localeCompare(a.showDate + a.startTime));
 
+  // Bookings tab filter: narrow the list down to one specific show (its name +
+  // date/time uniquely identifies it), so front desk can quickly find every
+  // seat booked for a single showing instead of scrolling the full history.
+  const [bookingsShowFilter, setBookingsShowFilter] = useState<string>("all");
+  const showsForFilter = useMemo(
+    () => [...shows].sort((a, b) => (b.showDate + b.startTime).localeCompare(a.showDate + a.startTime)),
+    [shows]
+  );
+  const filteredBookings = bookingsShowFilter === "all"
+    ? sortedBookings
+    : sortedBookings.filter((b) => String(b.showId) === bookingsShowFilter);
+
   // Invoices/credit notes are issued once per multi-seat group (bookingRef), tracked on the
   // lowest-id "primary" seat — mirrors the grouping logic in the credit-note backend route.
   const bookingGroups = useMemo(() => {
@@ -671,13 +683,26 @@ export default function MovieRoom() {
 
         <TabsContent value="bookings" className="mt-4">
           <Card>
-            <div className="flex items-center justify-between p-4 border-b border-card-border">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-card-border">
               <h2 className="text-lg font-semibold">Seat bookings</h2>
+              <Select value={bookingsShowFilter} onValueChange={setBookingsShowFilter}>
+                <SelectTrigger className="w-full sm:w-72" data-testid="select-bookings-show-filter">
+                  <SelectValue placeholder="Filter by show" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All shows</SelectItem>
+                  {showsForFilter.map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>{s.name} — {showTimeLabel(s)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             {bookingsLoading ? (
               <div className="p-6 text-sm text-muted-foreground">Loading bookings\u2026</div>
             ) : sortedBookings.length === 0 ? (
               <div className="p-8 text-center text-sm text-muted-foreground">No seat bookings yet.</div>
+            ) : filteredBookings.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">No bookings match the selected show.</div>
             ) : (
               <div className="overflow-x-auto">
                 <Table>
@@ -694,7 +719,7 @@ export default function MovieRoom() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {sortedBookings.map((b) => {
+                    {filteredBookings.map((b) => {
                       const show = showById.get(b.showId);
                       const group = bookingGroups.get(b.bookingRef) ?? [b];
                       const primary = group[0] ?? b;

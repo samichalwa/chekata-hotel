@@ -21,20 +21,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
 import type { Settings, Tax, SafeUser, ModuleKey } from "@shared/schema";
-import { MODULE_KEYS, MODULE_LABELS } from "@shared/schema";
-
-// Purely visual grouping of the module checkboxes below — does not change the
-// `permissions` data structure or any permission logic, only how the same
-// MODULE_KEYS list is laid out on screen. Every key (except "settings", which
-// is never assignable) must appear in exactly one category here.
-const MODULE_CATEGORY_GROUPS: { label: string; keys: ModuleKey[] }[] = [
-  { label: "Operations", keys: ["dashboard", "accommodation", "maintenance"] },
-  { label: "Facilities", keys: ["facilities", "movie-room", "bar-restaurant", "fnb-costing"] },
-  { label: "Finance & Accounting", keys: ["finance", "budgeting", "documents", "expenses"] },
-  { label: "HR", keys: ["staff", "attendance", "leave", "payroll"] },
-  { label: "Supply", keys: ["purchasing", "internal-requisitions", "inventory", "assets"] },
-  { label: "Administration", keys: ["lists", "reports", "tenants", "system-admin"] },
-];
+import { MODULE_KEYS, MODULE_LABELS, MODULE_CATEGORY_GROUPS } from "@shared/schema";
 
 const settingsFormSchema = z.object({
   hotelName: z.string().min(1, "Hotel name is required"),
@@ -569,6 +556,8 @@ const userFormSchema = z.object({
   canManageMenuItemsList: z.boolean(),
   canCloseMaintenanceIssues: z.boolean(),
   canAdjustInventory: z.boolean(),
+  canAccessLive: z.boolean(),
+  canAccessTest: z.boolean(),
 }).refine((v) => v.isAdmin || STAFF_EMAIL_REGEX.test(v.username), {
   message: "Staff accounts must use a @thechekata.com email address",
   path: ["username"],
@@ -592,8 +581,9 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
           permissions: JSON.parse(user.permissions || "[]"), canEditMovieBookings: !!user.canEditMovieBookings,
           canManageTablesList: !!user.canManageTablesList, canManageMenuItemsList: !!user.canManageMenuItemsList,
           canCloseMaintenanceIssues: !!user.canCloseMaintenanceIssues, canAdjustInventory: !!user.canAdjustInventory,
+          canAccessLive: user.canAccessLive === undefined ? true : !!user.canAccessLive, canAccessTest: !!user.canAccessTest,
         }
-      : { fullName: "", username: "", password: "", isAdmin: false, active: true, permissions: [], canEditMovieBookings: false, canManageTablesList: false, canManageMenuItemsList: false, canCloseMaintenanceIssues: false, canAdjustInventory: false },
+      : { fullName: "", username: "", password: "", isAdmin: false, active: true, permissions: [], canEditMovieBookings: false, canManageTablesList: false, canManageMenuItemsList: false, canCloseMaintenanceIssues: false, canAdjustInventory: false, canAccessLive: true, canAccessTest: false },
   });
 
   const isAdminWatch = form.watch("isAdmin");
@@ -760,6 +750,28 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
                 </FormItem>
               )} />
             )}
+            <FormField control={form.control} name="canAccessLive" render={({ field }) => (
+              <FormItem className="flex items-center justify-between rounded-md border border-border p-3">
+                <div>
+                  <FormLabel className="mb-0">Live environment access</FormLabel>
+                  <FormDescription>Allows signing in to the Live (production) environment. Admins always have this right.</FormDescription>
+                </div>
+                <FormControl>
+                  <Switch checked={isAdminWatch || field.value} disabled={isAdminWatch} onCheckedChange={field.onChange} data-testid="switch-user-can-access-live" />
+                </FormControl>
+              </FormItem>
+            )} />
+            <FormField control={form.control} name="canAccessTest" render={({ field }) => (
+              <FormItem className="flex items-center justify-between rounded-md border border-border p-3">
+                <div>
+                  <FormLabel className="mb-0">Test environment access</FormLabel>
+                  <FormDescription>Allows signing in to the Test environment. Off by default. Admins always have this right.</FormDescription>
+                </div>
+                <FormControl>
+                  <Switch checked={isAdminWatch || field.value} disabled={isAdminWatch} onCheckedChange={field.onChange} data-testid="switch-user-can-access-test" />
+                </FormControl>
+              </FormItem>
+            )} />
             <FormField control={form.control} name="active" render={({ field }) => (
               <FormItem className="flex items-center justify-between rounded-md border border-border p-3">
                 <FormLabel className="mb-0">Active</FormLabel>

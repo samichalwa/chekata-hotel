@@ -127,12 +127,13 @@ export async function registerRoutes(
         if (!user || !user.active) return { error: "Invalid username or password." as const };
         const ok = await verifyPassword(password, user.passwordHash);
         if (!ok) return { error: "Invalid username or password." as const };
-        // Test mode is restricted to administrators (Phase 6 decision) —
+        // Environment access is per-user (canAccessLive/canAccessTest),
         // checked here, at the point of the SAME database the credentials
         // were just verified against, rather than against Live's copy of
         // the user (which "Copy live to test" keeps in sync but may briefly
-        // diverge from).
-        if (wantsTest && !user.isAdmin) return { error: "Test environment access is limited to administrators." as const, forbidden: true };
+        // diverge from). Admins always bypass both checks.
+        if (wantsTest && !user.isAdmin && !user.canAccessTest) return { error: "You don't have Test environment access. Ask an administrator to grant it." as const, forbidden: true };
+        if (!wantsTest && !user.isAdmin && !user.canAccessLive) return { error: "You don't have Live environment access. Ask an administrator to grant it." as const, forbidden: true };
         return { user };
       };
       const result = wantsTest ? await runWithEnvironment("test", attempt) : await attempt();
@@ -318,9 +319,10 @@ export async function registerRoutes(
   });
   app.post("/api/users", requireAdmin, async (req, res) => {
     try {
-      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues } = req.body as {
+      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canAccessLive, canAccessTest } = req.body as {
         username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean;
         canEditMovieBookings?: boolean; canManageTablesList?: boolean; canManageMenuItemsList?: boolean; canCloseMaintenanceIssues?: boolean;
+        canAdjustInventory?: boolean; canAccessLive?: boolean; canAccessTest?: boolean;
       };
       if (!username || !password || !fullName) return res.status(400).json({ error: "Username, password and full name are required." });
       if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
@@ -339,6 +341,9 @@ export async function registerRoutes(
         canManageTablesList: canManageTablesList ? 1 : 0,
         canManageMenuItemsList: canManageMenuItemsList ? 1 : 0,
         canCloseMaintenanceIssues: canCloseMaintenanceIssues ? 1 : 0,
+        canAdjustInventory: canAdjustInventory ? 1 : 0,
+        canAccessLive: canAccessLive === false ? 0 : 1,
+        canAccessTest: canAccessTest ? 1 : 0,
         active: active === false ? 0 : 1,
         createdAt: Date.now(),
       });
@@ -353,9 +358,10 @@ export async function registerRoutes(
       const id = Number(req.params.id);
       const target = await storage.getUser(id);
       if (!target) return res.status(404).json({ error: "User not found" });
-      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues } = req.body as {
+      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canAccessLive, canAccessTest } = req.body as {
         username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean;
         canEditMovieBookings?: boolean; canManageTablesList?: boolean; canManageMenuItemsList?: boolean; canCloseMaintenanceIssues?: boolean;
+        canAdjustInventory?: boolean; canAccessLive?: boolean; canAccessTest?: boolean;
       };
       const currentUserId = (req as any).user.id;
       if (currentUserId === id && isAdmin === false) {
@@ -378,6 +384,9 @@ export async function registerRoutes(
       if (typeof canManageTablesList === "boolean") patch.canManageTablesList = canManageTablesList ? 1 : 0;
       if (typeof canManageMenuItemsList === "boolean") patch.canManageMenuItemsList = canManageMenuItemsList ? 1 : 0;
       if (typeof canCloseMaintenanceIssues === "boolean") patch.canCloseMaintenanceIssues = canCloseMaintenanceIssues ? 1 : 0;
+      if (typeof canAdjustInventory === "boolean") patch.canAdjustInventory = canAdjustInventory ? 1 : 0;
+      if (typeof canAccessLive === "boolean") patch.canAccessLive = canAccessLive ? 1 : 0;
+      if (typeof canAccessTest === "boolean") patch.canAccessTest = canAccessTest ? 1 : 0;
       if (password) {
         if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
         patch.passwordHash = await hashPassword(password);

@@ -42,6 +42,7 @@ import { useQuery } from "@tanstack/react-query";
 import chekataLogo from "@/assets/chekata-logo.jpg";
 import { useCurrentUser, useLogout, canAccess } from "@/hooks/use-auth";
 import type { ModuleKey, Settings } from "@shared/schema";
+import { MODULE_CATEGORY_GROUPS } from "@shared/schema";
 
 const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard, key: "dashboard" },
@@ -70,6 +71,11 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Settings", url: "/settings", icon: SettingsIcon, key: "settings" },
 ];
 
+// "Settings" is intentionally not part of any MODULE_CATEGORY_GROUPS category
+// (it's never permission-assignable), so it always renders in its own
+// trailing, unlabeled group at the bottom of the menu.
+const itemsByKey = new Map(items.map((item) => [item.key, item]));
+
 export function AppSidebar() {
   const [location] = useLocation();
   const { data: user } = useCurrentUser();
@@ -77,6 +83,15 @@ export function AppSidebar() {
   const logout = useLogout();
 
   const visibleItems = items.filter((item) => canAccess(user, item.key));
+  const visibleKeys = new Set(visibleItems.map((item) => item.key));
+  // Same 6-category grouping as Settings > Users, applied to the actual
+  // navigation menu. A category header is only shown if at least one of its
+  // items is visible to this user; "Settings" always renders in its own
+  // trailing group since it sits outside every category.
+  const groupedMenu = MODULE_CATEGORY_GROUPS
+    .map((group) => ({ label: group.label, items: group.keys.filter((k) => visibleKeys.has(k)).map((k) => itemsByKey.get(k)!) }))
+    .filter((group) => group.items.length > 0);
+  const settingsItem = visibleItems.find((item) => item.key === "settings");
   const hotelName = settings?.hotelName || "The Chekata";
   const copyrightYear = new Date().getFullYear();
 
@@ -97,23 +112,41 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Operations</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {visibleItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location === item.url} data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
-                    <Link href={item.url}>
-                      <item.icon />
-                      <span>{item.title}</span>
+        {groupedMenu.map((group) => (
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild isActive={location === item.url} data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
+                      <Link href={item.url}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
+        {settingsItem && (
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem key={settingsItem.title}>
+                  <SidebarMenuButton asChild isActive={location === settingsItem.url} data-testid={`link-${settingsItem.title.toLowerCase().replace(/\s+/g, "-")}`}>
+                    <Link href={settingsItem.url}>
+                      <settingsItem.icon />
+                      <span>{settingsItem.title}</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
       <SidebarFooter>
         {user && (

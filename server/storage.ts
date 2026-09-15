@@ -1019,6 +1019,8 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await ensureColumn("users", "can_manage_menu_items_list", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("users", "can_close_maintenance_issues", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("users", "can_adjust_inventory", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("users", "can_access_live", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("users", "can_access_test", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("settings", "sms_provider", "TEXT NOT NULL DEFAULT ''");
   await ensureColumn("settings", "sms_username", "TEXT");
   await ensureColumn("settings", "sms_api_key", "TEXT");
