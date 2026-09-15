@@ -1,4 +1,6 @@
 import type { Settings } from "@shared/schema";
+import { getCurrentEnvironment } from "./db-context";
+import { logTestMessage } from "./test-environment";
 
 export interface SendSmsInput {
   settings: Settings;
@@ -29,6 +31,15 @@ export function normalizeKenyanPhone(raw: string): string | null {
 // (form-encoded for Africa's Talking) so no native/SDK dependency is needed.
 export async function sendSms(input: SendSmsInput): Promise<SendSmsResult> {
   const { settings, to, message } = input;
+
+  // Test environment: never actually send — log the attempt and report
+  // success so calling code's normal flow (and UI "sent" confirmation)
+  // continues unchanged, without any real SMS leaving the building.
+  if (getCurrentEnvironment() === "test") {
+    await logTestMessage({ channel: "sms", recipient: to, bodyPreview: message });
+    return { ok: true };
+  }
+
   const provider = (settings.smsProvider || "").toLowerCase();
 
   if (!settings.smsEnabled) return { ok: false, error: "SMS is turned off in Settings." };

@@ -2,24 +2,31 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getQueryFn, apiRequest, queryClient, setSessionToken } from "@/lib/queryClient";
 import type { SafeUser, ModuleKey } from "@shared/schema";
 
+// Which database a session is currently talking to (Phase 6: Test/Live split).
+// Every authenticated response (/api/auth/login, /api/auth/me) carries this so
+// the UI can show the "TEST DATABASE" banner and gate Test-only actions.
+export type DbEnvironment = "live" | "test";
+
+export type AuthedUser = SafeUser & { environment: DbEnvironment };
+
 export function useSetupStatus() {
-  return useQuery<{ needsSetup: boolean }>({
+  return useQuery<{ needsSetup: boolean; testDbConfigured: boolean }>({
     queryKey: ["/api/auth/setup-status"],
   });
 }
 
 export function useCurrentUser() {
-  return useQuery<SafeUser | null>({
+  return useQuery<AuthedUser | null>({
     queryKey: ["/api/auth/me"],
-    queryFn: getQueryFn<SafeUser | null>({ on401: "returnNull" }),
+    queryFn: getQueryFn<AuthedUser | null>({ on401: "returnNull" }),
   });
 }
 
 export function useLogin() {
   return useMutation({
-    mutationFn: async (data: { username: string; password: string }) => {
+    mutationFn: async (data: { username: string; password: string; environment?: DbEnvironment }) => {
       const res = await apiRequest("POST", "/api/auth/login", data);
-      const body = (await res.json()) as SafeUser & { sessionToken?: string };
+      const body = (await res.json()) as AuthedUser & { sessionToken?: string };
       if (body.sessionToken) setSessionToken(body.sessionToken);
       return body;
     },

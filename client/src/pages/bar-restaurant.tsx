@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, todayISO, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import { Link } from "wouter";
@@ -142,6 +143,7 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
   const [selectedMenuItemId, setSelectedMenuItemId] = useState<string>("");
   const [quantity, setQuantity] = useState(1);
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
 
   const { data: items = [] } = useQuery<OrderItem[]>({
     queryKey: ["/api/orders", order.id, "items"],
@@ -336,7 +338,7 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
                   let message = `Hi ${customerName || "there"}, thank you for your ${titleCase(order.outlet)} order at The Chekata${order.reference ? ` (${order.reference})` : ""}. Total: ${formatKES(order.totalAmount)}${order.status === "paid" ? " — Paid in full." : " — Balance due."}${paymentDetail} We appreciate your visit!`;
                   const pdfUrl = await fetchLatestDocumentPdfUrl(order.outlet === "bar" ? "bar" : "restaurant", order.id);
                   if (pdfUrl) message += `\n\nView/download your receipt: ${pdfUrl}`;
-                  const link = buildWhatsAppLink(customerPhone, message);
+                  const link = buildWhatsAppLink(customerPhone, message, currentUser?.environment);
                   if (link) window.open(link, "_blank");
                 }}
                 data-testid="button-send-whatsapp-order"

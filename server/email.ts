@@ -1,4 +1,6 @@
 import type { Settings } from "@shared/schema";
+import { getCurrentEnvironment } from "./db-context";
+import { logTestMessage } from "./test-environment";
 
 export interface SendEmailInput {
   settings: Settings;
@@ -19,6 +21,22 @@ export interface SendEmailResult {
 // keeps the app portable to shared/cPanel hosting.
 export async function sendTransactionalEmail(input: SendEmailInput): Promise<SendEmailResult> {
   const { settings, to, toName, subject, html, attachment } = input;
+
+  // Test environment: never actually send. Log the attempt and report
+  // success back to the caller so PDFs still get generated/attached and
+  // the UI shows its normal "sent" confirmation — just nothing leaves the
+  // building.
+  if (getCurrentEnvironment() === "test") {
+    await logTestMessage({
+      channel: "email",
+      recipient: to,
+      subject,
+      bodyPreview: html?.replace(/<[^>]+>/g, " ").trim(),
+      attachmentFilename: attachment?.filename ?? null,
+    });
+    return { ok: true };
+  }
+
   const provider = (settings.emailProvider || "").toLowerCase();
   const apiKey = settings.emailApiKey || "";
   const fromEmail = settings.emailFrom || "";

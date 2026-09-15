@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import type { IStorage } from "./storage";
 import { computeInclusiveTaxBreakdown } from "./tax";
 import type { TaxCategory } from "@shared/schema";
+import { getCurrentEnvironment } from "./db-context";
 
 const BRAND = "FFB5502F"; // terracotta, matches invoice/brand accent
 const BRAND_DARK = "FF2A2118";
@@ -741,7 +742,11 @@ export async function buildReportsWorkbook(
   opts: { from?: string; to?: string; sheet: ReportSheetKey | "all" }
 ): Promise<ExcelJS.Workbook> {
   const settings = await storage.getSettings();
-  const hotelName = settings.hotelName || "The Chekata";
+  // "...all printing and messaging from the test database will start with
+  // the words 'Test company'" (Phase 6 source requirement) — applies to
+  // exported reports too, not just PDFs.
+  const rawHotelName = settings.hotelName || "The Chekata";
+  const hotelName = getCurrentEnvironment() === "test" ? `TEST COMPANY — ${rawHotelName}` : rawHotelName;
   const { from, to, sheet } = opts;
 
   const wb = new ExcelJS.Workbook();

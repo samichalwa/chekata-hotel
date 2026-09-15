@@ -288,7 +288,7 @@ export default function Maintenance() {
                   if (issue.publicToken) {
                     message += `\n\nView/download the full report: ${buildMaintenancePdfUrl(issue.id, issue.publicToken)}`;
                   }
-                  const waLink = buildWhatsAppLink(issue.reportedPhone, message);
+                  const waLink = buildWhatsAppLink(issue.reportedPhone, message, currentUser?.environment);
                   return (
                     <TableRow key={issue.id} data-testid={`row-issue-${issue.id}`}>
                       <TableCell className="font-mono text-xs">#{issue.id}</TableCell>

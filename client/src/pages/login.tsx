@@ -2,12 +2,13 @@ import { useState } from "react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { LogIn, Mail, ArrowLeft } from "lucide-react";
+import { LogIn, Mail, ArrowLeft, FlaskConical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { useLogin, useForgotPassword } from "@/hooks/use-auth";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { useLogin, useForgotPassword, useSetupStatus, type DbEnvironment } from "@/hooks/use-auth";
 import { ChaimsMark, ChaimsWordmark } from "@/components/chaims-logo";
 
 const loginSchema = z.object({
@@ -92,8 +93,12 @@ function ForgotPasswordForm({ onBack }: { onBack: () => void }) {
 
 export default function LoginPage() {
   const login = useLogin();
+  const { data: setupStatus } = useSetupStatus();
   const [serverError, setServerError] = useState<string | null>(null);
   const [mode, setMode] = useState<"login" | "forgot">("login");
+  // Phase 6 (Test/Live split): the toggle only appears once a Test database
+  // is actually wired up on this server — otherwise there is nothing to pick.
+  const [environment, setEnvironment] = useState<DbEnvironment>("live");
 
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
@@ -102,7 +107,7 @@ export default function LoginPage() {
 
   const onSubmit = (values: LoginValues) => {
     setServerError(null);
-    login.mutate(values, {
+    login.mutate({ ...values, environment }, {
       onError: (err: any) => setServerError(extractErrorMessage(String(err?.message ?? "Sign in failed"))),
     });
   };
@@ -128,6 +133,30 @@ export default function LoginPage() {
         ) : (
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              {setupStatus?.testDbConfigured && (
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">Sign in to</p>
+                  <ToggleGroup
+                    type="single"
+                    value={environment}
+                    onValueChange={(value) => value && setEnvironment(value as DbEnvironment)}
+                    className="grid w-full grid-cols-2 gap-2"
+                    data-testid="toggle-login-environment"
+                  >
+                    <ToggleGroupItem value="live" className="gap-1.5 border data-[state=on]:border-primary" data-testid="toggle-environment-live">
+                      Live
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="test" className="gap-1.5 border data-[state=on]:border-primary" data-testid="toggle-environment-test">
+                      <FlaskConical className="h-3.5 w-3.5" /> Test
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                  {environment === "test" && (
+                    <p className="text-xs text-muted-foreground" data-testid="text-test-environment-note">
+                      Test mode is for administrators only and never sends real emails, SMS, or WhatsApp messages.
+                    </p>
+                  )}
+                </div>
+              )}
               <FormField
                 control={form.control}
                 name="username"

@@ -82,6 +82,7 @@ import type {
 } from '@shared/schema';
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { getCurrentEnvironment } from "./db-context";
 import { eq, and, ne, desc, gte, lte, inArray } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
@@ -94,12 +95,79 @@ if (!connectionString) {
 }
 
 // `prepare: false` is required against Supabase's transaction pooler (port 6543).
-export const sql = postgres(connectionString, { ssl: "require", prepare: false });
+// This is the real, production database — every call site in this file
+// (and everywhere `storage`/`db`/`sql` is imported from) that runs outside
+// of a request/job that opted into the Test environment ends up here.
+export const liveSql = postgres(connectionString, { ssl: "require", prepare: false });
+export const liveDb = drizzle(liveSql);
 
-export const db = drizzle(sql);
+// The isolated Test database (Phase 6 — Test/Live environment split). Only
+// configured when TEST_DATABASE_URL is set (production, and any local dev
+// setup that opts in); local/preview sandboxes without it simply run with
+// Test unavailable, which is fine since nothing there depends on it.
+const testConnectionString = process.env.TEST_DATABASE_URL;
+export const testSql = testConnectionString
+  ? postgres(testConnectionString, { ssl: "require", prepare: false })
+  : null;
+export const testDb = testSql ? drizzle(testSql) : null;
+
+export function isTestDbConfigured(): boolean {
+  return testSql !== null;
+}
+
+function activeSql() {
+  if (getCurrentEnvironment() === "test") {
+    if (!testSql) throw new Error("The Test database is not configured on this server (TEST_DATABASE_URL is not set).");
+    return testSql;
+  }
+  return liveSql;
+}
+
+function activeDb() {
+  if (getCurrentEnvironment() === "test") {
+    if (!testDb) throw new Error("The Test database is not configured on this server (TEST_DATABASE_URL is not set).");
+    return testDb;
+  }
+  return liveDb;
+}
+
+// `sql` and `db` below are environment-routing proxies, not fixed
+// connections. Every one of the ~300 storage methods in this file (and the
+// session-agnostic raw-SQL helpers throughout the codebase) calls `db.select(...)`,
+// `sql\`...\``, etc. exactly as before — but which physical database that
+// hits is now decided per-call by `getCurrentEnvironment()`, which middleware
+// sets from the signed-in user's session (see server/auth.ts). This is what
+// lets a single running server transparently serve both Live and Test
+// traffic without duplicating a single query.
+export const sql = new Proxy(function () {} as unknown as ReturnType<typeof postgres>, {
+  get(_target, prop, _receiver) {
+    const target = activeSql() as any;
+    const value = target[prop];
+    return typeof value === "function" ? value.bind(target) : value;
+  },
+  apply(_target, _thisArg, args) {
+    return (activeSql() as any)(...args);
+  },
+});
+
+export const db = new Proxy({} as ReturnType<typeof drizzle>, {
+  get(_target, prop, _receiver) {
+    const target = activeDb() as any;
+    const value = target[prop];
+    return typeof value === "function" ? value.bind(target) : value;
+  },
+});
 
 // ---- Schema bootstrap (no migrations tooling in this sandbox) ----
-async function bootstrapSchema() {
+// Takes an explicit target connection (Live or Test) rather than going
+// through the environment-routing `sql` proxy above: this runs at server
+// startup, before any request has established an environment context, and
+// needs to deliberately bootstrap BOTH databases with the identical schema
+// (see the two `bootstrapSchema(...)` calls in the schemaReady block below).
+// Shadowing the module-level `sql`/`db` names with local params means the
+// ~1000 lines of `sql\`...\`` calls below need no other changes.
+async function bootstrapSchema(targetSql: typeof liveSql) {
+  const sql = targetSql;
   await sql.unsafe(`
 CREATE TABLE IF NOT EXISTS rooms (
   id SERIAL PRIMARY KEY,
@@ -288,6 +356,30 @@ CREATE TABLE IF NOT EXISTS sessions (
   sid TEXT PRIMARY KEY,
   sess TEXT NOT NULL,
   expire BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS test_message_log (
+  id SERIAL PRIMARY KEY,
+  channel TEXT NOT NULL,
+  recipient TEXT NOT NULL,
+  subject TEXT,
+  body_preview TEXT,
+  attachment_filename TEXT,
+  blocked INTEGER NOT NULL DEFAULT 1,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS test_copy_runs (
+  id SERIAL PRIMARY KEY,
+  started_by_user_id INTEGER,
+  started_by_username TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  current_step TEXT,
+  tables_done INTEGER NOT NULL DEFAULT 0,
+  tables_total INTEGER NOT NULL DEFAULT 0,
+  rows_copied INTEGER NOT NULL DEFAULT 0,
+  files_copied INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  started_at BIGINT NOT NULL,
+  finished_at BIGINT
 );
 CREATE TABLE IF NOT EXISTS tables (
   id SERIAL PRIMARY KEY,
@@ -1264,7 +1356,18 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await seedDefaultAdmin();
 }
 
-export const schemaReady = bootstrapSchema().catch((err) => {
+export const schemaReady = (async () => {
+  await bootstrapSchema(liveSql);
+  if (testSql) {
+    try {
+      await bootstrapSchema(testSql);
+    } catch (err) {
+      // Non-fatal: Test is a bonus environment. A broken/unreachable Test
+      // database must never take Live down at startup.
+      console.error("[storage] Failed to bootstrap the TEST database schema (Test environment may be unavailable):", err);
+    }
+  }
+})().catch((err) => {
   console.error("[storage] Failed to bootstrap schema:", err);
   throw err;
 });

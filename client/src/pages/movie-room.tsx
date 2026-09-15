@@ -235,6 +235,7 @@ function SeatGrid({
 
 function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: MovieSeatBooking[] }) {
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
   const bookableShows = useMemo(
     () => [...shows].filter((s) => s.status !== "cancelled" && s.status !== "completed").sort((a, b) => (a.showDate + a.startTime).localeCompare(b.showDate + b.startTime)),
     [shows],
@@ -456,7 +457,7 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
           <Button
             variant="outline"
             disabled={!buildWhatsAppLink(lastConfirmation.phone, "x")}
-            onClick={() => { const link = buildWhatsAppLink(lastConfirmation.phone, lastConfirmation.message); if (link) window.open(link, "_blank"); }}
+            onClick={() => { const link = buildWhatsAppLink(lastConfirmation.phone, lastConfirmation.message, currentUser?.environment); if (link) window.open(link, "_blank"); }}
             data-testid="button-send-whatsapp-movie-booking"
           >
             <MessageCircle className="h-4 w-4 mr-1.5" /> WhatsApp confirmation
@@ -483,6 +484,7 @@ const editBookingSchema = z.object({
 function EditBookingDialog({ booking, show, trigger }: { booking: MovieSeatBooking; show?: MovieShow; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
   const form = useForm<z.infer<typeof editBookingSchema>>({
     resolver: zodResolver(editBookingSchema),
     defaultValues: {
@@ -579,7 +581,7 @@ function EditBookingDialog({ booking, show, trigger }: { booking: MovieSeatBooki
                   let message = `Hi ${form.watch("guestName") || booking.guestName}, payment received for your Movie Room booking at The Chekata \u2014 Seat ${booking.seatRow}${booking.seatNumber}. Paid KES ${Number(paid || 0).toLocaleString()}.${paymentDetail} Enjoy the show!`;
                   const pdfUrl = await fetchLatestDocumentPdfUrl("movie", booking.id);
                   if (pdfUrl) message += `\n\nView/download your invoice/receipt: ${pdfUrl}`;
-                  const link = buildWhatsAppLink(form.watch("guestPhone"), message);
+                  const link = buildWhatsAppLink(form.watch("guestPhone"), message, currentUser?.environment);
                   if (link) window.open(link, "_blank");
                 }}
                 data-testid="button-send-whatsapp-edit-booking"

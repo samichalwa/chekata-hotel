@@ -4,15 +4,20 @@ import type { Request } from 'express';
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
-import { sessionMiddleware } from "./auth";
+import { sessionMiddleware, environmentMiddleware } from "./auth";
 import { schemaReady, storage } from "./storage";
 import { runTenantBillingCycle } from "./billing";
+import { startTestMessageLogPurgeSchedule } from "./test-environment";
 
 const app = express();
 const httpServer = createServer(app);
 
 app.set("trust proxy", 1);
 app.use(sessionMiddleware);
+// Routes every downstream `storage`/`db`/`sql` call in this request to Live
+// or Test based on the signed-in user's session — see server/auth.ts and
+// server/db-context.ts (Phase 6: Test/Live environment split).
+app.use(environmentMiddleware);
 
 declare module "http" {
   interface IncomingMessage {
@@ -116,6 +121,9 @@ app.use((req, res, next) => {
   }
   runBillingCycleLogged();
   setInterval(runBillingCycleLogged, 60 * 60 * 1000);
+
+  // Phase 6: auto-purge intercepted Test-mode messages older than 30 days.
+  startTestMessageLogPurgeSchedule();
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.

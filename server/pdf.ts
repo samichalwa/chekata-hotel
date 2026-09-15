@@ -3,6 +3,34 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import type { Settings, MaintenanceIssue } from "@shared/schema";
+import { getCurrentEnvironment } from "./db-context";
+
+// Every PDF generated while a request is running in the Test environment
+// gets "TEST COMPANY — " prefixed onto the company/hotel name wherever it
+// appears, so a Test-generated invoice/receipt/payslip/report can never be
+// mistaken for a real one, even out of context (e.g. forwarded by email).
+function companyDisplayName(settings: Settings): string {
+  const name = settings.hotelName || "The Chekata";
+  return getCurrentEnvironment() === "test" ? `TEST COMPANY — ${name}` : name;
+}
+
+// The "TEST COMPANY — " prefix can make the header name noticeably longer
+// than the hotel name alone, which would otherwise run into the document
+// title box drawn to its right. Shrink the font just enough to fit the
+// available width instead of letting the two overlap.
+function drawCompanyHeaderName(doc: PDFKit.PDFDocument, text: string, x: number, y: number, maxWidth: number, color: string): void {
+  const maxSize = 22;
+  const minSize = 9;
+  doc.font("Helvetica-Bold");
+  let size = maxSize;
+  while (size > minSize && doc.fontSize(size).widthOfString(text) > maxWidth) {
+    size -= 1;
+  }
+  // Force a single line (lineBreak: false) so the name never wraps and pushes
+  // into the fixed-position address/phone lines drawn below it — if it still
+  // doesn't fit at the floor size, truncate with an ellipsis instead of wrapping.
+  doc.fillColor(color).fontSize(size).text(text, x, y + (maxSize - size) * 0.6, { width: maxWidth, ellipsis: true, lineBreak: false });
+}
 
 // Resolves next to this file in both dev (server/, run via tsx as ESM,
 // where __dirname is undefined) and the production bundle (dist/index.cjs,
@@ -73,7 +101,7 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
         // If the image can't be embedded for any reason, fall back to text-only header.
       }
     }
-    doc.fillColor(accent).fontSize(22).font("Helvetica-Bold").text(settings.hotelName || "The Chekata", textX, 50);
+    drawCompanyHeaderName(doc, companyDisplayName(settings), textX, 50, 350 - textX - 10, accent);
     doc.fillColor(muted).fontSize(9).font("Helvetica");
     let y = 78;
     if (settings.hotelAddress) { doc.text(settings.hotelAddress, textX, y); y += 13; }
@@ -186,7 +214,7 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
 
     // ---- Footer ----
     doc.font("Helvetica").fontSize(8).fillColor(muted)
-      .text(`Thank you for choosing ${settings.hotelName || "The Chekata"}.`, 50, 760, { width: 495, align: "center" });
+      .text(`Thank you for choosing ${companyDisplayName(settings)}.`, 50, 760, { width: 495, align: "center" });
 
     doc.end();
   });
@@ -238,7 +266,7 @@ export function buildPayslipPdf(settings: Settings, p: PayslipPdfPayload): Promi
         // fall back to text-only header
       }
     }
-    doc.fillColor(accent).fontSize(22).font("Helvetica-Bold").text(settings.hotelName || "The Chekata", textX, 50);
+    drawCompanyHeaderName(doc, companyDisplayName(settings), textX, 50, 320 - textX - 10, accent);
     doc.fillColor(muted).fontSize(9).font("Helvetica");
     let y = 78;
     if (settings.hotelAddress) { doc.text(settings.hotelAddress, textX, y); y += 13; }
@@ -320,7 +348,7 @@ export function buildPayslipPdf(settings: Settings, p: PayslipPdfPayload): Promi
     y += 30;
 
     doc.font("Helvetica").fontSize(8).fillColor(muted)
-      .text(`This payslip is confidential and intended solely for ${p.staffName}. Issued by ${settings.hotelName || "The Chekata"}.`, 50, 760, { width: 495, align: "center" });
+      .text(`This payslip is confidential and intended solely for ${p.staffName}. Issued by ${companyDisplayName(settings)}.`, 50, 760, { width: 495, align: "center" });
 
     doc.end();
   });
@@ -363,7 +391,7 @@ export function buildMaintenanceReportPdf(settings: Settings, issue: Maintenance
         // fall back to text-only header
       }
     }
-    doc.fillColor(accent).fontSize(22).font("Helvetica-Bold").text(settings.hotelName || "The Chekata", textX, 50);
+    drawCompanyHeaderName(doc, companyDisplayName(settings), textX, 50, 320 - textX - 10, accent);
     doc.fillColor(muted).fontSize(9).font("Helvetica");
     let y = 78;
     if (settings.hotelAddress) { doc.text(settings.hotelAddress, textX, y); y += 13; }
@@ -419,7 +447,7 @@ export function buildMaintenanceReportPdf(settings: Settings, issue: Maintenance
     }
 
     doc.font("Helvetica").fontSize(8).fillColor(muted)
-      .text(`${settings.hotelName || "The Chekata"} — Maintenance & Facilities`, 50, 760, { width: 495, align: "center" });
+      .text(`${companyDisplayName(settings)} — Maintenance & Facilities`, 50, 760, { width: 495, align: "center" });
 
     doc.end();
   });

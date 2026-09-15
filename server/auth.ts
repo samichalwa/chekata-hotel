@@ -3,11 +3,18 @@ import session from "express-session";
 import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { PgSessionStore } from "./session-store";
+import { runWithEnvironment, type DbEnvironment } from "./db-context";
 import type { ModuleKey, SafeUser } from "@shared/schema";
 
 declare module "express-session" {
   interface SessionData {
     userId?: number;
+    // Which database this session's user is currently working in. Absent
+    // (or "live") for every session created before Phase 6, and for every
+    // ordinary login — only an admin who explicitly chose "Test" at sign-in
+    // carries "test" here. See requireAuth/environmentMiddleware below for
+    // how this routes the rest of the request to the right database.
+    environment?: DbEnvironment;
   }
 }
 
@@ -36,12 +43,20 @@ export const sessionMiddleware = session({
 // session id it received at login in an `x-session-token` header, and we
 // resolve it directly against the session store here — no cookie required.
 export async function resolveUserIdFromHeaderToken(req: Request): Promise<number | undefined> {
+  const session = await resolveSessionFromHeaderToken(req);
+  return session?.userId;
+}
+
+// Same fallback lookup as above, but returns the whole stored session
+// object (used by environmentMiddleware, which needs `environment` too,
+// not just `userId`).
+export async function resolveSessionFromHeaderToken(req: Request): Promise<(session.SessionData & { userId?: number }) | undefined> {
   const token = req.headers["x-session-token"];
   if (!token || typeof token !== "string") return undefined;
   return new Promise((resolve) => {
     pgSessionStore.get(token, (err, sess) => {
       if (err || !sess) return resolve(undefined);
-      resolve((sess as any).userId);
+      resolve(sess as any);
     });
   });
 }
@@ -93,6 +108,24 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
   return bcrypt.compare(plain, hash);
 }
 
+// Establishes the Live/Test database context for the WHOLE rest of this
+// request (every `storage`/`db`/`sql` call any downstream middleware or
+// route handler makes) from the session's `environment` field, before any
+// route-level auth check runs. Mounted once, directly after the session
+// middleware, in server/index.ts. Requests with no session (not yet signed
+// in) simply run in Live, same as before Phase 6 existed.
+export async function environmentMiddleware(req: Request, res: Response, next: NextFunction) {
+  let env: DbEnvironment = req.session?.environment === "test" ? "test" : "live";
+  // Cookie-less fallback (see resolveUserIdFromHeaderToken below): the real
+  // session — and its environment — lives under the x-session-token the
+  // client sends back, not under req.session, when Set-Cookie got stripped.
+  if (env === "live" && !req.session?.userId) {
+    const fallback = await resolveSessionFromHeaderToken(req);
+    if (fallback?.environment === "test") env = "test";
+  }
+  runWithEnvironment(env, next);
+}
+
 // Requires a logged-in, active user for any /api route it guards.
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const userId = req.session.userId ?? (await resolveUserIdFromHeaderToken(req));
@@ -103,6 +136,13 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   if (!user || !user.active) {
     req.session.userId = undefined;
     return res.status(401).json({ error: "Not signed in" });
+  }
+  // Test is admin-only, enforced again here (not just at login) so an
+  // account that loses admin rights mid-session is immediately cut off from
+  // Test on its very next request, rather than only at its next login.
+  if (req.session.environment === "test" && !user.isAdmin) {
+    req.session.userId = undefined;
+    return res.status(403).json({ error: "Test environment access is limited to administrators." });
   }
   (req as any).user = user;
   next();

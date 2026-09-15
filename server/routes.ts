@@ -36,7 +36,7 @@ import { emailPayslipsForRun } from "./payroll-pdf-email";
 import { sendTransactionalEmail } from "./email";
 import ExcelJS from "exceljs";
 import { sendSms } from "./sms";
-import { saveBase64Upload, UploadValidationError, UPLOADS_ROOT } from "./uploads";
+import { saveBase64Upload, UploadValidationError, UPLOADS_ROOT, TEST_UPLOADS_ROOT } from "./uploads";
 import { runTenantBillingCycle } from "./billing";
 import express from "express";
 import { buildReportsWorkbook, REPORT_SHEET_LABELS, type ReportSheetKey } from "./reports-excel";
@@ -46,6 +46,9 @@ import {
   requireAdminUsername, requireTablePermission, requireCanAdjustInventory,
   hashPassword, verifyPassword, toSafeUser, parsePermissions, resolveUserIdFromHeaderToken,
 } from "./auth";
+import { isTestDbConfigured } from "./storage";
+import { runWithEnvironment, getCurrentEnvironment, type DbEnvironment } from "./db-context";
+import { startCopyLiveToTest, getLatestCopyRun } from "./copy-live-to-test";
 
 const STAFF_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@thechekata\.com$/i;
 
@@ -75,11 +78,14 @@ export async function registerRoutes(
   // shown in Phase 1/2 WhatsApp PDF links; the upload/write endpoints below are
   // still permission-gated.
   app.use("/uploads", express.static(UPLOADS_ROOT));
+  // Isolated Test-environment copy of uploaded files (Phase 6) — see
+  // server/uploads.ts and server/copy-live-to-test.ts.
+  app.use("/test-uploads", express.static(TEST_UPLOADS_ROOT));
 
   // ---------- Auth (unprotected: setup, login, logout, current user) ----------
   app.get("/api/auth/setup-status", async (_req, res) => {
     const count = await storage.countUsers();
-    res.json({ needsSetup: count === 0 });
+    res.json({ needsSetup: count === 0, testDbConfigured: isTestDbConfigured() });
   });
 
   app.post("/api/auth/setup", async (req, res) => {
@@ -106,14 +112,36 @@ export async function registerRoutes(
 
   app.post("/api/auth/login", async (req, res) => {
     try {
-      const { username, password } = req.body as { username?: string; password?: string };
+      const { username, password, environment } = req.body as { username?: string; password?: string; environment?: string };
       if (!username || !password) return res.status(400).json({ error: "Username and password are required." });
-      const user = await storage.getUserByUsername(username.trim().toLowerCase());
-      if (!user || !user.active) return res.status(401).json({ error: "Invalid username or password." });
-      const ok = await verifyPassword(password, user.passwordHash);
-      if (!ok) return res.status(401).json({ error: "Invalid username or password." });
-      req.session.userId = user.id;
-      res.json({ ...toSafeUser(user), sessionToken: req.sessionID });
+      const wantsTest = environment === "test";
+      if (wantsTest && !isTestDbConfigured()) {
+        return res.status(400).json({ error: "The Test database has not been configured on this server yet." });
+      }
+      // The whole lookup + verify runs INSIDE the target environment so
+      // `storage.getUserByUsername` reads the right database — by default
+      // (no `environment` in the request) this is a no-op, since
+      // environmentMiddleware already put us in "live".
+      const attempt = async () => {
+        const user = await storage.getUserByUsername(username.trim().toLowerCase());
+        if (!user || !user.active) return { error: "Invalid username or password." as const };
+        const ok = await verifyPassword(password, user.passwordHash);
+        if (!ok) return { error: "Invalid username or password." as const };
+        // Test mode is restricted to administrators (Phase 6 decision) —
+        // checked here, at the point of the SAME database the credentials
+        // were just verified against, rather than against Live's copy of
+        // the user (which "Copy live to test" keeps in sync but may briefly
+        // diverge from).
+        if (wantsTest && !user.isAdmin) return { error: "Test environment access is limited to administrators." as const, forbidden: true };
+        return { user };
+      };
+      const result = wantsTest ? await runWithEnvironment("test", attempt) : await attempt();
+      if ("error" in result) {
+        return res.status(result.forbidden ? 403 : 401).json({ error: result.error });
+      }
+      req.session.userId = result.user.id;
+      req.session.environment = wantsTest ? "test" : "live";
+      res.json({ ...toSafeUser(result.user), sessionToken: req.sessionID, environment: req.session.environment });
     } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to sign in" }); }
   });
 
@@ -126,7 +154,11 @@ export async function registerRoutes(
     if (!userId) return res.status(401).json({ error: "Not signed in" });
     const user = await storage.getUser(userId);
     if (!user || !user.active) return res.status(401).json({ error: "Not signed in" });
-    res.json(toSafeUser(user));
+    // getCurrentEnvironment() (not req.session.environment) so the label is
+    // correct even for the cookie-less header-token fallback, where the
+    // active environment was resolved by environmentMiddleware from the
+    // stored session rather than from this request's own req.session.
+    res.json({ ...toSafeUser(user), environment: getCurrentEnvironment() });
   });
 
   const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -1032,6 +1064,35 @@ export async function registerRoutes(
       res.json(await storage.updateSettings(data));
     } catch (err) { handleZodError(res, err); }
   });
+  // Any isAdmin user (deliberately NOT requireAdminUsername — see Phase 6
+  // decision log) may trigger a full Live → Test refresh, but only from a
+  // session that is itself currently working in Live: this button lives on
+  // the Live Settings page, and running it while already in Test would be
+  // both meaningless (Test overwriting itself) and a way to dodge the
+  // isAdmin-only Test login gate via a stale Test session.
+  app.post("/api/settings/copy-live-to-test", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      if (getCurrentEnvironment() !== "live") {
+        return res.status(400).json({ error: "Switch to Live before copying Live data into Test." });
+      }
+      if (!isTestDbConfigured()) {
+        return res.status(400).json({ error: "The Test database has not been configured on this server yet." });
+      }
+      const existing = await getLatestCopyRun();
+      if (existing && existing.status === "running") {
+        return res.status(409).json({ error: "A copy is already in progress.", run: existing });
+      }
+      const user = (req as any).user;
+      const { runId } = await startCopyLiveToTest(user.id, user.username);
+      res.status(202).json({ runId });
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to start the copy." }); }
+  });
+  app.get("/api/settings/test-copy-status", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      res.json((await getLatestCopyRun()) ?? { status: "none" });
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to load copy status." }); }
+  });
+
   app.post("/api/settings/test-email", requireModule("settings"), requireAdminUsername, async (req, res) => {
     try {
       const { email } = req.body as { email?: string };

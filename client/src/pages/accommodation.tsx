@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, formatDate, nightsBetween, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import type { Room, AccommodationBooking, GuestIdentityDocument } from "@shared/schema";
@@ -160,6 +161,7 @@ function RoomFormDialog({ room, rooms, trigger }: { room?: Room; rooms: Room[]; 
 function BookingFormDialog({ booking, rooms, trigger }: { booking?: AccommodationBooking; rooms: Room[]; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
   const form = useForm<z.infer<typeof bookingFormSchema>>({
     resolver: zodResolver(bookingFormSchema),
     defaultValues: booking
@@ -376,7 +378,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                     const pdfUrl = await fetchLatestDocumentPdfUrl("accommodation", booking.id);
                     if (pdfUrl) message += `\n\nView/download your invoice/receipt: ${pdfUrl}`;
                   }
-                  const link = buildWhatsAppLink(guestPhone, message);
+                  const link = buildWhatsAppLink(guestPhone, message, currentUser?.environment);
                   if (link) window.open(link, "_blank");
                 }}
                 data-testid="button-send-whatsapp-accommodation"

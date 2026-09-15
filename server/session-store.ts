@@ -1,11 +1,19 @@
 import session from "express-session";
-import { sql } from "./storage";
+import { liveSql as sql } from "./storage";
 
 // A persistent, Postgres-backed session store using the same database as the
 // rest of the app. Unlike the default in-memory express-session store,
 // sessions survive process restarts (e.g. when a host idles/restarts the
 // Node.js process, or when a new version is deployed). The `sessions` table
 // itself is created by storage.ts's schema bootstrap.
+//
+// Deliberately always Live (`liveSql`, never the environment-routed `sql`
+// proxy): a session has to be readable before we know which environment it
+// carries, so the session store itself can't be environment-routed without
+// a chicken-and-egg problem. Every session — whether the signed-in user is
+// currently working in Live or Test — lives in this one table on Live, and
+// simply carries an `environment` field (see server/auth.ts) that later
+// middleware reads to route the REST of that request's queries.
 export class PgSessionStore extends session.Store {
   constructor() {
     super();

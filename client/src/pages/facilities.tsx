@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, formatDate, hoursBetween, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import type { Facility, FacilityBooking } from "@shared/schema";
@@ -146,6 +147,7 @@ function FacilityFormDialog({ facility, trigger }: { facility?: Facility; trigge
 function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?: FacilityBooking; facilities: Facility[]; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
   const form = useForm<z.infer<typeof bookingFormSchema>>({
     resolver: zodResolver(bookingFormSchema),
     defaultValues: booking
@@ -348,7 +350,7 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
                     const pdfUrl = await fetchLatestDocumentPdfUrl("facility", booking.id);
                     if (pdfUrl) message += `\n\nView/download your invoice/receipt: ${pdfUrl}`;
                   }
-                  const link = buildWhatsAppLink(clientPhone, message);
+                  const link = buildWhatsAppLink(clientPhone, message, currentUser?.environment);
                   if (link) window.open(link, "_blank");
                 }}
                 data-testid="button-send-whatsapp-facility"

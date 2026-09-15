@@ -40,6 +40,7 @@ import LoginPage from "@/pages/login";
 import SetupPage from "@/pages/setup";
 import ResetPasswordPage from "@/pages/reset-password";
 import { useCurrentUser, useSetupStatus, canAccess } from "@/hooks/use-auth";
+import { TestDatabaseBanner } from "@/components/test-database-banner";
 import type { ModuleKey } from "@shared/schema";
 
 function Guarded({ moduleKey, component: Component, requireAdminUsername }: { moduleKey: ModuleKey; component: React.ComponentType; requireAdminUsername?: boolean }) {
@@ -155,27 +156,30 @@ function App() {
           <Router hook={useHashLocation}>
             <AuthGate>
               <SidebarProvider style={style as React.CSSProperties}>
-                <div className="flex h-screen w-full overflow-hidden">
-                  <AppSidebar />
-                  <div className="flex flex-col flex-1 overflow-hidden">
-                    <header className="flex items-center justify-between gap-2 border-b border-border bg-background px-3 py-2 shrink-0">
-                      <div className="flex items-center gap-1">
-                        <SidebarTrigger data-testid="button-sidebar-toggle" />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="Home"
-                          onClick={() => { window.location.hash = "/"; }}
-                          data-testid="button-home"
-                        >
-                          <Home className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      <ThemeToggle />
-                    </header>
-                    <main className="flex-1 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>
-                      <AppRouter />
-                    </main>
+                <div className="flex h-screen w-full flex-col overflow-hidden">
+                  <TestDatabaseBanner />
+                  <div className="flex flex-1 overflow-hidden">
+                    <AppSidebar />
+                    <div className="flex flex-col flex-1 overflow-hidden">
+                      <header className="flex items-center justify-between gap-2 border-b border-border bg-background px-3 py-2 shrink-0">
+                        <div className="flex items-center gap-1">
+                          <SidebarTrigger data-testid="button-sidebar-toggle" />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Home"
+                            onClick={() => { window.location.hash = "/"; }}
+                            data-testid="button-home"
+                          >
+                            <Home className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <ThemeToggle />
+                      </header>
+                      <main className="flex-1 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>
+                        <AppRouter />
+                      </main>
+                    </div>
                   </div>
                 </div>
               </SidebarProvider>

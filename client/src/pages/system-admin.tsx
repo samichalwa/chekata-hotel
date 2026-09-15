@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Pencil, Trash2, ShieldCheck, ListChecks, Sliders, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, Pencil, Trash2, ShieldCheck, ListChecks, Sliders, ChevronDown, ChevronRight, FlaskConical, Loader2 } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -16,8 +16,10 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Progress } from "@/components/ui/progress";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useCurrentUser, useSetupStatus } from "@/hooks/use-auth";
 import { formatKES } from "@/lib/format";
 import {
   APPROVAL_DOCUMENT_TYPES, APPROVAL_DOCUMENT_TYPE_LABELS,
@@ -374,6 +376,147 @@ function DefinitionsTab() {
   );
 }
 
+// ================= Test/Live Environment =================
+interface CopyRunProgress {
+  id: number;
+  startedByUserId: number | null;
+  startedByUsername: string | null;
+  status: "running" | "done" | "error";
+  currentStep: string | null;
+  tablesDone: number;
+  tablesTotal: number;
+  rowsCopied: number;
+  filesCopied: number;
+  error: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+}
+
+const COPY_CONFIRM_PHRASE = "COPY LIVE TO TEST";
+
+// Phase 6 decision #5: any isAdmin user may trigger this — deliberately NOT
+// restricted to the literal "admin" username, which is why this control lives
+// on System Administration (moduleKey-gated) rather than on the Settings page
+// (requireAdminUsername-gated).
+function EnvironmentTab() {
+  const { toast } = useToast();
+  const { data: currentUser } = useCurrentUser();
+  const { data: setupStatus } = useSetupStatus();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+
+  const { data: run } = useQuery<CopyRunProgress | { status: "none" }>({
+    queryKey: ["/api/settings/test-copy-status"],
+    refetchInterval: (query) => (query.state.data && "status" in query.state.data && query.state.data.status === "running" ? 1500 : false),
+  });
+
+  const isRunning = !!run && "status" in run && run.status === "running";
+
+  const startCopy = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/settings/copy-live-to-test", {});
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Copy started", description: "Live data is being copied into the Test database." });
+      setConfirmOpen(false);
+      setConfirmText("");
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/test-copy-status"] });
+    },
+    onError: (err: any) => toast({ title: "Could not start the copy", description: err?.message ?? "", variant: "destructive" }),
+  });
+
+  const isLive = currentUser?.environment !== "test";
+  const testDbConfigured = !!setupStatus?.testDbConfigured;
+  const canCopy = !!currentUser?.isAdmin && isLive && testDbConfigured;
+
+  return (
+    <Card className="p-6 space-y-4">
+      <div className="flex items-center gap-2">
+        <FlaskConical className="h-5 w-5 text-muted-foreground" />
+        <h3 className="font-medium">Test database</h3>
+        <Badge variant={currentUser?.environment === "test" ? "default" : "secondary"} data-testid="badge-current-environment">
+          You are in {currentUser?.environment === "test" ? "Test" : "Live"}
+        </Badge>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Test is a separate, isolated copy of the database used for training and trying out changes safely. Real emails, SMS, and WhatsApp
+        messages are never sent from Test. Sign in to Test from the login page using the Live/Test switch (administrators only).
+      </p>
+
+      {!currentUser?.isAdmin ? (
+        <p className="text-sm text-muted-foreground" data-testid="text-copy-requires-admin">
+          Only administrators can copy Live data into Test.
+        </p>
+      ) : !testDbConfigured ? (
+        <p className="text-sm text-muted-foreground" data-testid="text-test-db-not-configured">
+          The Test database has not been configured on this server yet.
+        </p>
+      ) : !isLive ? (
+        <p className="text-sm text-muted-foreground" data-testid="text-copy-requires-live">
+          Switch to Live to copy Live data into Test.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          <AlertDialog open={confirmOpen} onOpenChange={(open) => { setConfirmOpen(open); if (!open) setConfirmText(""); }}>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" disabled={!canCopy || isRunning} data-testid="button-copy-live-to-test">
+                {isRunning ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FlaskConical className="h-4 w-4 mr-1" />}
+                {isRunning ? "Copy in progress…" : "Copy Live to Test"}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Overwrite Test with Live data?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This replaces everything currently in the Test database — all records and uploaded files — with a fresh copy of Live. This
+                  cannot be undone. Type <span className="font-mono font-semibold">{COPY_CONFIRM_PHRASE}</span> to confirm.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <Input
+                autoFocus
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder={COPY_CONFIRM_PHRASE}
+                data-testid="input-copy-confirm-phrase"
+              />
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="button-cancel-copy">Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={confirmText.trim() !== COPY_CONFIRM_PHRASE || startCopy.isPending}
+                  onClick={(e) => { e.preventDefault(); startCopy.mutate(); }}
+                  data-testid="button-confirm-copy"
+                >
+                  {startCopy.isPending ? "Starting…" : "Overwrite Test"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          {run && "tablesTotal" in run && (
+            <div className="space-y-1.5" data-testid="panel-copy-progress">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground" data-testid="text-copy-current-step">
+                  {run.status === "running" ? (run.currentStep ?? "Working…") : run.status === "done" ? "Last copy completed" : "Last copy failed"}
+                </span>
+                <span className="text-muted-foreground" data-testid="text-copy-table-count">{run.tablesDone}/{run.tablesTotal} tables</span>
+              </div>
+              <Progress value={run.tablesTotal ? (run.tablesDone / run.tablesTotal) * 100 : 0} data-testid="progress-copy-live-to-test" />
+              <p className="text-xs text-muted-foreground" data-testid="text-copy-summary">
+                {run.rowsCopied.toLocaleString()} rows{run.filesCopied ? `, ${run.filesCopied} files` : ""} copied
+                {run.startedByUsername ? ` · started by ${run.startedByUsername}` : ""}
+              </p>
+              {run.status === "error" && run.error && (
+                <p className="text-xs text-destructive" data-testid="text-copy-error">{run.error}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ================= Page =================
 export default function SystemAdmin() {
   const { data: rules = [] } = useQuery<ApprovalMatrixRule[]>({ queryKey: ["/api/admin/approval-matrix"] });
@@ -394,10 +537,12 @@ export default function SystemAdmin() {
           <TabsTrigger value="approval" data-testid="tab-approval-matrix">Approval Matrix</TabsTrigger>
           <TabsTrigger value="permissions" data-testid="tab-table-permissions">Table Permissions</TabsTrigger>
           <TabsTrigger value="definitions" data-testid="tab-definitions">Definitions</TabsTrigger>
+          <TabsTrigger value="environment" data-testid="tab-environment"><FlaskConical className="h-4 w-4 mr-1" /> Test/Live</TabsTrigger>
         </TabsList>
         <TabsContent value="approval" className="mt-4"><ApprovalMatrixTab /></TabsContent>
         <TabsContent value="permissions" className="mt-4"><TablePermissionsTab /></TabsContent>
         <TabsContent value="definitions" className="mt-4"><DefinitionsTab /></TabsContent>
+        <TabsContent value="environment" className="mt-4"><EnvironmentTab /></TabsContent>
       </Tabs>
     </div>
   );

@@ -1,12 +1,19 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { getCurrentEnvironment } from "./db-context";
 
 // Persistent, gitignored upload root at the project root (NOT under dist/,
 // which is wiped and rebuilt on every deploy — see script/build.ts). Works
 // identically in dev (tsx, cwd = project root) and production (node
 // dist/index.cjs launched via PM2 from /var/www/app, cwd = /var/www/app).
 export const UPLOADS_ROOT = path.join(process.cwd(), "uploads");
+
+// Isolated file storage for the Test environment (Phase 6). Files uploaded
+// while signed in to Test land here instead of in the real uploads/ tree,
+// and "Copy live to test" replaces this whole directory with a fresh copy
+// of Live's files — so Test never reads or writes a real production file.
+export const TEST_UPLOADS_ROOT = path.join(process.cwd(), "uploads-test");
 
 const MIME_EXT: Record<string, string> = {
   "image/jpeg": ".jpg",
@@ -26,7 +33,7 @@ export interface SaveUploadInput {
 }
 
 export interface SaveUploadResult {
-  url: string; // e.g. "/uploads/accommodation/ab12cd34.jpg"
+  url: string; // e.g. "/uploads/accommodation/ab12cd34.jpg" (or "/test-uploads/..." in Test)
 }
 
 export class UploadValidationError extends Error {}
@@ -64,11 +71,15 @@ export function saveBase64Upload(input: SaveUploadInput): SaveUploadResult {
     throw new UploadValidationError("File is too large (max 10MB).");
   }
 
-  const dir = path.join(UPLOADS_ROOT, category);
+  const isTest = getCurrentEnvironment() === "test";
+  const root = isTest ? TEST_UPLOADS_ROOT : UPLOADS_ROOT;
+  const urlPrefix = isTest ? "/test-uploads" : "/uploads";
+
+  const dir = path.join(root, category);
   fs.mkdirSync(dir, { recursive: true });
 
   const name = `${Date.now()}-${randomBytes(8).toString("hex")}${ext}`;
   fs.writeFileSync(path.join(dir, name), buffer);
 
-  return { url: `/uploads/${category}/${name}` };
+  return { url: `${urlPrefix}/${category}/${name}` };
 }

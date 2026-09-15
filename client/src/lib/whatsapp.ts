@@ -17,10 +17,21 @@ export function normalizeKenyanPhone(raw?: string | null): string | null {
   return digits.length >= 10 ? digits : null;
 }
 
-export function buildWhatsAppLink(phone: string | null | undefined, message: string): string | null {
+// Phase 6 (Test/Live split): pass the signed-in session's `environment` so a
+// staff member testing the workflow in Test mode can never accidentally send
+// a guest/customer a WhatsApp message that looks like a real one — the text
+// itself gets a loud "TEST COMPANY" prefix (mirrors the prefix already used
+// on Test-mode PDFs, emails, SMS, and Excel reports). Defaults to "live" (no
+// prefix) so existing call sites that haven't been updated keep working.
+export function buildWhatsAppLink(
+  phone: string | null | undefined,
+  message: string,
+  environment: "live" | "test" = "live",
+): string | null {
   const normalized = normalizeKenyanPhone(phone);
   if (!normalized) return null;
-  return `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
+  const text = environment === "test" ? `TEST COMPANY — ${message}` : message;
+  return `https://wa.me/${normalized}?text=${encodeURIComponent(text)}`;
 }
 
 // Public, no-login link to a billing document's PDF (invoice/receipt) or a maintenance report,
