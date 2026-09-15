@@ -34,6 +34,7 @@ import { issueDocument, issueCreditNote } from "./documents";
 import { buildDocumentPdf, buildMaintenanceReportPdf, buildPayslipPdf } from "./pdf";
 import { emailPayslipsForRun } from "./payroll-pdf-email";
 import { sendTransactionalEmail } from "./email";
+import { notifyApproversOfSubmission, notifyRequesterOfDecision, buildOriginFromRequest } from "./approvals";
 import ExcelJS from "exceljs";
 import { sendSms } from "./sms";
 import { saveBase64Upload, UploadValidationError, UPLOADS_ROOT, TEST_UPLOADS_ROOT } from "./uploads";
@@ -1714,6 +1715,13 @@ export async function registerRoutes(
       const updated = await storage.submitPurchaseRequisition(Number(req.params.id));
       if (!updated) return res.status(404).json({ error: "Purchase requisition not found" });
       res.json(updated);
+      try {
+        const settings = await storage.getSettings();
+        await notifyApproversOfSubmission({ storage, settings, origin: buildOriginFromRequest(req) }, {
+          moduleKey: "purchasing", docType: "Purchase Requisition", docNumber: updated.prNumber,
+          requestedBy: updated.requestedBy, purpose: updated.purpose, linkPath: "/purchasing",
+        });
+      } catch (notifyErr) { console.error("Failed to send PR submission notification:", notifyErr); }
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to submit purchase requisition" }); }
   });
   app.post("/api/purchasing/requisitions/:id/approve", requireModule("purchasing"), async (req, res) => {
@@ -1723,15 +1731,30 @@ export async function registerRoutes(
       if (!supplierId || !payableAccountId) return res.status(400).json({ error: "supplierId and payableAccountId are required" });
       const result = await storage.approvePurchaseRequisition(Number(req.params.id), user.fullName ?? user.username, { supplierId, payableAccountId, expenseAccountId: expenseAccountId ?? null });
       res.json(result);
+      try {
+        const settings = await storage.getSettings();
+        await notifyRequesterOfDecision({ storage, settings, origin: buildOriginFromRequest(req) }, {
+          docType: "Purchase Requisition", docNumber: result.requisition.prNumber, requestedBy: result.requisition.requestedBy,
+          decision: "approved", decidedBy: user.fullName ?? user.username, linkPath: "/purchasing",
+        });
+      } catch (notifyErr) { console.error("Failed to send PR approval notification:", notifyErr); }
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to approve purchase requisition" }); }
   });
   app.post("/api/purchasing/requisitions/:id/reject", requireModule("purchasing"), async (req, res) => {
     try {
+      const user = (req as any).user;
       const { reason } = req.body as { reason?: string };
       if (!reason) return res.status(400).json({ error: "A rejection reason is required" });
       const updated = await storage.rejectPurchaseRequisition(Number(req.params.id), reason);
       if (!updated) return res.status(404).json({ error: "Purchase requisition not found" });
       res.json(updated);
+      try {
+        const settings = await storage.getSettings();
+        await notifyRequesterOfDecision({ storage, settings, origin: buildOriginFromRequest(req) }, {
+          docType: "Purchase Requisition", docNumber: updated.prNumber, requestedBy: updated.requestedBy,
+          decision: "rejected", decidedBy: user.fullName ?? user.username, reason, linkPath: "/purchasing",
+        });
+      } catch (notifyErr) { console.error("Failed to send PR rejection notification:", notifyErr); }
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to reject purchase requisition" }); }
   });
   app.post("/api/purchasing/requisitions/:id/cancel", requireModule("purchasing"), requireCanAdjustInventory, async (req, res) => {
@@ -1777,13 +1800,51 @@ export async function registerRoutes(
       res.json(updated);
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to update purchase order" }); }
   });
+  app.post("/api/purchasing/orders/:id/submit", requireModule("purchasing"), async (req, res) => {
+    try {
+      const updated = await storage.submitPurchaseOrder(Number(req.params.id));
+      if (!updated) return res.status(404).json({ error: "Purchase order not found" });
+      res.json(updated);
+      try {
+        const settings = await storage.getSettings();
+        await notifyApproversOfSubmission({ storage, settings, origin: buildOriginFromRequest(req) }, {
+          moduleKey: "purchasing", docType: "Purchase Order", docNumber: updated.poNumber,
+          requestedBy: updated.createdBy, purpose: updated.notes, linkPath: "/purchasing",
+        });
+      } catch (notifyErr) { console.error("Failed to send PO submission notification:", notifyErr); }
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to submit purchase order" }); }
+  });
   app.post("/api/purchasing/orders/:id/approve", requireModule("purchasing"), async (req, res) => {
     try {
       const user = (req as any).user;
       const updated = await storage.approvePurchaseOrder(Number(req.params.id), user.fullName ?? user.username);
       if (!updated) return res.status(404).json({ error: "Purchase order not found" });
       res.json(updated);
+      try {
+        const settings = await storage.getSettings();
+        await notifyRequesterOfDecision({ storage, settings, origin: buildOriginFromRequest(req) }, {
+          docType: "Purchase Order", docNumber: updated.poNumber, requestedBy: updated.createdBy,
+          decision: "approved", decidedBy: user.fullName ?? user.username, linkPath: "/purchasing",
+        });
+      } catch (notifyErr) { console.error("Failed to send PO approval notification:", notifyErr); }
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to approve purchase order" }); }
+  });
+  app.post("/api/purchasing/orders/:id/reject", requireModule("purchasing"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { reason } = req.body as { reason?: string };
+      if (!reason) return res.status(400).json({ error: "A rejection reason is required" });
+      const updated = await storage.rejectPurchaseOrder(Number(req.params.id), reason);
+      if (!updated) return res.status(404).json({ error: "Purchase order not found" });
+      res.json(updated);
+      try {
+        const settings = await storage.getSettings();
+        await notifyRequesterOfDecision({ storage, settings, origin: buildOriginFromRequest(req) }, {
+          docType: "Purchase Order", docNumber: updated.poNumber, requestedBy: updated.createdBy,
+          decision: "rejected", decidedBy: user.fullName ?? user.username, reason, linkPath: "/purchasing",
+        });
+      } catch (notifyErr) { console.error("Failed to send PO rejection notification:", notifyErr); }
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to reject purchase order" }); }
   });
   app.post("/api/purchasing/orders/:id/receive", requireModule("purchasing"), async (req, res) => {
     try {
@@ -1858,6 +1919,13 @@ export async function registerRoutes(
       const updated = await storage.submitInternalRequisition(Number(req.params.id));
       if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
       res.json(updated);
+      try {
+        const settings = await storage.getSettings();
+        await notifyApproversOfSubmission({ storage, settings, origin: buildOriginFromRequest(req) }, {
+          moduleKey: "internal-requisitions", docType: "Internal Requisition", docNumber: updated.irNumber,
+          requestedBy: updated.requestedBy, purpose: updated.purpose, linkPath: "/internal-requisitions",
+        });
+      } catch (notifyErr) { console.error("Failed to send IR submission notification:", notifyErr); }
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to submit internal requisition" }); }
   });
   app.post("/api/internal-requisitions/:id/approve", requireModule("internal-requisitions"), async (req, res) => {
@@ -1866,15 +1934,30 @@ export async function registerRoutes(
       const updated = await storage.approveInternalRequisition(Number(req.params.id), user.fullName ?? user.username);
       if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
       res.json(updated);
+      try {
+        const settings = await storage.getSettings();
+        await notifyRequesterOfDecision({ storage, settings, origin: buildOriginFromRequest(req) }, {
+          docType: "Internal Requisition", docNumber: updated.irNumber, requestedBy: updated.requestedBy,
+          decision: "approved", decidedBy: user.fullName ?? user.username, linkPath: "/internal-requisitions",
+        });
+      } catch (notifyErr) { console.error("Failed to send IR approval notification:", notifyErr); }
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to approve internal requisition" }); }
   });
   app.post("/api/internal-requisitions/:id/reject", requireModule("internal-requisitions"), async (req, res) => {
     try {
+      const user = (req as any).user;
       const { reason } = req.body as { reason?: string };
       if (!reason) return res.status(400).json({ error: "A rejection reason is required" });
       const updated = await storage.rejectInternalRequisition(Number(req.params.id), reason);
       if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
       res.json(updated);
+      try {
+        const settings = await storage.getSettings();
+        await notifyRequesterOfDecision({ storage, settings, origin: buildOriginFromRequest(req) }, {
+          docType: "Internal Requisition", docNumber: updated.irNumber, requestedBy: updated.requestedBy,
+          decision: "rejected", decidedBy: user.fullName ?? user.username, reason, linkPath: "/internal-requisitions",
+        });
+      } catch (notifyErr) { console.error("Failed to send IR rejection notification:", notifyErr); }
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to reject internal requisition" }); }
   });
   app.post("/api/internal-requisitions/:id/issue", requireModule("internal-requisitions"), async (req, res) => {

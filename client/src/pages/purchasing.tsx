@@ -43,7 +43,7 @@ const prStatusVariant: Record<string, "default" | "secondary" | "outline" | "des
   draft: "outline", pending_approval: "default", approved: "secondary", rejected: "destructive", cancelled: "destructive",
 };
 const poStatusVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
-  draft: "outline", approved: "default", partially_received: "default", received: "secondary", cancelled: "destructive",
+  draft: "outline", pending_approval: "default", approved: "secondary", rejected: "destructive", partially_received: "default", received: "secondary", cancelled: "destructive",
 };
 
 function titleCase(s: string): string {
@@ -756,10 +756,20 @@ function PurchaseOrdersTab({ canAdjust }: { canAdjust: boolean }) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const supplierName = (id: number) => suppliers.find((s) => s.id === id)?.name ?? `#${id}`;
 
+  const submitPo = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/purchasing/orders/${id}/submit`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/purchasing/orders"] }); toast({ title: "Purchase order submitted for approval" }); },
+    onError: (err: Error) => toast({ title: "Couldn't submit order", description: extractErrorMessage(err.message), variant: "destructive" }),
+  });
   const approvePo = useMutation({
     mutationFn: (id: number) => apiRequest("POST", `/api/purchasing/orders/${id}/approve`),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/purchasing/orders"] }); toast({ title: "Purchase order approved" }); },
     onError: (err: Error) => toast({ title: "Couldn't approve order", description: extractErrorMessage(err.message), variant: "destructive" }),
+  });
+  const rejectPo = useMutation({
+    mutationFn: ({ id, reason }: { id: number; reason: string }) => apiRequest("POST", `/api/purchasing/orders/${id}/reject`, { reason }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/purchasing/orders"] }); toast({ title: "Purchase order rejected" }); },
+    onError: (err: Error) => toast({ title: "Couldn't reject order", description: extractErrorMessage(err.message), variant: "destructive" }),
   });
   const receiveDirect = useMutation({
     mutationFn: (id: number) => apiRequest("POST", `/api/purchasing/orders/${id}/receive-direct`),
@@ -808,9 +818,23 @@ function PurchaseOrdersTab({ canAdjust }: { canAdjust: boolean }) {
                     <TableCell className="text-right">
                       <div className="flex justify-end items-center gap-1">
                         {po.status === "draft" && (
-                          <Button size="sm" variant="outline" onClick={() => approvePo.mutate(po.id)} disabled={approvePo.isPending} data-testid={`button-approve-po-${po.id}`}>
-                            <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Approve
+                          <Button size="sm" variant="outline" onClick={() => submitPo.mutate(po.id)} disabled={submitPo.isPending} data-testid={`button-submit-po-${po.id}`}>
+                            <Send className="h-3.5 w-3.5 mr-1" /> Submit
                           </Button>
+                        )}
+                        {po.status === "pending_approval" && (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => approvePo.mutate(po.id)} disabled={approvePo.isPending} data-testid={`button-approve-po-${po.id}`}>
+                              <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Approve
+                            </Button>
+                            <ReasonDialog
+                              title={`Reject ${po.poNumber}?`}
+                              label="Reason for rejection"
+                              confirmLabel="Reject order"
+                              onConfirm={(reason) => rejectPo.mutate({ id: po.id, reason })}
+                              trigger={<Button size="icon" variant="ghost" title="Reject" data-testid={`button-reject-po-${po.id}`}><Ban className="h-4 w-4" /></Button>}
+                            />
+                          </>
                         )}
                         {(po.status === "approved" || po.status === "partially_received") && po.type === "stock" && (
                           <ReceiveGoodsDialog po={po} stores={stores} trigger={
@@ -822,7 +846,7 @@ function PurchaseOrdersTab({ canAdjust }: { canAdjust: boolean }) {
                             <FileText className="h-3.5 w-3.5 mr-1" /> Post expense
                           </Button>
                         )}
-                        {(po.status === "draft" || po.status === "approved" || po.status === "partially_received") && (
+                        {(po.status === "draft" || po.status === "pending_approval" || po.status === "approved" || po.status === "partially_received") && (
                           canAdjust ? (
                             <ReasonDialog
                               title={`Cancel ${po.poNumber}?`}

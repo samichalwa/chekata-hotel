@@ -1,6 +1,9 @@
 import { Link, useLocation } from "wouter";
+import { useState } from "react";
 import {
   LayoutDashboard,
+  Plus,
+  Minus,
   BedDouble,
   PartyPopper,
   Clapperboard,
@@ -38,6 +41,7 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useQuery } from "@tanstack/react-query";
 import chekataLogo from "@/assets/chekata-logo.jpg";
 import { useCurrentUser, useLogout, canAccess } from "@/hooks/use-auth";
@@ -95,6 +99,18 @@ export function AppSidebar() {
   const hotelName = settings?.hotelName || "The Chekata";
   const copyrightYear = new Date().getFullYear();
 
+  // Each nav group is independently collapsible, collapsed by default so only
+  // the group heading shows. A group that contains the page currently being
+  // viewed starts expanded, so a refresh/deep link never hides the active item.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    for (const group of groupedMenu) {
+      initial[group.label] = group.items.some((item) => item.url === location);
+    }
+    return initial;
+  });
+  const toggleGroup = (label: string) => setOpenGroups((prev) => ({ ...prev, [label]: !prev[label] }));
+
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
@@ -112,25 +128,40 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        {groupedMenu.map((group) => (
-          <SidebarGroup key={group.label}>
-            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {group.items.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={location === item.url} data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
-                      <Link href={item.url}>
-                        <item.icon />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ))}
+        {groupedMenu.map((group) => {
+          const isOpen = openGroups[group.label] ?? false;
+          return (
+            <SidebarGroup key={group.label}>
+              <Collapsible open={isOpen} onOpenChange={() => toggleGroup(group.label)}>
+                <CollapsibleTrigger asChild>
+                  <SidebarGroupLabel
+                    className="flex w-full cursor-pointer items-center justify-between hover-elevate active-elevate-2 rounded-md"
+                    data-testid={`button-group-toggle-${group.label.toLowerCase().replace(/\s+/g, "-")}`}
+                  >
+                    <span>{group.label}</span>
+                    {isOpen ? <Minus className="h-3.5 w-3.5 shrink-0" /> : <Plus className="h-3.5 w-3.5 shrink-0" />}
+                  </SidebarGroupLabel>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <SidebarGroupContent>
+                    <SidebarMenu>
+                      {group.items.map((item) => (
+                        <SidebarMenuItem key={item.title}>
+                          <SidebarMenuButton asChild isActive={location === item.url} data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
+                            <Link href={item.url}>
+                              <item.icon />
+                              <span>{item.title}</span>
+                            </Link>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      ))}
+                    </SidebarMenu>
+                  </SidebarGroupContent>
+                </CollapsibleContent>
+              </Collapsible>
+            </SidebarGroup>
+          );
+        })}
         {settingsItem && (
           <SidebarGroup>
             <SidebarGroupContent>

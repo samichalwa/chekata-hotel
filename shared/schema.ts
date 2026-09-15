@@ -975,7 +975,7 @@ export type InsertPurchaseRequisitionLine = z.infer<typeof insertPurchaseRequisi
 export type PurchaseRequisitionLine = typeof purchaseRequisitionLines.$inferSelect;
 
 // ---------- Purchasing: Purchase Orders ----------
-export const PO_STATUSES = ["draft", "approved", "partially_received", "received", "cancelled"] as const;
+export const PO_STATUSES = ["draft", "pending_approval", "approved", "rejected", "partially_received", "received", "cancelled"] as const;
 export type PoStatus = typeof PO_STATUSES[number];
 
 export const purchaseOrders = pgTable("purchase_orders", {
@@ -992,6 +992,7 @@ export const purchaseOrders = pgTable("purchase_orders", {
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   approvedBy: text("approved_by"),
   approvedAt: bigint("approved_at", { mode: "number" }),
+  rejectedReason: text("rejected_reason"),
   cancelReason: text("cancel_reason"),
   notes: text("notes"),
 });

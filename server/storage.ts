@@ -620,6 +620,7 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   created_at BIGINT NOT NULL,
   approved_by TEXT,
   approved_at BIGINT,
+  rejected_reason TEXT,
   cancel_reason TEXT,
   notes TEXT
 );
@@ -1053,6 +1054,9 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   // PAYE personal relief lives on settings (a single configurable figure), not a table —
   // editable in the Payroll → Statutory Rates screen without a code change.
   await ensureColumn("settings", "paye_personal_relief", "REAL NOT NULL DEFAULT 2400");
+  // Approval-workflow additions: standalone purchase orders now go through the same
+  // draft -> pending_approval -> approved/rejected flow as requisitions.
+  await ensureColumn("purchase_orders", "rejected_reason", "TEXT");
 
   // ---- Backfill public_token for any pre-existing rows created before that column existed ----
   // (each row needs its OWN random token, so this can't be a single UPDATE ... SET public_token = <one value>).
@@ -1674,7 +1678,9 @@ export interface IStorage {
   getPurchaseOrderLines(poId: number): Promise<PurchaseOrderLine[]>;
   createPurchaseOrder(data: Omit<InsertPurchaseOrder, "poNumber">, lines: Omit<InsertPurchaseOrderLine, "poId">[]): Promise<PurchaseOrder>;
   updatePurchaseOrder(id: number, data: Partial<InsertPurchaseOrder>, lines?: Omit<InsertPurchaseOrderLine, "poId">[]): Promise<PurchaseOrder | undefined>;
+  submitPurchaseOrder(id: number): Promise<PurchaseOrder | undefined>;
   approvePurchaseOrder(id: number, approvedBy: string): Promise<PurchaseOrder | undefined>;
+  rejectPurchaseOrder(id: number, reason: string): Promise<PurchaseOrder | undefined>;
   cancelPurchaseOrder(id: number, reason: string): Promise<PurchaseOrder | undefined>;
   receiveGoods(poId: number, data: { storeId: number; receivedBy: string; lines: { poLineId: number; quantityReceived: number; unitCost: number }[]; notes?: string }): Promise<GoodsReceipt>;
   receivePurchaseOrderDirect(poId: number, receivedBy: string): Promise<PurchaseOrder | undefined>;
@@ -2975,11 +2981,27 @@ export class DatabaseStorage implements IStorage {
       return updated;
     });
   }
+  async submitPurchaseOrder(id: number) {
+    const current = await this.getPurchaseOrder(id);
+    if (!current) return undefined;
+    if (current.status !== "draft") throw new Error(`Only a draft purchase order can be submitted (this one is ${current.status.replace("_", " ")})`);
+    return (await db.update(purchaseOrders).set({ status: "pending_approval" }).where(eq(purchaseOrders.id, id)).returning())[0];
+  }
   async approvePurchaseOrder(id: number, approvedBy: string) {
     const current = await this.getPurchaseOrder(id);
     if (!current) return undefined;
-    if (current.status !== "draft") throw new Error(`Cannot approve a purchase order that is ${current.status.replace("_", " ")}`);
+    if (current.status !== "pending_approval" && current.status !== "draft") {
+      throw new Error(`Cannot approve a purchase order that is ${current.status.replace("_", " ")}`);
+    }
     return (await db.update(purchaseOrders).set({ status: "approved", approvedBy, approvedAt: Date.now() }).where(eq(purchaseOrders.id, id)).returning())[0];
+  }
+  async rejectPurchaseOrder(id: number, reason: string) {
+    const current = await this.getPurchaseOrder(id);
+    if (!current) return undefined;
+    if (current.status !== "pending_approval" && current.status !== "draft") {
+      throw new Error(`Cannot reject a purchase order that is ${current.status.replace("_", " ")}`);
+    }
+    return (await db.update(purchaseOrders).set({ status: "rejected", rejectedReason: reason }).where(eq(purchaseOrders.id, id)).returning())[0];
   }
   async cancelPurchaseOrder(id: number, reason: string) {
     const current = await this.getPurchaseOrder(id);
