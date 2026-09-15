@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Pencil, Trash2, PartyPopper, CalendarCheck, MessageCircle } from "lucide-react";
+import { Plus, Pencil, Trash2, PartyPopper, CalendarCheck, MessageCircle, Undo2 } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -21,6 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, formatDate, hoursBetween, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
+import { CreditNoteDialog } from "@/components/credit-note-dialog";
 import type { Facility, FacilityBooking } from "@shared/schema";
 
 const facilityFormSchema = z.object({
@@ -390,7 +391,7 @@ export default function Facilities() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/facility-bookings"] }); toast({ title: "Booking removed" }); },
   });
 
-  const revenue = bookings.filter((b) => b.status !== "cancelled").reduce((s, b) => s + b.totalAmount, 0);
+  const revenue = bookings.filter((b) => b.status !== "cancelled").reduce((s, b) => s + b.totalAmount - (b.creditedAmount ?? 0), 0);
   const upcoming = bookings.filter((b) => b.status === "confirmed").length;
   const sortedBookings = [...bookings].sort((a, b) => b.createdAt - a.createdAt);
   const sortedFacilities = [...facilities].sort((a, b) => a.name.localeCompare(b.name));
@@ -453,6 +454,18 @@ export default function Facilities() {
                               <FacilityBookingFormDialog booking={b} facilities={facilities} trigger={
                                 <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-facility-booking-${b.id}`}><Pencil className="h-4 w-4" /></Button>
                               } />
+                              {b.totalAmount - (b.creditedAmount ?? 0) > 0 && (
+                                <CreditNoteDialog
+                                  endpoint={`/api/facility-bookings/${b.id}/credit-note`}
+                                  invalidateKeys={[["/api/facility-bookings"], ["/api/documents"]]}
+                                  maxAmount={b.totalAmount - (b.creditedAmount ?? 0)}
+                                  recipientName={b.clientName}
+                                  recipientPhone={b.clientPhone}
+                                  trigger={
+                                    <Button size="icon" variant="ghost" title="Issue credit note" data-testid={`button-credit-note-${b.id}`}><Undo2 className="h-4 w-4" /></Button>
+                                  }
+                                />
+                              )}
                               <AlertDialog>
                                 <AlertDialogTrigger asChild>
                                   <Button size="icon" variant="ghost" title="Delete" data-testid={`button-delete-facility-booking-${b.id}`}><Trash2 className="h-4 w-4" /></Button>

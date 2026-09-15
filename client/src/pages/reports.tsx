@@ -69,7 +69,7 @@ export default function Reports() {
   const facilityById = useMemo(() => new Map(facilities.map((f) => [f.id, f])), [facilities]);
 
   const accommodationRevenue = useMemo(
-    () => bookings.filter((b) => b.status !== "cancelled" && inRange(b.checkIn)).reduce((s, b) => s + b.totalAmount, 0),
+    () => bookings.filter((b) => b.status !== "cancelled" && inRange(b.checkIn)).reduce((s, b) => s + b.totalAmount - (b.creditedAmount ?? 0), 0),
     [bookings, fromDate, toDate]
   );
 
@@ -79,7 +79,7 @@ export default function Reports() {
       .filter((b) => b.status !== "cancelled" && inRange(b.eventDate))
       .forEach((b) => {
         const name = facilityById.get(b.facilityId)?.name ?? "Other facility";
-        map.set(name, (map.get(name) ?? 0) + b.totalAmount);
+        map.set(name, (map.get(name) ?? 0) + b.totalAmount - (b.creditedAmount ?? 0));
       });
     return map;
   }, [facilityBookings, facilityById, fromDate, toDate]);
@@ -87,17 +87,17 @@ export default function Reports() {
   const facilityRevenue = Array.from(facilityRevenueByName.values()).reduce((s, v) => s + v, 0);
 
   const barRevenue = useMemo(
-    () => orders.filter((o) => o.outlet === "bar" && o.status === "paid" && inRange(o.orderDate)).reduce((s, o) => s + o.totalAmount, 0),
+    () => orders.filter((o) => o.outlet === "bar" && o.status === "paid" && inRange(o.orderDate)).reduce((s, o) => s + o.totalAmount - (o.creditedAmount ?? 0), 0),
     [orders, fromDate, toDate]
   );
   const restaurantRevenue = useMemo(
-    () => orders.filter((o) => o.outlet === "restaurant" && o.status === "paid" && inRange(o.orderDate)).reduce((s, o) => s + o.totalAmount, 0),
+    () => orders.filter((o) => o.outlet === "restaurant" && o.status === "paid" && inRange(o.orderDate)).reduce((s, o) => s + o.totalAmount - (o.creditedAmount ?? 0), 0),
     [orders, fromDate, toDate]
   );
 
   const movieShowById = useMemo(() => new Map(movieShows.map((s) => [s.id, s])), [movieShows]);
   const movieRevenue = useMemo(
-    () => movieSeatBookings.filter((b) => b.status !== "cancelled" && inRange(movieShowById.get(b.showId)?.showDate ?? "")).reduce((s, b) => s + b.amountPaid, 0),
+    () => movieSeatBookings.filter((b) => b.status !== "cancelled" && inRange(movieShowById.get(b.showId)?.showDate ?? "")).reduce((s, b) => s + b.amountPaid - (b.creditedAmount ?? 0), 0),
     [movieSeatBookings, movieShowById, fromDate, toDate]
   );
 
@@ -320,7 +320,7 @@ export default function Reports() {
                   )}
                   {bookingsInRange.map((b) => {
                     const room = roomById.get(b.roomId);
-                    const balance = b.totalAmount - b.amountPaid;
+                    const balance = b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0);
                     return (
                       <TableRow key={b.id} data-testid={`row-report-booking-${b.id}`}>
                         <TableCell>{b.guestName}</TableCell>
@@ -368,7 +368,7 @@ export default function Reports() {
                   )}
                   {facilityBookingsInRange.map((b) => {
                     const facility = facilityById.get(b.facilityId);
-                    const balance = b.totalAmount - b.amountPaid;
+                    const balance = b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0);
                     return (
                       <TableRow key={b.id} data-testid={`row-report-facility-booking-${b.id}`}>
                         <TableCell>{b.clientName}</TableCell>
@@ -409,7 +409,7 @@ export default function Reports() {
                   )}
                   {movieBookingsInRange.map((b) => {
                     const show = movieShowById.get(b.showId);
-                    const balance = b.ticketPrice - b.amountPaid;
+                    const balance = b.ticketPrice - b.amountPaid - (b.creditedAmount ?? 0);
                     return (
                       <TableRow key={b.id} data-testid={`row-report-movie-booking-${b.id}`}>
                         <TableCell>{b.guestName}</TableCell>

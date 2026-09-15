@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Pencil, Trash2, UtensilsCrossed, Wine, Receipt, X, MessageCircle, CheckCircle2, Lock, Info } from "lucide-react";
+import { Plus, Pencil, Trash2, UtensilsCrossed, Wine, Receipt, X, MessageCircle, CheckCircle2, Lock, Info, Undo2 } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, todayISO, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
+import { CreditNoteDialog } from "@/components/credit-note-dialog";
 import { Link } from "wouter";
 import type { MenuItem, Order, OrderItem, TableRow as TableEntity } from "@shared/schema";
 
@@ -424,8 +425,8 @@ export default function BarRestaurant() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/orders"] }); toast({ title: "Order removed" }); },
   });
 
-  const barRevenue = orders.filter((o) => o.outlet === "bar" && o.status === "paid").reduce((s, o) => s + o.totalAmount, 0);
-  const restaurantRevenue = orders.filter((o) => o.outlet === "restaurant" && o.status === "paid").reduce((s, o) => s + o.totalAmount, 0);
+  const barRevenue = orders.filter((o) => o.outlet === "bar" && o.status === "paid").reduce((s, o) => s + o.totalAmount - (o.creditedAmount ?? 0), 0);
+  const restaurantRevenue = orders.filter((o) => o.outlet === "restaurant" && o.status === "paid").reduce((s, o) => s + o.totalAmount - (o.creditedAmount ?? 0), 0);
   const openOrders = orders.filter((o) => o.status === "open").length;
 
   const sortedOrders = [...orders].sort((a, b) => b.createdAt - a.createdAt);
@@ -487,6 +488,18 @@ export default function BarRestaurant() {
                             <OrderManagerDialog order={o} menuItems={menuItems} trigger={
                               <Button size="icon" variant="ghost" title="Manage items" data-testid={`button-manage-order-${o.id}`}><Pencil className="h-4 w-4" /></Button>
                             } />
+                            {o.status === "paid" && o.totalAmount - (o.creditedAmount ?? 0) > 0 && (
+                              <CreditNoteDialog
+                                endpoint={`/api/orders/${o.id}/credit-note`}
+                                invalidateKeys={[["/api/orders"], ["/api/documents"]]}
+                                maxAmount={o.totalAmount - (o.creditedAmount ?? 0)}
+                                recipientName={o.customerName || "Guest"}
+                                recipientPhone={o.customerPhone}
+                                trigger={
+                                  <Button size="icon" variant="ghost" title="Issue credit note" data-testid={`button-credit-note-${o.id}`}><Undo2 className="h-4 w-4" /></Button>
+                                }
+                              />
+                            )}
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button size="icon" variant="ghost" title="Delete" data-testid={`button-delete-order-${o.id}`}><Trash2 className="h-4 w-4" /></Button>

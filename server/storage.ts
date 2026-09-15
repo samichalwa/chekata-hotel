@@ -952,6 +952,15 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
 `);
   await ensureColumn("chart_of_accounts", "income_stream_code", "TEXT");
   await ensureColumn("maintenance_issues", "asset_id", "INTEGER");
+  // Credit notes (Phase 7): amounts already credited against each booking/order's invoice,
+  // and the invoice/reason a credit_note document references.
+  await ensureColumn("accommodation_bookings", "credited_amount", "REAL NOT NULL DEFAULT 0");
+  await ensureColumn("facility_bookings", "credited_amount", "REAL NOT NULL DEFAULT 0");
+  await ensureColumn("movie_seat_bookings", "credited_amount", "REAL NOT NULL DEFAULT 0");
+  await ensureColumn("orders", "credited_amount", "REAL NOT NULL DEFAULT 0");
+  await ensureColumn("documents", "related_document_id", "INTEGER");
+  await ensureColumn("documents", "reason", "TEXT");
+  await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('credit_note', 'CN', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
 
   // ---- Idempotent column additions for installs upgraded from an earlier version ----
   async function ensureColumn(table: string, column: string, ddl: string) {
@@ -1488,6 +1497,7 @@ export interface IStorage {
   getDocument(id: number): Promise<DocumentRecord | undefined>;
   createDocument(data: InsertDocument): Promise<DocumentRecord>;
   getLatestDocumentBySource(category: string, sourceId: number): Promise<DocumentRecord | undefined>;
+  getBillingDocumentBySource(category: string, sourceId: number): Promise<DocumentRecord | undefined>;
 
   // Users (auth + module access)
   listUsers(): Promise<User[]>;
@@ -2243,6 +2253,20 @@ export class DatabaseStorage implements IStorage {
         .from(documents)
         .where(and(eq(documents.category, category), eq(documents.sourceId, sourceId)))
         .orderBy(desc(documents.createdAt))
+        .limit(1)
+    )[0];
+  }
+  // The original bill (invoice for accommodation/facility/movie, or receipt for bar/restaurant
+  // orders which never get a separate invoice step) for a booking/order. Credit notes require
+  // this to exist before they can be issued, and reference its amount + document number.
+  // Returns the earliest matching document (there should only ever be one per source record).
+  async getBillingDocumentBySource(category: string, sourceId: number) {
+    return (
+      await db
+        .select()
+        .from(documents)
+        .where(and(eq(documents.category, category), eq(documents.sourceId, sourceId), inArray(documents.docType, ["invoice", "receipt"])))
+        .orderBy(documents.createdAt)
         .limit(1)
     )[0];
   }

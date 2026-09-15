@@ -48,7 +48,7 @@ export interface DocLineItem {
 }
 
 export interface DocPayload {
-  docType: "invoice" | "receipt";
+  docType: "invoice" | "receipt" | "credit_note";
   docNumber: number;
   category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy";
   customDocNumber?: string; // overrides the auto "INV-00001"/"RCT-00001" label (e.g. a module's own sequence number like RENT-000012)
@@ -64,6 +64,9 @@ export interface DocPayload {
   paymentReference?: string | null;
   notes?: string;
   taxBreakdown?: { preTaxBase: number; totalTax: number; lines: { name: string; ratePercent: number; amount: number }[] };
+  // Credit notes only
+  relatedDocNumber?: string; // the invoice/receipt number this credit note is issued against
+  reason?: string;
 }
 
 function fmtKES(n: number): string {
@@ -109,14 +112,18 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
     if (settings.hotelEmail) { doc.text(settings.hotelEmail, textX, y); y += 13; }
 
     // ---- Doc title box (right) ----
-    const title = payload.docType === "invoice" ? "INVOICE" : "RECEIPT";
-    doc.fillColor(dark).fontSize(18).font("Helvetica-Bold").text(title, 350, 50, { width: 195, align: "right" });
+    const title = payload.docType === "invoice" ? "INVOICE" : payload.docType === "receipt" ? "RECEIPT" : "CREDIT NOTE";
+    const docPrefix = payload.docType === "invoice" ? "INV" : payload.docType === "receipt" ? "RCT" : "CN";
+    doc.fillColor(payload.docType === "credit_note" ? accent : dark).fontSize(18).font("Helvetica-Bold").text(title, 320, 50, { width: 225, align: "right" });
     doc.fillColor(muted).fontSize(9).font("Helvetica");
-    doc.text(`No: ${payload.customDocNumber ?? `${payload.docType === "invoice" ? "INV" : "RCT"}-${String(payload.docNumber).padStart(5, "0")}`}`, 350, 74, { width: 195, align: "right" });
-    doc.text(`Date: ${payload.issueDate}`, 350, 88, { width: 195, align: "right" });
-    doc.text(`Service: ${CATEGORY_LABEL[payload.category] ?? payload.category}`, 350, 102, { width: 195, align: "right" });
+    doc.text(`No: ${payload.customDocNumber ?? `${docPrefix}-${String(payload.docNumber).padStart(5, "0")}`}`, 320, 74, { width: 225, align: "right" });
+    doc.text(`Date: ${payload.issueDate}`, 320, 88, { width: 225, align: "right" });
+    doc.text(`Service: ${CATEGORY_LABEL[payload.category] ?? payload.category}`, 320, 102, { width: 225, align: "right" });
+    if (payload.docType === "credit_note" && payload.relatedDocNumber) {
+      doc.text(`Against: ${payload.relatedDocNumber}`, 320, 116, { width: 225, align: "right" });
+    }
 
-    y = Math.max(y, 116) + 20;
+    y = Math.max(y, payload.docType === "credit_note" && payload.relatedDocNumber ? 130 : 116) + 20;
 
     // ---- Divider ----
     doc.moveTo(50, y).lineTo(545, y).strokeColor("#d9d0c4").lineWidth(1).stroke();
@@ -177,35 +184,52 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
 
     // ---- Totals ----
     const totalsX = 350;
-    doc.font("Helvetica").fontSize(10).fillColor(muted);
-    doc.text("Total", totalsX, y, { width: 90 });
-    doc.fillColor(dark).font("Helvetica-Bold").text(fmtKES(payload.totalAmount), totalsX + 90, y, { width: 105, align: "right" });
-    y += 16;
-
-    doc.font("Helvetica").fillColor(muted).text("Amount paid", totalsX, y, { width: 90 });
-    doc.fillColor(dark).font("Helvetica-Bold").text(fmtKES(payload.amountPaid), totalsX + 90, y, { width: 105, align: "right" });
-    y += 16;
-
-    if (payload.docType === "receipt" && payload.paymentAmount) {
-      doc.font("Helvetica").fillColor(muted).text("This payment", totalsX, y, { width: 90 });
-      doc.fillColor(accent).font("Helvetica-Bold").text(fmtKES(payload.paymentAmount), totalsX + 90, y, { width: 105, align: "right" });
+    if (payload.docType === "credit_note") {
+      doc.font("Helvetica").fontSize(10).fillColor(muted);
+      doc.text("Credit amount", totalsX, y, { width: 90 });
+      doc.fillColor(accent).font("Helvetica-Bold").text(fmtKES(payload.totalAmount), totalsX + 90, y, { width: 105, align: "right" });
       y += 16;
-    }
-    if (payload.paymentMethod) {
-      doc.font("Helvetica").fillColor(muted).fontSize(9).text(`Method: ${payload.paymentMethod}`, totalsX, y, { width: 195, align: "right" });
-      y += 14;
-    }
-    if (payload.paymentReference) {
-      doc.font("Helvetica").fillColor(muted).fontSize(9).text(`Reference: ${payload.paymentReference}`, totalsX, y, { width: 195, align: "right" });
-      y += 14;
-    }
+      if (payload.reason) {
+        doc.font("Helvetica").fontSize(9).fillColor(muted).text(`Reason: ${payload.reason}`, 50, y, { width: 495 });
+        y += 16;
+      }
+      doc.moveTo(totalsX, y).lineTo(545, y).strokeColor("#d9d0c4").lineWidth(1).stroke();
+      y += 8;
+      doc.font("Helvetica-Bold").fontSize(9).fillColor(payload.balance > 0 ? "#a3402a" : "#2f7a4f");
+      doc.text("New balance", totalsX, y, { width: 90 });
+      doc.fontSize(11).text(fmtKES(Math.max(0, payload.balance)), totalsX + 90, y - 1, { width: 105, align: "right" });
+      y += 30;
+    } else {
+      doc.font("Helvetica").fontSize(10).fillColor(muted);
+      doc.text("Total", totalsX, y, { width: 90 });
+      doc.fillColor(dark).font("Helvetica-Bold").text(fmtKES(payload.totalAmount), totalsX + 90, y, { width: 105, align: "right" });
+      y += 16;
 
-    doc.moveTo(totalsX, y).lineTo(545, y).strokeColor("#d9d0c4").lineWidth(1).stroke();
-    y += 8;
-    doc.font("Helvetica-Bold").fontSize(11).fillColor(payload.balance > 0 ? "#a3402a" : "#2f7a4f");
-    doc.text(payload.balance > 0 ? "Balance due" : "Balance", totalsX, y, { width: 90 });
-    doc.text(fmtKES(Math.max(0, payload.balance)), totalsX + 90, y, { width: 105, align: "right" });
-    y += 30;
+      doc.font("Helvetica").fillColor(muted).text("Amount paid", totalsX, y, { width: 90 });
+      doc.fillColor(dark).font("Helvetica-Bold").text(fmtKES(payload.amountPaid), totalsX + 90, y, { width: 105, align: "right" });
+      y += 16;
+
+      if (payload.docType === "receipt" && payload.paymentAmount) {
+        doc.font("Helvetica").fillColor(muted).text("This payment", totalsX, y, { width: 90 });
+        doc.fillColor(accent).font("Helvetica-Bold").text(fmtKES(payload.paymentAmount), totalsX + 90, y, { width: 105, align: "right" });
+        y += 16;
+      }
+      if (payload.paymentMethod) {
+        doc.font("Helvetica").fillColor(muted).fontSize(9).text(`Method: ${payload.paymentMethod}`, totalsX, y, { width: 195, align: "right" });
+        y += 14;
+      }
+      if (payload.paymentReference) {
+        doc.font("Helvetica").fillColor(muted).fontSize(9).text(`Reference: ${payload.paymentReference}`, totalsX, y, { width: 195, align: "right" });
+        y += 14;
+      }
+
+      doc.moveTo(totalsX, y).lineTo(545, y).strokeColor("#d9d0c4").lineWidth(1).stroke();
+      y += 8;
+      doc.font("Helvetica-Bold").fontSize(11).fillColor(payload.balance > 0 ? "#a3402a" : "#2f7a4f");
+      doc.text(payload.balance > 0 ? "Balance due" : "Balance", totalsX, y, { width: 90 });
+      doc.text(fmtKES(Math.max(0, payload.balance)), totalsX + 90, y, { width: 105, align: "right" });
+      y += 30;
+    }
 
     if (payload.notes) {
       doc.font("Helvetica").fontSize(9).fillColor(muted).text(payload.notes, 50, y, { width: 495 });

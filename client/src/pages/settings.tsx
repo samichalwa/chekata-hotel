@@ -23,6 +23,19 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import type { Settings, Tax, SafeUser, ModuleKey } from "@shared/schema";
 import { MODULE_KEYS, MODULE_LABELS } from "@shared/schema";
 
+// Purely visual grouping of the module checkboxes below — does not change the
+// `permissions` data structure or any permission logic, only how the same
+// MODULE_KEYS list is laid out on screen. Every key (except "settings", which
+// is never assignable) must appear in exactly one category here.
+const MODULE_CATEGORY_GROUPS: { label: string; keys: ModuleKey[] }[] = [
+  { label: "Operations", keys: ["dashboard", "accommodation", "maintenance"] },
+  { label: "Facilities", keys: ["facilities", "movie-room", "bar-restaurant", "fnb-costing"] },
+  { label: "Finance & Accounting", keys: ["finance", "budgeting", "documents", "expenses"] },
+  { label: "HR", keys: ["staff", "attendance", "leave", "payroll"] },
+  { label: "Supply", keys: ["purchasing", "internal-requisitions", "inventory", "assets"] },
+  { label: "Administration", keys: ["lists", "reports", "tenants", "system-admin"] },
+];
+
 const settingsFormSchema = z.object({
   hotelName: z.string().min(1, "Hotel name is required"),
   hotelAddress: z.string().optional().nullable(),
@@ -654,23 +667,30 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
                 <FormItem>
                   <FormLabel>Module access</FormLabel>
                   <FormDescription>Choose exactly which pages this user can open and use.</FormDescription>
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    {MODULE_KEYS.filter((k) => k !== "settings").map((key) => {
-                      const checked = (field.value as string[]).includes(key);
-                      return (
-                        <label key={key} className="flex items-center gap-2 text-sm">
-                          <Checkbox
-                            checked={checked}
-                            onCheckedChange={(c) => {
-                              const current = field.value as string[];
-                              field.onChange(c ? [...current, key] : current.filter((k) => k !== key));
-                            }}
-                            data-testid={`checkbox-permission-${key}`}
-                          />
-                          {MODULE_LABELS[key]}
-                        </label>
-                      );
-                    })}
+                  <div className="space-y-3 pt-1">
+                    {MODULE_CATEGORY_GROUPS.map((group) => (
+                      <div key={group.label} className="rounded-md border border-border/60 p-3">
+                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {group.keys.map((key) => {
+                            const checked = (field.value as string[]).includes(key);
+                            return (
+                              <label key={key} className="flex items-center gap-2 text-sm">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(c) => {
+                                    const current = field.value as string[];
+                                    field.onChange(c ? [...current, key] : current.filter((k) => k !== key));
+                                  }}
+                                  data-testid={`checkbox-permission-${key}`}
+                                />
+                                {MODULE_LABELS[key]}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </FormItem>
               )} />

@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Pencil, Trash2, LogIn, LogOut, BedDouble, MessageCircle, IdCard, Upload } from "lucide-react";
+import { Plus, Pencil, Trash2, LogIn, LogOut, BedDouble, MessageCircle, IdCard, Upload, Undo2 } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -21,6 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, formatDate, nightsBetween, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
+import { CreditNoteDialog } from "@/components/credit-note-dialog";
 import type { Room, AccommodationBooking, GuestIdentityDocument } from "@shared/schema";
 
 const roomFormSchema = z.object({
@@ -571,8 +572,8 @@ export default function Accommodation() {
 
   const occupied = rooms.filter((r) => r.status === "occupied").length;
   const activeBookings = bookings.filter((b) => b.status === "confirmed" || b.status === "checked_in");
-  const outstanding = bookings.reduce((s, b) => s + Math.max(0, b.totalAmount - b.amountPaid), 0);
-  const totalRevenue = bookings.filter((b) => b.status !== "cancelled").reduce((s, b) => s + b.totalAmount, 0);
+  const outstanding = bookings.reduce((s, b) => s + Math.max(0, b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0)), 0);
+  const totalRevenue = bookings.filter((b) => b.status !== "cancelled").reduce((s, b) => s + b.totalAmount - (b.creditedAmount ?? 0), 0);
 
   const sortedBookings = [...bookings].sort((a, b) => b.createdAt - a.createdAt);
   const sortedRooms = [...rooms].sort((a, b) => a.name.localeCompare(b.name));
@@ -631,7 +632,7 @@ export default function Accommodation() {
                   <TableBody>
                     {sortedBookings.map((b) => {
                       const room = roomById.get(b.roomId);
-                      const balance = b.totalAmount - b.amountPaid;
+                      const balance = b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0);
                       return (
                         <TableRow key={b.id} data-testid={`row-booking-${b.id}`}>
                           <TableCell className="font-medium">{b.guestName}{b.numberOfGuests > 1 && <span className="text-xs text-muted-foreground ml-1">({b.numberOfGuests} guests)</span>}</TableCell>
@@ -659,6 +660,18 @@ export default function Accommodation() {
                               <BookingFormDialog booking={b} rooms={rooms} trigger={
                                 <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-booking-${b.id}`}><Pencil className="h-4 w-4" /></Button>
                               } />
+                              {b.totalAmount - (b.creditedAmount ?? 0) > 0 && (
+                                <CreditNoteDialog
+                                  endpoint={`/api/accommodation-bookings/${b.id}/credit-note`}
+                                  invalidateKeys={[["/api/accommodation-bookings"], ["/api/documents"]]}
+                                  maxAmount={b.totalAmount - (b.creditedAmount ?? 0)}
+                                  recipientName={b.guestName}
+                                  recipientPhone={b.guestPhone}
+                                  trigger={
+                                    <Button size="icon" variant="ghost" title="Issue credit note" data-testid={`button-credit-note-${b.id}`}><Undo2 className="h-4 w-4" /></Button>
+                                  }
+                                />
+                              )}
                               <AlertDialog>
                                 <AlertDialogTrigger asChild>
                                   <Button size="icon" variant="ghost" title="Delete" data-testid={`button-delete-booking-${b.id}`}><Trash2 className="h-4 w-4" /></Button>

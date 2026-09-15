@@ -115,27 +115,27 @@ async function buildOverviewSheet(wb: ExcelJS.Workbook, storage: IStorage, hotel
 
   const accommodationRevenue = bookings
     .filter((b) => b.status !== "cancelled" && inRange(b.checkIn, from, to))
-    .reduce((s, b) => s + b.totalAmount, 0);
+    .reduce((s, b) => s + b.totalAmount - (b.creditedAmount ?? 0), 0);
 
   const facilityRevenueByName = new Map<string, number>();
   facilityBookings
     .filter((b) => b.status !== "cancelled" && inRange(b.eventDate, from, to))
     .forEach((b) => {
       const name = facilityById.get(b.facilityId)?.name ?? "Other facility";
-      facilityRevenueByName.set(name, (facilityRevenueByName.get(name) ?? 0) + b.totalAmount);
+      facilityRevenueByName.set(name, (facilityRevenueByName.get(name) ?? 0) + b.totalAmount - (b.creditedAmount ?? 0));
     });
   const facilityRevenue = Array.from(facilityRevenueByName.values()).reduce((s, v) => s + v, 0);
 
   const barRevenue = orders
     .filter((o) => o.outlet === "bar" && o.status === "paid" && inRange(o.orderDate, from, to))
-    .reduce((s, o) => s + o.totalAmount, 0);
+    .reduce((s, o) => s + o.totalAmount - (o.creditedAmount ?? 0), 0);
   const restaurantRevenue = orders
     .filter((o) => o.outlet === "restaurant" && o.status === "paid" && inRange(o.orderDate, from, to))
-    .reduce((s, o) => s + o.totalAmount, 0);
+    .reduce((s, o) => s + o.totalAmount - (o.creditedAmount ?? 0), 0);
 
   const movieRevenue = movieSeatBookings
     .filter((b) => b.status !== "cancelled" && inRange(movieShowById.get(b.showId)?.showDate ?? "", from, to))
-    .reduce((s, b) => s + b.amountPaid, 0);
+    .reduce((s, b) => s + b.amountPaid - (b.creditedAmount ?? 0), 0);
 
   const totalRevenue = accommodationRevenue + facilityRevenue + barRevenue + restaurantRevenue + movieRevenue;
 
@@ -222,7 +222,7 @@ async function buildOverviewSheet(wb: ExcelJS.Workbook, storage: IStorage, hotel
 
 async function buildAccommodationSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, from?: string, to?: string) {
   const ws = wb.addWorksheet("Accommodation");
-  const cols = ["Booking ID", "Guest", "Email", "Phone", "Room", "Room type", "Check-in", "Check-out", "Nights", "Rate/night (KES)", "Total (KES)", "Paid (KES)", "Balance (KES)", "Payment method", "Payment reference", "Status", "Notes"];
+  const cols = ["Booking ID", "Guest", "Email", "Phone", "Room", "Room type", "Check-in", "Check-out", "Nights", "Rate/night (KES)", "Total (KES)", "Paid (KES)", "Credited (KES)", "Balance (KES)", "Payment method", "Payment reference", "Status", "Notes"];
   addTitleBlock(ws, hotelName, "Accommodation Bookings", from, to, "Q");
 
   const [bookings, rooms] = await Promise.all([storage.listAccommodationBookings(), storage.listRooms()]);
@@ -232,35 +232,36 @@ async function buildAccommodationSheet(wb: ExcelJS.Workbook, storage: IStorage, 
   const header = ws.addRow(cols);
   styleHeaderRow(header);
 
-  let totalAmount = 0, totalPaid = 0, totalBalance = 0;
+  let totalAmount = 0, totalPaid = 0, totalCredited = 0, totalBalance = 0;
   filtered.forEach((b) => {
     const room = roomById.get(b.roomId);
     const nights = Math.max(0, Math.round((new Date(b.checkOut).getTime() - new Date(b.checkIn).getTime()) / 86400000));
-    const balance = b.totalAmount - b.amountPaid;
-    totalAmount += b.totalAmount; totalPaid += b.amountPaid; totalBalance += balance;
+    const credited = b.creditedAmount ?? 0;
+    const balance = b.totalAmount - b.amountPaid - credited;
+    totalAmount += b.totalAmount; totalPaid += b.amountPaid; totalCredited += credited; totalBalance += balance;
     const row = ws.addRow([
       b.id, b.guestName, b.guestEmail ?? "", b.guestPhone ?? "", room?.name ?? "—", room?.type ? titleCase(room.type) : "—",
-      b.checkIn, b.checkOut, nights, b.rate, b.totalAmount, b.amountPaid, balance, b.paymentMethod ? titleCase(b.paymentMethod) : "—", b.paymentReference ?? "—", titleCase(b.status), b.notes ?? "",
+      b.checkIn, b.checkOut, nights, b.rate, b.totalAmount, b.amountPaid, credited, balance, b.paymentMethod ? titleCase(b.paymentMethod) : "—", b.paymentReference ?? "—", titleCase(b.status), b.notes ?? "",
     ]);
-    [10, 11, 12, 13].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
+    [10, 11, 12, 13, 14].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
   });
 
   if (filtered.length === 0) {
     ws.addRow(["No accommodation bookings in this period."]);
   } else {
-    const totalsRow = ws.addRow(["", "", "", "", "", "", "", "", "Totals", "", totalAmount, totalPaid, totalBalance, "", "", "", ""]);
-    [11, 12, 13].forEach((c) => { totalsRow.getCell(c).numFmt = KES_FMT; totalsRow.getCell(c).alignment = { horizontal: "right" }; });
+    const totalsRow = ws.addRow(["", "", "", "", "", "", "", "", "Totals", "", totalAmount, totalPaid, totalCredited, totalBalance, "", "", "", ""]);
+    [11, 12, 13, 14].forEach((c) => { totalsRow.getCell(c).numFmt = KES_FMT; totalsRow.getCell(c).alignment = { horizontal: "right" }; });
     styleTotalsRow(totalsRow);
   }
 
   ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: cols.length } };
   ws.views = [{ state: "frozen", ySplit: 4 }];
-  autosizeColumns(ws, [10, 18, 22, 14, 10, 10, 11, 11, 8, 14, 12, 12, 12, 14, 18, 12, 20]);
+  autosizeColumns(ws, [10, 18, 22, 14, 10, 10, 11, 11, 8, 14, 12, 12, 13, 12, 14, 18, 12, 20]);
 }
 
 async function buildFacilitiesSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, from?: string, to?: string) {
   const ws = wb.addWorksheet("Conference & Movie Room");
-  const cols = ["Booking ID", "Client", "Email", "Phone", "Facility", "Event date", "Start", "End", "Rate (KES)", "Total (KES)", "Paid (KES)", "Balance (KES)", "Payment method", "Payment reference", "Status", "Notes"];
+  const cols = ["Booking ID", "Client", "Email", "Phone", "Facility", "Event date", "Start", "End", "Rate (KES)", "Total (KES)", "Paid (KES)", "Credited (KES)", "Balance (KES)", "Payment method", "Payment reference", "Status", "Notes"];
   addTitleBlock(ws, hotelName, "Conference Room Bookings", from, to, "P");
 
   const [facilityBookings, facilities] = await Promise.all([storage.listFacilityBookings(), storage.listFacilities()]);
@@ -270,29 +271,30 @@ async function buildFacilitiesSheet(wb: ExcelJS.Workbook, storage: IStorage, hot
   const header = ws.addRow(cols);
   styleHeaderRow(header);
 
-  let totalAmount = 0, totalPaid = 0, totalBalance = 0;
+  let totalAmount = 0, totalPaid = 0, totalCredited = 0, totalBalance = 0;
   filtered.forEach((b) => {
     const facility = facilityById.get(b.facilityId);
-    const balance = b.totalAmount - b.amountPaid;
-    totalAmount += b.totalAmount; totalPaid += b.amountPaid; totalBalance += balance;
+    const credited = b.creditedAmount ?? 0;
+    const balance = b.totalAmount - b.amountPaid - credited;
+    totalAmount += b.totalAmount; totalPaid += b.amountPaid; totalCredited += credited; totalBalance += balance;
     const row = ws.addRow([
       b.id, b.clientName, b.clientEmail ?? "", b.clientPhone ?? "", facility?.name ?? "—", b.eventDate,
-      b.startTime ?? "—", b.endTime ?? "—", b.rate, b.totalAmount, b.amountPaid, balance, b.paymentMethod ? titleCase(b.paymentMethod) : "—", b.paymentReference ?? "—", titleCase(b.status), b.notes ?? "",
+      b.startTime ?? "—", b.endTime ?? "—", b.rate, b.totalAmount, b.amountPaid, credited, balance, b.paymentMethod ? titleCase(b.paymentMethod) : "—", b.paymentReference ?? "—", titleCase(b.status), b.notes ?? "",
     ]);
-    [9, 10, 11, 12].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
+    [9, 10, 11, 12, 13].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
   });
 
   if (filtered.length === 0) {
     ws.addRow(["No conference/movie room bookings in this period."]);
   } else {
-    const totalsRow = ws.addRow(["", "", "", "", "", "", "", "Totals", "", totalAmount, totalPaid, totalBalance, "", "", "", ""]);
-    [10, 11, 12].forEach((c) => { totalsRow.getCell(c).numFmt = KES_FMT; totalsRow.getCell(c).alignment = { horizontal: "right" }; });
+    const totalsRow = ws.addRow(["", "", "", "", "", "", "", "Totals", "", totalAmount, totalPaid, totalCredited, totalBalance, "", "", "", ""]);
+    [10, 11, 12, 13].forEach((c) => { totalsRow.getCell(c).numFmt = KES_FMT; totalsRow.getCell(c).alignment = { horizontal: "right" }; });
     styleTotalsRow(totalsRow);
   }
 
   ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: cols.length } };
   ws.views = [{ state: "frozen", ySplit: 4 }];
-  autosizeColumns(ws, [10, 18, 22, 14, 16, 11, 8, 8, 11, 12, 12, 12, 14, 18, 12, 20]);
+  autosizeColumns(ws, [10, 18, 22, 14, 16, 11, 8, 8, 11, 12, 12, 13, 12, 14, 18, 12, 20]);
 
   // Second table on the same sheet: Movie Room seat bookings.
   ws.addRow([]);
@@ -300,7 +302,9 @@ async function buildFacilitiesSheet(wb: ExcelJS.Workbook, storage: IStorage, hot
   const movieTitleRow = ws.addRow(["Movie Room Seat Bookings"]);
   movieTitleRow.getCell(1).font = { bold: true, size: 13, color: { argb: BRAND } };
 
-  const movieCols = ["Booking Ref", "Show", "Show date", "Start", "End", "Seat", "Guest", "Phone", "Ticket price (KES)", "Paid (KES)", "Balance (KES)", "Payment method", "Payment reference", "Status"];
+  // Credited (KES) reflects credit notes issued against the whole multi-seat group, which are
+  // tracked on the group's first (lowest-id) seat only — other seats in the same booking show 0 here.
+  const movieCols = ["Booking Ref", "Show", "Show date", "Start", "End", "Seat", "Guest", "Phone", "Ticket price (KES)", "Paid (KES)", "Credited (KES)", "Balance (KES)", "Payment method", "Payment reference", "Status"];
   const movieHeaderRowIndex = ws.rowCount + 1;
   const movieHeader = ws.addRow(movieCols);
   styleHeaderRow(movieHeader);
@@ -311,23 +315,24 @@ async function buildFacilitiesSheet(wb: ExcelJS.Workbook, storage: IStorage, hot
     .filter((b) => inRange(movieShowById.get(b.showId)?.showDate ?? "", from, to))
     .sort((a, b) => (movieShowById.get(a.showId)?.showDate ?? "").localeCompare(movieShowById.get(b.showId)?.showDate ?? "") || a.seatRow.localeCompare(b.seatRow) || a.seatNumber - b.seatNumber);
 
-  let movieTotalTicket = 0, movieTotalPaid = 0, movieTotalBalance = 0;
+  let movieTotalTicket = 0, movieTotalPaid = 0, movieTotalCredited = 0, movieTotalBalance = 0;
   filteredMovie.forEach((b) => {
     const show = movieShowById.get(b.showId);
-    const balance = b.ticketPrice - b.amountPaid;
-    movieTotalTicket += b.ticketPrice; movieTotalPaid += b.amountPaid; movieTotalBalance += balance;
+    const credited = b.creditedAmount ?? 0;
+    const balance = b.ticketPrice - b.amountPaid - credited;
+    movieTotalTicket += b.ticketPrice; movieTotalPaid += b.amountPaid; movieTotalCredited += credited; movieTotalBalance += balance;
     const row = ws.addRow([
       b.bookingRef, show?.name ?? "—", show?.showDate ?? "—", show?.startTime ?? "—", show?.endTime ?? "—",
-      `${b.seatRow}${b.seatNumber}`, b.guestName, b.guestPhone ?? "", b.ticketPrice, b.amountPaid, balance, b.paymentMethod ? titleCase(b.paymentMethod) : "—", b.paymentReference ?? "—", titleCase(b.status),
+      `${b.seatRow}${b.seatNumber}`, b.guestName, b.guestPhone ?? "", b.ticketPrice, b.amountPaid, credited, balance, b.paymentMethod ? titleCase(b.paymentMethod) : "—", b.paymentReference ?? "—", titleCase(b.status),
     ]);
-    [9, 10, 11].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
+    [9, 10, 11, 12].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
   });
 
   if (filteredMovie.length === 0) {
     ws.addRow(["No movie room bookings in this period."]);
   } else {
-    const movieTotalsRow = ws.addRow(["", "", "", "", "", "", "", "Totals", movieTotalTicket, movieTotalPaid, movieTotalBalance, "", "", ""]);
-    [9, 10, 11].forEach((c) => { movieTotalsRow.getCell(c).numFmt = KES_FMT; movieTotalsRow.getCell(c).alignment = { horizontal: "right" }; });
+    const movieTotalsRow = ws.addRow(["", "", "", "", "", "", "", "Totals", movieTotalTicket, movieTotalPaid, movieTotalCredited, movieTotalBalance, "", "", ""]);
+    [9, 10, 11, 12].forEach((c) => { movieTotalsRow.getCell(c).numFmt = KES_FMT; movieTotalsRow.getCell(c).alignment = { horizontal: "right" }; });
     styleTotalsRow(movieTotalsRow);
   }
 
@@ -344,7 +349,7 @@ async function buildFacilitiesSheet(wb: ExcelJS.Workbook, storage: IStorage, hot
 
 async function buildBarRestaurantSheets(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, from?: string, to?: string) {
   const ordersWs = wb.addWorksheet("Bar & Restaurant Orders");
-  const cols = ["Order ID", "Outlet", "Reference", "Customer", "Email", "Date", "Payment method", "Payment reference", "Status", "Total (KES)"];
+  const cols = ["Order ID", "Outlet", "Reference", "Customer", "Email", "Date", "Payment method", "Payment reference", "Status", "Total (KES)", "Credited (KES)", "Net (KES)"];
   addTitleBlock(ordersWs, hotelName, "Bar & Restaurant Orders", from, to, "J");
 
   const [orders, allItems] = await Promise.all([storage.listOrders(), Promise.resolve<null>(null)]);
@@ -355,33 +360,34 @@ async function buildBarRestaurantSheets(wb: ExcelJS.Workbook, storage: IStorage,
 
   let barTotal = 0, restaurantTotal = 0, grandTotal = 0;
   filtered.forEach((o) => {
+    const credited = o.creditedAmount ?? 0;
+    const net = o.totalAmount - credited;
     if (o.status === "paid") {
-      if (o.outlet === "bar") barTotal += o.totalAmount; else if (o.outlet === "restaurant") restaurantTotal += o.totalAmount;
-      grandTotal += o.totalAmount;
+      if (o.outlet === "bar") barTotal += net; else if (o.outlet === "restaurant") restaurantTotal += net;
+      grandTotal += net;
     }
     const row = ordersWs.addRow([
       o.id, titleCase(o.outlet), o.reference ?? "—", o.customerName ?? "—", o.customerEmail ?? "",
-      o.orderDate, o.paymentMethod ? titleCase(o.paymentMethod) : "—", o.paymentReference ?? "—", titleCase(o.status), o.totalAmount,
+      o.orderDate, o.paymentMethod ? titleCase(o.paymentMethod) : "—", o.paymentReference ?? "—", titleCase(o.status), o.totalAmount, credited, net,
     ]);
-    row.getCell(10).numFmt = KES_FMT;
-    row.getCell(10).alignment = { horizontal: "right" };
+    [10, 11, 12].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
     if (o.status === "cancelled") row.eachCell((c) => { c.font = { color: { argb: MUTED }, strike: true }; });
   });
 
   if (filtered.length === 0) {
     ordersWs.addRow(["No bar/restaurant orders in this period."]);
   } else {
-    const totalsRow = ordersWs.addRow(["", "", "", "", "", "", "", "", "Paid total", grandTotal]);
-    totalsRow.getCell(10).numFmt = KES_FMT;
-    totalsRow.getCell(10).alignment = { horizontal: "right" };
+    const totalsRow = ordersWs.addRow(["", "", "", "", "", "", "", "", "Paid total (net)", "", "", grandTotal]);
+    totalsRow.getCell(12).numFmt = KES_FMT;
+    totalsRow.getCell(12).alignment = { horizontal: "right" };
     styleTotalsRow(totalsRow);
-    ordersWs.addRow(["", "", "", "", "", "", "", "", "Bar (paid)", barTotal]).getCell(10).numFmt = KES_FMT;
-    ordersWs.addRow(["", "", "", "", "", "", "", "", "Restaurant (paid)", restaurantTotal]).getCell(10).numFmt = KES_FMT;
+    ordersWs.addRow(["", "", "", "", "", "", "", "", "Bar (paid, net)", "", "", barTotal]).getCell(12).numFmt = KES_FMT;
+    ordersWs.addRow(["", "", "", "", "", "", "", "", "Restaurant (paid, net)", "", "", restaurantTotal]).getCell(12).numFmt = KES_FMT;
   }
 
   ordersWs.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: cols.length } };
   ordersWs.views = [{ state: "frozen", ySplit: 4 }];
-  autosizeColumns(ordersWs, [8, 12, 14, 18, 22, 11, 14, 18, 10, 12]);
+  autosizeColumns(ordersWs, [8, 12, 14, 18, 22, 11, 14, 18, 10, 12, 12, 12]);
 
   // Line-item detail — useful for menu performance analysis
   const itemsWs = wb.addWorksheet("Order Items Detail");
@@ -615,13 +621,15 @@ async function buildTaxesSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelNam
     }
   };
 
-  bookings.filter((b) => b.status !== "cancelled" && inRange(b.checkIn, from, to)).forEach((b) => apply(b.totalAmount, "accommodation"));
-  facilityBookings.filter((b) => b.status !== "cancelled" && inRange(b.eventDate, from, to)).forEach((b) => apply(b.totalAmount, "facilities"));
-  orders.filter((o) => o.status === "paid" && inRange(o.orderDate, from, to)).forEach((o) => apply(o.totalAmount, o.outlet === "bar" ? "bar" : "restaurant"));
+  // Credit notes reduce the revenue actually retained (and therefore the tax collected on it),
+  // so each category's taxed base nets out any creditedAmount before apply() computes the split.
+  bookings.filter((b) => b.status !== "cancelled" && inRange(b.checkIn, from, to)).forEach((b) => apply(b.totalAmount - (b.creditedAmount ?? 0), "accommodation"));
+  facilityBookings.filter((b) => b.status !== "cancelled" && inRange(b.eventDate, from, to)).forEach((b) => apply(b.totalAmount - (b.creditedAmount ?? 0), "facilities"));
+  orders.filter((o) => o.status === "paid" && inRange(o.orderDate, from, to)).forEach((o) => apply(o.totalAmount - (o.creditedAmount ?? 0), o.outlet === "bar" ? "bar" : "restaurant"));
   // Movie room bookings share the "facilities" tax mapping, matching invoice/receipt generation (see DOC_CATEGORY_TO_TAX_CATEGORY in documents.ts).
   movieSeatBookings
     .filter((b) => b.status !== "cancelled" && b.amountPaid > 0 && inRange(movieShowById.get(b.showId)?.showDate ?? "", from, to))
-    .forEach((b) => apply(b.amountPaid, "facilities"));
+    .forEach((b) => apply(b.amountPaid - (b.creditedAmount ?? 0), "facilities"));
 
   const header = ws.addRow(["Tax name", "Rate (%)", "Amount collected (KES)"]);
   styleHeaderRow(header);

@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Pencil, Trash2, Clapperboard, Armchair, MessageCircle, Ticket, CalendarCheck } from "lucide-react";
+import { Plus, Pencil, Trash2, Clapperboard, Armchair, MessageCircle, Ticket, CalendarCheck, Undo2 } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -23,6 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, formatDate, todayISO, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, buildDocumentPdfUrl, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
+import { CreditNoteDialog } from "@/components/credit-note-dialog";
 import { MOVIE_SEAT_ROWS, MOVIE_SEAT_NUMBERS, type MovieShow, type MovieSeatBooking } from "@shared/schema";
 
 // ---------- Shared helpers ----------
@@ -628,6 +629,19 @@ export default function MovieRoom() {
   const sortedBookings = [...bookings].sort((a, b) => b.createdAt - a.createdAt);
   const sortedShows = [...shows].sort((a, b) => (b.showDate + b.startTime).localeCompare(a.showDate + a.startTime));
 
+  // Invoices/credit notes are issued once per multi-seat group (bookingRef), tracked on the
+  // lowest-id "primary" seat — mirrors the grouping logic in the credit-note backend route.
+  const bookingGroups = useMemo(() => {
+    const map = new Map<string, MovieSeatBooking[]>();
+    for (const b of bookings) {
+      const arr = map.get(b.bookingRef) ?? [];
+      arr.push(b);
+      map.set(b.bookingRef, arr);
+    }
+    Array.from(map.values()).forEach((arr) => arr.sort((a, b) => a.id - b.id));
+    return map;
+  }, [bookings]);
+
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Movie Room (Seat Booking)" description="Book individual seats (rows A–G, seats 1–7) for movie nights and events, front row facing the screen." />
@@ -682,6 +696,11 @@ export default function MovieRoom() {
                   <TableBody>
                     {sortedBookings.map((b) => {
                       const show = showById.get(b.showId);
+                      const group = bookingGroups.get(b.bookingRef) ?? [b];
+                      const primary = group[0] ?? b;
+                      const isPrimary = primary.id === b.id;
+                      const groupTotal = group.reduce((sum, x) => sum + x.ticketPrice, 0);
+                      const groupRemaining = groupTotal - (primary.creditedAmount ?? 0);
                       return (
                         <TableRow key={b.id} data-testid={`row-movie-booking-${b.id}`}>
                           <TableCell className="font-medium">{b.guestName}</TableCell>
@@ -692,30 +711,45 @@ export default function MovieRoom() {
                           <TableCell className="text-right tabular-nums">{formatKES(b.amountPaid)}</TableCell>
                           <TableCell><Badge variant={bookingStatusVariant[b.status] ?? "secondary"}>{titleCase(b.status)}</Badge></TableCell>
                           <TableCell className="text-right">
-                            {canEdit ? (
-                              <div className="flex justify-end gap-1">
-                                <EditBookingDialog booking={b} show={show} trigger={
-                                  <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-movie-booking-${b.id}`}><Pencil className="h-4 w-4" /></Button>
-                                } />
-                                <AlertDialog>
-                                  <AlertDialogTrigger asChild>
-                                    <Button size="icon" variant="ghost" title="Delete" data-testid={`button-delete-movie-booking-${b.id}`}><Trash2 className="h-4 w-4" /></Button>
-                                  </AlertDialogTrigger>
-                                  <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                      <AlertDialogTitle>Delete this booking?</AlertDialogTitle>
-                                      <AlertDialogDescription>This permanently removes {b.guestName}'s booking for seat {b.seatRow}{b.seatNumber} and frees it up.</AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                      <AlertDialogAction onClick={() => deleteBooking.mutate(b.id)}>Delete</AlertDialogAction>
-                                    </AlertDialogFooter>
-                                  </AlertDialogContent>
-                                </AlertDialog>
-                              </div>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">No edit rights</span>
-                            )}
+                            <div className="flex justify-end gap-1">
+                              {canEdit && (
+                                <>
+                                  <EditBookingDialog booking={b} show={show} trigger={
+                                    <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-movie-booking-${b.id}`}><Pencil className="h-4 w-4" /></Button>
+                                  } />
+                                  <AlertDialog>
+                                    <AlertDialogTrigger asChild>
+                                      <Button size="icon" variant="ghost" title="Delete" data-testid={`button-delete-movie-booking-${b.id}`}><Trash2 className="h-4 w-4" /></Button>
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent>
+                                      <AlertDialogHeader>
+                                        <AlertDialogTitle>Delete this booking?</AlertDialogTitle>
+                                        <AlertDialogDescription>This permanently removes {b.guestName}'s booking for seat {b.seatRow}{b.seatNumber} and frees it up.</AlertDialogDescription>
+                                      </AlertDialogHeader>
+                                      <AlertDialogFooter>
+                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                        <AlertDialogAction onClick={() => deleteBooking.mutate(b.id)}>Delete</AlertDialogAction>
+                                      </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                  </AlertDialog>
+                                </>
+                              )}
+                              {isPrimary && groupRemaining > 0 && (
+                                <CreditNoteDialog
+                                  endpoint={`/api/movie-seat-bookings/${primary.id}/credit-note`}
+                                  invalidateKeys={[["/api/movie-seat-bookings"], ["/api/documents"]]}
+                                  maxAmount={groupRemaining}
+                                  recipientName={primary.guestName}
+                                  recipientPhone={primary.guestPhone}
+                                  trigger={
+                                    <Button size="icon" variant="ghost" title="Issue credit note" data-testid={`button-credit-note-${b.id}`}><Undo2 className="h-4 w-4" /></Button>
+                                  }
+                                />
+                              )}
+                              {!canEdit && !(isPrimary && groupRemaining > 0) && (
+                                <span className="text-xs text-muted-foreground">No edit rights</span>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       );

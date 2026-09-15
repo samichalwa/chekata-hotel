@@ -30,7 +30,7 @@ import {
   insertStatutoryRateTableSchema, insertPayeBandSchema,
   insertBudgetLineSchema, insertAssetCategorySchema, insertAssetSchema, DEPRECIATION_METHODS, ASSET_STATUSES,
 } from "@shared/schema";
-import { issueDocument } from "./documents";
+import { issueDocument, issueCreditNote } from "./documents";
 import { buildDocumentPdf, buildMaintenanceReportPdf, buildPayslipPdf } from "./pdf";
 import { emailPayslipsForRun } from "./payroll-pdf-email";
 import { sendTransactionalEmail } from "./email";
@@ -517,6 +517,31 @@ export async function registerRoutes(
     await storage.deleteAccommodationBooking(Number(req.params.id));
     res.status(204).end();
   });
+  app.post("/api/accommodation-bookings/:id/credit-note", requireModule("accommodation"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const booking = await storage.getAccommodationBooking(id);
+      if (!booking) return res.status(404).json({ error: "Booking not found" });
+      const { amount, reason } = z.object({ amount: z.number(), reason: z.string().optional() }).parse(req.body);
+      const room = await storage.getRoom(booking.roomId);
+      const result = await issueCreditNote(storage, {
+        category: "accommodation",
+        sourceId: booking.id,
+        requestedAmount: amount,
+        reason,
+        recipientName: booking.guestName,
+        recipientEmail: booking.guestEmail,
+        currentCreditedAmount: booking.creditedAmount ?? 0,
+        totalAmount: booking.totalAmount,
+        amountPaid: booking.amountPaid,
+        lineItemLabel: `${room?.name ?? "Room"} \u2014 credit note`,
+      });
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      await storage.updateAccommodationBooking(id, { creditedAmount: result.newCreditedAmount });
+      const doc = result.document;
+      res.status(201).json({ status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken });
+    } catch (err) { handleZodError(res, err); }
+  });
 
   // ---------- Facilities ----------
   app.get("/api/facilities", requireModule("facilities"), async (_req, res) => {
@@ -606,6 +631,31 @@ export async function registerRoutes(
   app.delete("/api/facility-bookings/:id", requireModule("facilities"), async (req, res) => {
     await storage.deleteFacilityBooking(Number(req.params.id));
     res.status(204).end();
+  });
+  app.post("/api/facility-bookings/:id/credit-note", requireModule("facilities"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const booking = await storage.getFacilityBooking(id);
+      if (!booking) return res.status(404).json({ error: "Booking not found" });
+      const { amount, reason } = z.object({ amount: z.number(), reason: z.string().optional() }).parse(req.body);
+      const facility = await storage.getFacility(booking.facilityId);
+      const result = await issueCreditNote(storage, {
+        category: "facility",
+        sourceId: booking.id,
+        requestedAmount: amount,
+        reason,
+        recipientName: booking.clientName,
+        recipientEmail: booking.clientEmail,
+        currentCreditedAmount: booking.creditedAmount ?? 0,
+        totalAmount: booking.totalAmount,
+        amountPaid: booking.amountPaid,
+        lineItemLabel: `${facility?.name ?? "Facility"} \u2014 credit note`,
+      });
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      await storage.updateFacilityBooking(id, { creditedAmount: result.newCreditedAmount });
+      const doc = result.document;
+      res.status(201).json({ status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken });
+    } catch (err) { handleZodError(res, err); }
   });
 
   // ---------- Movie Room: Shows ----------
@@ -826,6 +876,43 @@ export async function registerRoutes(
     await storage.deleteMovieSeatBooking(Number(req.params.id));
     res.status(204).end();
   });
+  // Movie Room invoices are issued once per multi-seat booking group, against the FIRST
+  // (lowest-id) seat's booking id, for the group's combined total (see the POST route
+  // above). Credit notes therefore resolve whichever seat id is passed back to that same
+  // group and validate/track the credited amount against the group's combined total —
+  // any seat in the group can be used to trigger it.
+  app.post("/api/movie-seat-bookings/:id/credit-note", requireModule("movie-room"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const booking = await storage.getMovieSeatBooking(id);
+      if (!booking) return res.status(404).json({ error: "Booking not found" });
+      const { amount, reason } = z.object({ amount: z.number(), reason: z.string().optional() }).parse(req.body);
+      const group = (await storage.listMovieSeatBookings())
+        .filter((b) => b.bookingRef === booking.bookingRef)
+        .sort((a, b) => a.id - b.id);
+      const primary = group[0] ?? booking;
+      const totalAmount = group.reduce((sum, b) => sum + b.ticketPrice, 0);
+      const amountPaid = group.reduce((sum, b) => sum + b.amountPaid, 0);
+      const show = await storage.getMovieShow(booking.showId);
+      const seatCodes = group.map((b) => `${b.seatRow}${b.seatNumber}`).join(", ");
+      const result = await issueCreditNote(storage, {
+        category: "movie",
+        sourceId: primary.id,
+        requestedAmount: amount,
+        reason,
+        recipientName: booking.guestName,
+        recipientEmail: booking.guestEmail,
+        currentCreditedAmount: primary.creditedAmount ?? 0,
+        totalAmount,
+        amountPaid,
+        lineItemLabel: `${show?.name ?? "Movie Room"} \u2014 Seat(s) ${seatCodes} \u2014 credit note`,
+      });
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      await storage.updateMovieSeatBooking(primary.id, { creditedAmount: result.newCreditedAmount });
+      const doc = result.document;
+      res.status(201).json({ status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken });
+    } catch (err) { handleZodError(res, err); }
+  });
 
   // ---------- Menu Items (managed from the Lists module; read from Bar & Restaurant too) ----------
   app.get("/api/menu-items", requireAnyModule(["bar-restaurant", "lists"]), async (_req, res) => {
@@ -917,6 +1004,33 @@ export async function registerRoutes(
   app.delete("/api/orders/:id", requireModule("bar-restaurant"), async (req, res) => {
     await storage.deleteOrder(Number(req.params.id));
     res.status(204).end();
+  });
+  // Orders never get a separate "invoice" step — only a receipt once marked paid (see the
+  // PATCH route above) — so a credit note can only be issued once the order has been paid.
+  app.post("/api/orders/:id/credit-note", requireModule("bar-restaurant"), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const order = await storage.getOrder(id);
+      if (!order) return res.status(404).json({ error: "Order not found" });
+      const { amount, reason } = z.object({ amount: z.number(), reason: z.string().optional() }).parse(req.body);
+      const category = order.outlet === "bar" ? "bar" : "restaurant";
+      const result = await issueCreditNote(storage, {
+        category,
+        sourceId: order.id,
+        requestedAmount: amount,
+        reason,
+        recipientName: order.customerName || "Guest",
+        recipientEmail: order.customerEmail,
+        currentCreditedAmount: order.creditedAmount ?? 0,
+        totalAmount: order.totalAmount,
+        amountPaid: order.totalAmount,
+        lineItemLabel: `Order #${order.id} \u2014 credit note`,
+      });
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      await storage.updateOrder(id, { creditedAmount: result.newCreditedAmount });
+      const doc = result.document;
+      res.status(201).json({ status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken });
+    } catch (err) { handleZodError(res, err); }
   });
 
   // ---------- Order Items ----------

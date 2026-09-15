@@ -33,6 +33,7 @@ export const accommodationBookings = pgTable("accommodation_bookings", {
   status: text("status").notNull().default("confirmed"), // confirmed | checked_in | checked_out | cancelled
   notes: text("notes"),
   numberOfGuests: integer("number_of_guests").notNull().default(1), // enforced max 2 at API level
+  creditedAmount: real("credited_amount").notNull().default(0), // total issued against this booking's invoice via credit notes
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 
@@ -90,6 +91,7 @@ export const facilityBookings = pgTable("facility_bookings", {
   paymentReference: text("payment_reference"), // M-Pesa code, card slip #, bank ref, etc.
   status: text("status").notNull().default("confirmed"), // confirmed | completed | cancelled
   notes: text("notes"),
+  creditedAmount: real("credited_amount").notNull().default(0), // total issued against this booking's invoice via credit notes
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 
@@ -135,6 +137,7 @@ export const movieSeatBookings = pgTable("movie_seat_bookings", {
   status: text("status").notNull().default("booked"), // booked | cancelled
   bookingRef: text("booking_ref").notNull(), // groups seats/shows purchased together into one transaction/receipt
   notes: text("notes"),
+  creditedAmount: real("credited_amount").notNull().default(0), // total issued against this seat's invoice via credit notes
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 
@@ -169,6 +172,7 @@ export const orders = pgTable("orders", {
   paymentReference: text("payment_reference"), // M-Pesa code, card slip #, bank ref, etc.
   totalAmount: real("total_amount").notNull().default(0),
   notes: text("notes"),
+  creditedAmount: real("credited_amount").notNull().default(0), // total issued against this order's receipt via credit notes
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 
@@ -458,8 +462,8 @@ export type Settings = typeof settings.$inferSelect;
 // ---------- Documents (invoice/receipt email log) ----------
 export const documents = pgTable("documents", {
   id: serial("id").primaryKey(),
-  docType: text("doc_type").notNull(), // invoice | receipt
-  category: text("category").notNull(), // accommodation | facility | bar | restaurant
+  docType: text("doc_type").notNull(), // invoice | receipt | credit_note
+  category: text("category").notNull(), // accommodation | facility | bar | restaurant | movie | tenancy
   sourceId: integer("source_id").notNull(), // id of the booking/order this document belongs to
   recipientName: text("recipient_name"),
   recipientEmail: text("recipient_email"),
@@ -472,6 +476,10 @@ export const documents = pgTable("documents", {
   // (used to embed a PDF link in free click-to-send WhatsApp messages). Nullable so existing
   // rows created before this column existed keep working until bootstrapSchema backfills them.
   publicToken: text("public_token"),
+  // Credit notes only: the invoice/receipt document being credited, and the reason given.
+  // Nullable — irrelevant for docType invoice/receipt and for rows created before this existed.
+  relatedDocumentId: integer("related_document_id"),
+  reason: text("reason"),
 });
 
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true });
