@@ -960,6 +960,10 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await ensureColumn("orders", "credited_amount", "REAL NOT NULL DEFAULT 0");
   await ensureColumn("documents", "related_document_id", "INTEGER");
   await ensureColumn("documents", "reason", "TEXT");
+  // Older installs created document_sequences (via a pre-PRIMARY-KEY schema revision) without a
+  // unique constraint on sequence_key, so the ON CONFLICT (sequence_key) upserts below throw
+  // 42P10 "no unique or exclusion constraint matching" until we backfill the constraint here.
+  await ensureUniqueConstraint("document_sequences", "sequence_key", "document_sequences_sequence_key_key");
   await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('credit_note', 'CN', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
 
   // ---- Idempotent column additions for installs upgraded from an earlier version ----
@@ -973,6 +977,33 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   // Idempotent column type widening — safe to re-run every startup (a no-op once the column is already the target type).
   async function ensureColumnType(table: string, column: string, targetType: string) {
     await sql.unsafe(`ALTER TABLE ${table} ALTER COLUMN ${column} TYPE ${targetType}`);
+  }
+  // Idempotent single-column UNIQUE constraint backfill for tables whose original
+  // CREATE TABLE IF NOT EXISTS predates a PRIMARY KEY/UNIQUE on `column` (so it never
+  // applied on already-provisioned databases). Deduplicates any pre-existing duplicate
+  // rows first (keeping the lowest ctid) so the ADD CONSTRAINT itself cannot fail on dirty data.
+  async function ensureUniqueConstraint(table: string, column: string, constraintName: string) {
+    const [{ exists: hasConstraint }] = await sql`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        WHERE rel.relname = ${table} AND con.contype IN ('p', 'u')
+          AND con.conkey = (
+            SELECT array_agg(attnum ORDER BY attnum) FROM pg_attribute
+            WHERE attrelid = rel.oid AND attname = ${column}
+          )
+      ) AS exists
+    `;
+    if (hasConstraint) return;
+    await sql.unsafe(`
+      DELETE FROM ${table} a USING ${table} b
+      WHERE a.${column} = b.${column} AND a.ctid < b.ctid
+    `);
+    try {
+      await sql.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT ${constraintName} UNIQUE (${column})`);
+    } catch (e: any) {
+      if (!/already exists/i.test(String(e?.message))) throw e;
+    }
   }
   // approval_matrix_rules.min_amount/max_amount were briefly created as REAL (float32, ~8.3M safe range) —
   // widen to DOUBLE PRECISION so large capex/procurement approval bands don't get clipped or lose precision.
