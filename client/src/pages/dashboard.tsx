@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { formatKES, formatDate, todayISO, titleCase } from "@/lib/format";
-import type { Room, AccommodationBooking, Facility, FacilityBooking, Order, Staff, Expense } from "@shared/schema";
+import type { Room, AccommodationBooking, Facility, FacilityBooking, Order, Staff, Expense, MovieShow, MovieSeatBooking } from "@shared/schema";
 
 const CHART_COLORS = ["hsl(var(--chart-1))", "hsl(var(--chart-2))", "hsl(var(--chart-3))", "hsl(var(--chart-4))", "hsl(var(--chart-5))"];
 
@@ -29,6 +29,8 @@ export default function Dashboard() {
   const { data: facilities = [] } = useQuery<Facility[]>({ queryKey: ["/api/facilities"] });
   const { data: facilityBookings = [] } = useQuery<FacilityBooking[]>({ queryKey: ["/api/facility-bookings"] });
   const { data: orders = [] } = useQuery<Order[]>({ queryKey: ["/api/orders"] });
+  const { data: movieShows = [] } = useQuery<MovieShow[]>({ queryKey: ["/api/movie-shows"] });
+  const { data: movieSeatBookings = [] } = useQuery<MovieSeatBooking[]>({ queryKey: ["/api/movie-seat-bookings"] });
   const { data: staff = [] } = useQuery<Staff[]>({ queryKey: ["/api/staff"] });
   const { data: expenses = [] } = useQuery<Expense[]>({ queryKey: ["/api/expenses"] });
 
@@ -54,7 +56,15 @@ export default function Dashboard() {
     () => orders.filter((o) => o.outlet === "restaurant" && o.status === "paid" && inRange(o.orderDate)).reduce((s, o) => s + o.totalAmount, 0),
     [orders, fromDate, toDate]
   );
-  const totalRevenue = accommodationRevenue + facilityRevenue + barRevenue + restaurantRevenue;
+  const movieShowById = useMemo(() => new Map(movieShows.map((s) => [s.id, s])), [movieShows]);
+  const movieRevenue = useMemo(
+    () =>
+      movieSeatBookings
+        .filter((b) => b.status !== "cancelled" && inRange(movieShowById.get(b.showId)?.showDate ?? ""))
+        .reduce((s, b) => s + b.ticketPrice, 0),
+    [movieSeatBookings, movieShowById, fromDate, toDate]
+  );
+  const totalRevenue = accommodationRevenue + facilityRevenue + barRevenue + restaurantRevenue + movieRevenue;
 
   const monthlyPayroll = staff.filter((s) => s.status === "active").reduce((s, m) => s + m.salary, 0);
   const expensesThisMonth = useMemo(() => expenses.filter((e) => inRange(e.date)).reduce((s, e) => s + e.amount, 0), [expenses, fromDate, toDate]);
@@ -76,7 +86,8 @@ export default function Dashboard() {
 
   const chartData = [
     { name: "Accommodation", revenue: accommodationRevenue },
-    { name: "Conference & Movie", revenue: facilityRevenue },
+    { name: "Conference & Facilities", revenue: facilityRevenue },
+    { name: "Movie Room", revenue: movieRevenue },
     { name: "Bar", revenue: barRevenue },
     { name: "Restaurant", revenue: restaurantRevenue },
   ];
