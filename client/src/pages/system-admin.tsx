@@ -34,10 +34,14 @@ const ruleFormSchema = z.object({
   name: z.string().min(1, "Rule name is required"),
   minAmount: z.coerce.number().min(0).default(0),
   maxAmount: z.union([z.coerce.number().positive(), z.literal("")]).optional().nullable(),
+  itemCategory: z.string().optional().nullable(),
   reviewerUserId: z.union([z.coerce.number().positive(), z.literal("")]).optional().nullable(),
   approverUserId: z.coerce.number().min(1, "Approver is required"),
   active: z.coerce.number().default(1),
 });
+
+const CATEGORY_ROUTED_DOC_TYPES = ["internal_requisition"];
+const DAY_BANDED_DOC_TYPES = ["leave_request"];
 
 function ApprovalRuleFormDialog({ rule, users, trigger }: { rule?: ApprovalMatrixRule; users: SafeUser[]; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -45,14 +49,20 @@ function ApprovalRuleFormDialog({ rule, users, trigger }: { rule?: ApprovalMatri
   const form = useForm<z.infer<typeof ruleFormSchema>>({
     resolver: zodResolver(ruleFormSchema),
     defaultValues: rule
-      ? { documentType: rule.documentType, name: rule.name, minAmount: rule.minAmount, maxAmount: rule.maxAmount ?? "", reviewerUserId: rule.reviewerUserId ?? "", approverUserId: rule.approverUserId, active: rule.active }
-      : { documentType: APPROVAL_DOCUMENT_TYPES[0], name: "", minAmount: 0, maxAmount: "", reviewerUserId: "", approverUserId: users[0]?.id ?? 0, active: 1 },
+      ? { documentType: rule.documentType, name: rule.name, minAmount: rule.minAmount, maxAmount: rule.maxAmount ?? "", itemCategory: rule.itemCategory ?? "", reviewerUserId: rule.reviewerUserId ?? "", approverUserId: rule.approverUserId, active: rule.active }
+      : { documentType: APPROVAL_DOCUMENT_TYPES[0], name: "", minAmount: 0, maxAmount: "", itemCategory: "", reviewerUserId: "", approverUserId: users[0]?.id ?? 0, active: 1 },
   });
+  const docType = form.watch("documentType");
+  const isCategoryRouted = CATEGORY_ROUTED_DOC_TYPES.includes(docType);
+  const isDayBanded = DAY_BANDED_DOC_TYPES.includes(docType);
   const mutation = useMutation({
     mutationFn: async (values: z.infer<typeof ruleFormSchema>) => {
+      const categoryRouted = CATEGORY_ROUTED_DOC_TYPES.includes(values.documentType);
       const payload = {
         ...values,
-        maxAmount: values.maxAmount === "" ? null : Number(values.maxAmount),
+        minAmount: categoryRouted ? 0 : values.minAmount,
+        maxAmount: categoryRouted ? null : (values.maxAmount === "" ? null : Number(values.maxAmount)),
+        itemCategory: categoryRouted ? ((values.itemCategory ?? "").trim() === "" ? null : values.itemCategory!.trim()) : null,
         reviewerUserId: values.reviewerUserId === "" ? null : Number(values.reviewerUserId),
       };
       if (rule) return apiRequest("PATCH", `/api/admin/approval-matrix/${rule.id}`, payload);
@@ -85,14 +95,24 @@ function ApprovalRuleFormDialog({ rule, users, trigger }: { rule?: ApprovalMatri
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
-              <FormField control={form.control} name="minAmount" render={({ field }) => (
-                <FormItem><FormLabel>Min amount (KES)</FormLabel><FormControl><Input type="number" {...field} data-testid="input-rule-min" /></FormControl><FormMessage /></FormItem>
+            {isCategoryRouted ? (
+              <FormField control={form.control} name="itemCategory" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Item category (leave blank = catch-all for any category)</FormLabel>
+                  <FormControl><Input placeholder="e.g. Beverages" {...field} value={field.value ?? ""} data-testid="input-rule-category" /></FormControl>
+                  <FormMessage />
+                </FormItem>
               )} />
-              <FormField control={form.control} name="maxAmount" render={({ field }) => (
-                <FormItem><FormLabel>Max amount (leave blank = unbounded)</FormLabel><FormControl><Input type="number" {...field} value={field.value ?? ""} data-testid="input-rule-max" /></FormControl><FormMessage /></FormItem>
-              )} />
-            </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <FormField control={form.control} name="minAmount" render={({ field }) => (
+                  <FormItem><FormLabel>{isDayBanded ? "Min days" : "Min amount (KES)"}</FormLabel><FormControl><Input type="number" {...field} data-testid="input-rule-min" /></FormControl><FormMessage /></FormItem>
+                )} />
+                <FormField control={form.control} name="maxAmount" render={({ field }) => (
+                  <FormItem><FormLabel>{isDayBanded ? "Max days (blank = unbounded)" : "Max amount (leave blank = unbounded)"}</FormLabel><FormControl><Input type="number" {...field} value={field.value ?? ""} data-testid="input-rule-max" /></FormControl><FormMessage /></FormItem>
+                )} />
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <FormField control={form.control} name="reviewerUserId" render={({ field }) => (
                 <FormItem>
@@ -155,7 +175,7 @@ function ApprovalMatrixTab() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Rule</TableHead><TableHead>Document type</TableHead><TableHead className="text-right">Amount band</TableHead>
+                <TableHead>Rule</TableHead><TableHead>Document type</TableHead><TableHead className="text-right">Band / Category</TableHead>
                 <TableHead>Reviewer</TableHead><TableHead>Approver</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -164,7 +184,13 @@ function ApprovalMatrixTab() {
                 <TableRow key={r.id} data-testid={`row-rule-${r.id}`}>
                   <TableCell className="font-medium">{r.name}</TableCell>
                   <TableCell>{APPROVAL_DOCUMENT_TYPE_LABELS[r.documentType as keyof typeof APPROVAL_DOCUMENT_TYPE_LABELS] ?? r.documentType}</TableCell>
-                  <TableCell className="text-right tabular-nums">{formatKES(r.minAmount)} – {r.maxAmount != null ? formatKES(r.maxAmount) : "∞"}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {r.documentType === "internal_requisition"
+                      ? (r.itemCategory ? r.itemCategory : "Any category")
+                      : r.documentType === "leave_request"
+                        ? `${r.minAmount} – ${r.maxAmount != null ? r.maxAmount : "∞"} days`
+                        : `${formatKES(r.minAmount)} – ${r.maxAmount != null ? formatKES(r.maxAmount) : "∞"}`}
+                  </TableCell>
                   <TableCell>{userName(r.reviewerUserId)}</TableCell>
                   <TableCell>{userName(r.approverUserId)}</TableCell>
                   <TableCell><Badge variant={r.active ? "secondary" : "outline"}>{r.active ? "Active" : "Inactive"}</Badge></TableCell>

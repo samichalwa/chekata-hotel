@@ -40,7 +40,7 @@ function extractErrorMessage(raw: string): string {
 }
 
 const statusVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
-  pending: "outline", approved: "secondary", rejected: "destructive", cancelled: "outline",
+  pending: "outline", pending_review: "outline", pending_approval: "outline", approved: "secondary", rejected: "destructive", cancelled: "outline",
 };
 
 // ---------------- Leave Types ----------------
@@ -298,7 +298,7 @@ function LeaveRequestsTab() {
   const [cancelReason, setCancelReason] = useState("");
 
   const decide = useMutation({
-    mutationFn: ({ id, action }: { id: number; action: "approve" | "reject" }) => apiRequest("POST", `/api/leave-requests/${id}/${action}`),
+    mutationFn: ({ id, action }: { id: number; action: "review" | "approve" | "reject" }) => apiRequest("POST", `/api/leave-requests/${id}/${action}`),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/leave-requests"] }); queryClient.invalidateQueries({ queryKey: ["/api/leave-balances"] }); toast({ title: "Leave request updated" }); },
     onError: (err: Error) => toast({ title: "Could not update request", description: extractErrorMessage(err.message), variant: "destructive" }),
   });
@@ -341,17 +341,23 @@ function LeaveRequestsTab() {
                   <TableCell>{typeMap.get(r.leaveTypeId)?.name ?? `#${r.leaveTypeId}`}</TableCell>
                   <TableCell>{formatDate(r.startDate)} – {formatDate(r.endDate)}</TableCell>
                   <TableCell className="text-right tabular-nums">{r.days}</TableCell>
-                  <TableCell><Badge variant={statusVariant[r.status]}>{titleCase(r.status)}</Badge></TableCell>
+                  <TableCell><Badge variant={statusVariant[r.status]}>{titleCase(r.status.replace("_", " "))}</Badge></TableCell>
                   <TableCell className="max-w-[200px] truncate" title={r.reason ?? ""}>{r.reason || "—"}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
-                      {r.status === "pending" && (
+                      {r.status === "pending_review" && (
+                        <>
+                          <Button size="icon" variant="ghost" title="Mark reviewed" onClick={() => decide.mutate({ id: r.id, action: "review" })} data-testid={`button-review-leaverequest-${r.id}`}><CheckCircle2 className="h-4 w-4 text-blue-600" /></Button>
+                          <Button size="icon" variant="ghost" title="Reject" onClick={() => decide.mutate({ id: r.id, action: "reject" })} data-testid={`button-reject-leaverequest-${r.id}`}><XCircle className="h-4 w-4 text-red-600" /></Button>
+                        </>
+                      )}
+                      {(r.status === "pending" || r.status === "pending_approval") && (
                         <>
                           <Button size="icon" variant="ghost" title="Approve" onClick={() => decide.mutate({ id: r.id, action: "approve" })} data-testid={`button-approve-leaverequest-${r.id}`}><CheckCircle2 className="h-4 w-4 text-green-600" /></Button>
                           <Button size="icon" variant="ghost" title="Reject" onClick={() => decide.mutate({ id: r.id, action: "reject" })} data-testid={`button-reject-leaverequest-${r.id}`}><XCircle className="h-4 w-4 text-red-600" /></Button>
                         </>
                       )}
-                      {(r.status === "pending" || r.status === "approved") && (
+                      {(r.status === "pending" || r.status === "pending_review" || r.status === "pending_approval" || r.status === "approved") && (
                         <AlertDialog open={cancelTarget?.id === r.id} onOpenChange={(o) => { if (!o) { setCancelTarget(null); setCancelReason(""); } }}>
                           <AlertDialogTrigger asChild>
                             <Button size="icon" variant="ghost" title="Cancel" onClick={() => setCancelTarget(r)} data-testid={`button-cancel-leaverequest-${r.id}`}><Ban className="h-4 w-4" /></Button>

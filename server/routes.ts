@@ -1725,12 +1725,20 @@ export async function registerRoutes(
       } catch (notifyErr) { console.error("Failed to send PR submission notification:", notifyErr); }
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to submit purchase requisition" }); }
   });
+  app.post("/api/purchasing/requisitions/:id/review", requireModule("purchasing"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const updated = await storage.reviewPurchaseRequisition(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, user.fullName ?? user.username);
+      if (!updated) return res.status(404).json({ error: "Purchase requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to review purchase requisition" }); }
+  });
   app.post("/api/purchasing/requisitions/:id/approve", requireModule("purchasing"), async (req, res) => {
     try {
       const user = (req as any).user;
       const { supplierId, payableAccountId, expenseAccountId } = req.body as { supplierId: number; payableAccountId: number; expenseAccountId?: number };
       if (!supplierId || !payableAccountId) return res.status(400).json({ error: "supplierId and payableAccountId are required" });
-      const result = await storage.approvePurchaseRequisition(Number(req.params.id), user.fullName ?? user.username, { supplierId, payableAccountId, expenseAccountId: expenseAccountId ?? null });
+      const result = await storage.approvePurchaseRequisition(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, user.fullName ?? user.username, { supplierId, payableAccountId, expenseAccountId: expenseAccountId ?? null });
       res.json(result);
       try {
         const settings = await storage.getSettings();
@@ -1746,7 +1754,7 @@ export async function registerRoutes(
       const user = (req as any).user;
       const { reason } = req.body as { reason?: string };
       if (!reason) return res.status(400).json({ error: "A rejection reason is required" });
-      const updated = await storage.rejectPurchaseRequisition(Number(req.params.id), reason);
+      const updated = await storage.rejectPurchaseRequisition(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, reason);
       if (!updated) return res.status(404).json({ error: "Purchase requisition not found" });
       res.json(updated);
       try {
@@ -1815,10 +1823,18 @@ export async function registerRoutes(
       } catch (notifyErr) { console.error("Failed to send PO submission notification:", notifyErr); }
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to submit purchase order" }); }
   });
+  app.post("/api/purchasing/orders/:id/review", requireModule("purchasing"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const updated = await storage.reviewPurchaseOrder(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, user.fullName ?? user.username);
+      if (!updated) return res.status(404).json({ error: "Purchase order not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to review purchase order" }); }
+  });
   app.post("/api/purchasing/orders/:id/approve", requireModule("purchasing"), async (req, res) => {
     try {
       const user = (req as any).user;
-      const updated = await storage.approvePurchaseOrder(Number(req.params.id), user.fullName ?? user.username);
+      const updated = await storage.approvePurchaseOrder(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, user.fullName ?? user.username);
       if (!updated) return res.status(404).json({ error: "Purchase order not found" });
       res.json(updated);
       try {
@@ -1835,7 +1851,7 @@ export async function registerRoutes(
       const user = (req as any).user;
       const { reason } = req.body as { reason?: string };
       if (!reason) return res.status(400).json({ error: "A rejection reason is required" });
-      const updated = await storage.rejectPurchaseOrder(Number(req.params.id), reason);
+      const updated = await storage.rejectPurchaseOrder(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, reason);
       if (!updated) return res.status(404).json({ error: "Purchase order not found" });
       res.json(updated);
       try {
@@ -1929,10 +1945,18 @@ export async function registerRoutes(
       } catch (notifyErr) { console.error("Failed to send IR submission notification:", notifyErr); }
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to submit internal requisition" }); }
   });
+  app.post("/api/internal-requisitions/:id/review", requireModule("internal-requisitions"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const updated = await storage.reviewInternalRequisition(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, user.fullName ?? user.username);
+      if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to review internal requisition" }); }
+  });
   app.post("/api/internal-requisitions/:id/approve", requireModule("internal-requisitions"), async (req, res) => {
     try {
       const user = (req as any).user;
-      const updated = await storage.approveInternalRequisition(Number(req.params.id), user.fullName ?? user.username);
+      const updated = await storage.approveInternalRequisition(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, user.fullName ?? user.username);
       if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
       res.json(updated);
       try {
@@ -1949,7 +1973,7 @@ export async function registerRoutes(
       const user = (req as any).user;
       const { reason } = req.body as { reason?: string };
       if (!reason) return res.status(400).json({ error: "A rejection reason is required" });
-      const updated = await storage.rejectInternalRequisition(Number(req.params.id), reason);
+      const updated = await storage.rejectInternalRequisition(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, reason);
       if (!updated) return res.status(404).json({ error: "Internal requisition not found" });
       res.json(updated);
       try {
@@ -2326,18 +2350,27 @@ export async function registerRoutes(
       res.status(201).json(await storage.createLeaveRequest(data));
     } catch (err) { handleZodError(res, err); }
   });
+  app.post("/api/leave-requests/:id/review", requireModule("leave"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const updated = await storage.reviewLeaveRequest(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, user.fullName ?? user.username);
+      if (!updated) return res.status(404).json({ error: "Leave request not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to review leave request" }); }
+  });
   app.post("/api/leave-requests/:id/approve", requireModule("leave"), async (req, res) => {
     try {
-      const decidedBy = req.session.userId ? String(req.session.userId) : "system";
-      const updated = await storage.decideLeaveRequest(Number(req.params.id), "approved", decidedBy);
+      const user = (req as any).user;
+      const updated = await storage.decideLeaveRequest(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, "approved", user.fullName ?? user.username);
       if (!updated) return res.status(404).json({ error: "Leave request not found" });
       res.json(updated);
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to approve leave request" }); }
   });
   app.post("/api/leave-requests/:id/reject", requireModule("leave"), async (req, res) => {
     try {
-      const decidedBy = req.session.userId ? String(req.session.userId) : "system";
-      const updated = await storage.decideLeaveRequest(Number(req.params.id), "rejected", decidedBy);
+      const user = (req as any).user;
+      const { reason } = req.body as { reason?: string };
+      const updated = await storage.decideLeaveRequest(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, "rejected", user.fullName ?? user.username, reason);
       if (!updated) return res.status(404).json({ error: "Leave request not found" });
       res.json(updated);
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to reject leave request" }); }

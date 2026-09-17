@@ -40,10 +40,10 @@ function extractErrorMessage(raw: string): string {
 }
 
 const prStatusVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
-  draft: "outline", pending_approval: "default", approved: "secondary", rejected: "destructive", cancelled: "destructive",
+  draft: "outline", pending_review: "outline", pending_approval: "default", approved: "secondary", rejected: "destructive", cancelled: "destructive",
 };
 const poStatusVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
-  draft: "outline", pending_approval: "default", approved: "secondary", rejected: "destructive", partially_received: "default", received: "secondary", cancelled: "destructive",
+  draft: "outline", pending_review: "outline", pending_approval: "default", approved: "secondary", rejected: "destructive", partially_received: "default", received: "secondary", cancelled: "destructive",
 };
 
 function titleCase(s: string): string {
@@ -412,6 +412,11 @@ function PurchaseRequisitionsTab({ canAdjust }: { canAdjust: boolean }) {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/purchasing/requisitions"] }); toast({ title: "Requisition submitted for approval" }); },
     onError: (err: Error) => toast({ title: "Couldn't submit requisition", description: extractErrorMessage(err.message), variant: "destructive" }),
   });
+  const reviewPr = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/purchasing/requisitions/${id}/review`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/purchasing/requisitions"] }); toast({ title: "Requisition marked as reviewed" }); },
+    onError: (err: Error) => toast({ title: "Couldn't review requisition", description: extractErrorMessage(err.message), variant: "destructive" }),
+  });
   const rejectPr = useMutation({
     mutationFn: ({ id, reason }: { id: number; reason: string }) => apiRequest("POST", `/api/purchasing/requisitions/${id}/reject`, { reason }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/purchasing/requisitions"] }); toast({ title: "Requisition rejected" }); },
@@ -463,6 +468,20 @@ function PurchaseRequisitionsTab({ canAdjust }: { canAdjust: boolean }) {
                             <Send className="h-3.5 w-3.5 mr-1" /> Submit
                           </Button>
                         )}
+                        {pr.status === "pending_review" && (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => reviewPr.mutate(pr.id)} disabled={reviewPr.isPending} data-testid={`button-review-pr-${pr.id}`}>
+                              <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Mark reviewed
+                            </Button>
+                            <ReasonDialog
+                              title={`Reject ${pr.prNumber}?`}
+                              label="Reason for rejection"
+                              confirmLabel="Reject requisition"
+                              onConfirm={(reason) => rejectPr.mutate({ id: pr.id, reason })}
+                              trigger={<Button size="icon" variant="ghost" title="Reject" data-testid={`button-reject-pr-${pr.id}`}><Ban className="h-4 w-4" /></Button>}
+                            />
+                          </>
+                        )}
                         {pr.status === "pending_approval" && (
                           <>
                             <ApprovePrDialog pr={pr} suppliers={suppliers} accounts={accounts} trigger={
@@ -477,7 +496,7 @@ function PurchaseRequisitionsTab({ canAdjust }: { canAdjust: boolean }) {
                             />
                           </>
                         )}
-                        {(pr.status === "draft" || pr.status === "pending_approval" || pr.status === "approved") && (
+                        {(pr.status === "draft" || pr.status === "pending_review" || pr.status === "pending_approval" || pr.status === "approved") && (
                           canAdjust ? (
                             <ReasonDialog
                               title={`Cancel ${pr.prNumber}?`}
@@ -761,6 +780,11 @@ function PurchaseOrdersTab({ canAdjust }: { canAdjust: boolean }) {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/purchasing/orders"] }); toast({ title: "Purchase order submitted for approval" }); },
     onError: (err: Error) => toast({ title: "Couldn't submit order", description: extractErrorMessage(err.message), variant: "destructive" }),
   });
+  const reviewPo = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/purchasing/orders/${id}/review`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/purchasing/orders"] }); toast({ title: "Purchase order marked as reviewed" }); },
+    onError: (err: Error) => toast({ title: "Couldn't review order", description: extractErrorMessage(err.message), variant: "destructive" }),
+  });
   const approvePo = useMutation({
     mutationFn: (id: number) => apiRequest("POST", `/api/purchasing/orders/${id}/approve`),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/purchasing/orders"] }); toast({ title: "Purchase order approved" }); },
@@ -822,6 +846,20 @@ function PurchaseOrdersTab({ canAdjust }: { canAdjust: boolean }) {
                             <Send className="h-3.5 w-3.5 mr-1" /> Submit
                           </Button>
                         )}
+                        {po.status === "pending_review" && (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => reviewPo.mutate(po.id)} disabled={reviewPo.isPending} data-testid={`button-review-po-${po.id}`}>
+                              <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Mark reviewed
+                            </Button>
+                            <ReasonDialog
+                              title={`Reject ${po.poNumber}?`}
+                              label="Reason for rejection"
+                              confirmLabel="Reject order"
+                              onConfirm={(reason) => rejectPo.mutate({ id: po.id, reason })}
+                              trigger={<Button size="icon" variant="ghost" title="Reject" data-testid={`button-reject-po-${po.id}`}><Ban className="h-4 w-4" /></Button>}
+                            />
+                          </>
+                        )}
                         {po.status === "pending_approval" && (
                           <>
                             <Button size="sm" variant="outline" onClick={() => approvePo.mutate(po.id)} disabled={approvePo.isPending} data-testid={`button-approve-po-${po.id}`}>
@@ -846,7 +884,7 @@ function PurchaseOrdersTab({ canAdjust }: { canAdjust: boolean }) {
                             <FileText className="h-3.5 w-3.5 mr-1" /> Post expense
                           </Button>
                         )}
-                        {(po.status === "draft" || po.status === "pending_approval" || po.status === "approved" || po.status === "partially_received") && (
+                        {(po.status === "draft" || po.status === "pending_review" || po.status === "pending_approval" || po.status === "approved" || po.status === "partially_received") && (
                           canAdjust ? (
                             <ReasonDialog
                               title={`Cancel ${po.poNumber}?`}

@@ -1482,6 +1482,9 @@ export const schemaReady = (async () => {
   throw err;
 });
 
+// Minimal identity shape the approval-matrix identity guard needs from the acting user.
+export interface ApprovalActor { id: number; isAdmin: number; }
+
 export interface IStorage {
   // Rooms
   listRooms(): Promise<Room[]>;
@@ -1563,7 +1566,8 @@ export interface IStorage {
   listLeaveRequests(staffId?: number): Promise<LeaveRequest[]>;
   getLeaveRequest(id: number): Promise<LeaveRequest | undefined>;
   createLeaveRequest(data: InsertLeaveRequest): Promise<LeaveRequest>;
-  decideLeaveRequest(id: number, status: "approved" | "rejected", decidedBy: string): Promise<LeaveRequest | undefined>;
+  reviewLeaveRequest(id: number, actor: ApprovalActor, reviewedBy: string): Promise<LeaveRequest | undefined>;
+  decideLeaveRequest(id: number, actor: ApprovalActor, status: "approved" | "rejected", decidedBy: string, reason?: string): Promise<LeaveRequest | undefined>;
   cancelLeaveRequest(id: number, reason: string): Promise<LeaveRequest | undefined>;
   listLeaveBalances(staffId?: number, year?: number): Promise<LeaveBalance[]>;
   upsertLeaveBalance(data: InsertLeaveBalance): Promise<LeaveBalance>;
@@ -1676,9 +1680,12 @@ export interface IStorage {
 
   // System Administration: Approval Matrix
   listApprovalMatrixRules(): Promise<ApprovalMatrixRule[]>;
+  getApprovalMatrixRule(id: number): Promise<ApprovalMatrixRule | undefined>;
   createApprovalMatrixRule(data: InsertApprovalMatrixRule): Promise<ApprovalMatrixRule>;
   updateApprovalMatrixRule(id: number, data: Partial<InsertApprovalMatrixRule>): Promise<ApprovalMatrixRule | undefined>;
   deleteApprovalMatrixRule(id: number): Promise<{ changes: number }>;
+  resolveApprovalRuleByAmount(documentType: string, amount: number): Promise<ApprovalMatrixRule | undefined>;
+  resolveApprovalRuleByCategory(documentType: string, category: string | null): Promise<ApprovalMatrixRule | undefined>;
 
   // System Administration: Table-level permissions
   listPermissionTableRules(): Promise<PermissionTableRule[]>;
@@ -1733,8 +1740,9 @@ export interface IStorage {
   createPurchaseRequisition(data: Omit<InsertPurchaseRequisition, "prNumber">, lines: Omit<InsertPurchaseRequisitionLine, "requisitionId">[]): Promise<PurchaseRequisition>;
   updatePurchaseRequisition(id: number, data: Partial<InsertPurchaseRequisition>, lines?: Omit<InsertPurchaseRequisitionLine, "requisitionId">[]): Promise<PurchaseRequisition | undefined>;
   submitPurchaseRequisition(id: number): Promise<PurchaseRequisition | undefined>;
-  approvePurchaseRequisition(id: number, approvedBy: string, poDetails: { supplierId: number; payableAccountId: number; expenseAccountId?: number | null }): Promise<{ requisition: PurchaseRequisition; purchaseOrder: PurchaseOrder }>;
-  rejectPurchaseRequisition(id: number, reason: string): Promise<PurchaseRequisition | undefined>;
+  reviewPurchaseRequisition(id: number, actor: ApprovalActor, reviewedBy: string): Promise<PurchaseRequisition | undefined>;
+  approvePurchaseRequisition(id: number, actor: ApprovalActor, approvedBy: string, poDetails: { supplierId: number; payableAccountId: number; expenseAccountId?: number | null }): Promise<{ requisition: PurchaseRequisition; purchaseOrder: PurchaseOrder }>;
+  rejectPurchaseRequisition(id: number, actor: ApprovalActor, reason: string): Promise<PurchaseRequisition | undefined>;
   cancelPurchaseRequisition(id: number, reason: string): Promise<PurchaseRequisition | undefined>;
 
   listPurchaseOrders(): Promise<PurchaseOrder[]>;
@@ -1743,8 +1751,9 @@ export interface IStorage {
   createPurchaseOrder(data: Omit<InsertPurchaseOrder, "poNumber">, lines: Omit<InsertPurchaseOrderLine, "poId">[]): Promise<PurchaseOrder>;
   updatePurchaseOrder(id: number, data: Partial<InsertPurchaseOrder>, lines?: Omit<InsertPurchaseOrderLine, "poId">[]): Promise<PurchaseOrder | undefined>;
   submitPurchaseOrder(id: number): Promise<PurchaseOrder | undefined>;
-  approvePurchaseOrder(id: number, approvedBy: string): Promise<PurchaseOrder | undefined>;
-  rejectPurchaseOrder(id: number, reason: string): Promise<PurchaseOrder | undefined>;
+  reviewPurchaseOrder(id: number, actor: ApprovalActor, reviewedBy: string): Promise<PurchaseOrder | undefined>;
+  approvePurchaseOrder(id: number, actor: ApprovalActor, approvedBy: string): Promise<PurchaseOrder | undefined>;
+  rejectPurchaseOrder(id: number, actor: ApprovalActor, reason: string): Promise<PurchaseOrder | undefined>;
   cancelPurchaseOrder(id: number, reason: string): Promise<PurchaseOrder | undefined>;
   receiveGoods(poId: number, data: { storeId: number; receivedBy: string; lines: { poLineId: number; quantityReceived: number; unitCost: number }[]; notes?: string }): Promise<GoodsReceipt>;
   receivePurchaseOrderDirect(poId: number, receivedBy: string): Promise<PurchaseOrder | undefined>;
@@ -1760,8 +1769,9 @@ export interface IStorage {
   createInternalRequisition(data: Omit<InsertInternalRequisition, "irNumber">, lines: Omit<InsertInternalRequisitionLine, "requisitionId">[]): Promise<InternalRequisition>;
   updateInternalRequisition(id: number, data: Partial<InsertInternalRequisition>, lines?: Omit<InsertInternalRequisitionLine, "requisitionId">[]): Promise<InternalRequisition | undefined>;
   submitInternalRequisition(id: number): Promise<InternalRequisition | undefined>;
-  approveInternalRequisition(id: number, approvedBy: string): Promise<InternalRequisition | undefined>;
-  rejectInternalRequisition(id: number, reason: string): Promise<InternalRequisition | undefined>;
+  reviewInternalRequisition(id: number, actor: ApprovalActor, reviewedBy: string): Promise<InternalRequisition | undefined>;
+  approveInternalRequisition(id: number, actor: ApprovalActor, approvedBy: string): Promise<InternalRequisition | undefined>;
+  rejectInternalRequisition(id: number, actor: ApprovalActor, reason: string): Promise<InternalRequisition | undefined>;
   issueInternalRequisition(id: number, issuedBy: string): Promise<InternalRequisition | undefined>;
   returnLoanItem(lineId: number, data: { quantityReturned: number; returnedBy: string; condition?: string; notes?: string }): Promise<LoanReturn>;
   cancelInternalRequisition(id: number, reason: string): Promise<InternalRequisition | undefined>;
@@ -2067,13 +2077,38 @@ export class DatabaseStorage implements IStorage {
     return (await db.select().from(leaveRequests).where(eq(leaveRequests.id, id)))[0];
   }
   async createLeaveRequest(data: InsertLeaveRequest) {
-    return (await db.insert(leaveRequests).values({ ...data, status: "pending", createdAt: Date.now() } as InsertLeaveRequest & { status: string; createdAt: number }).returning())[0];
+    // Leave has no separate draft/submit step — creation IS the submission, so
+    // routing is resolved immediately, banding on days requested (not KES).
+    const rule = await this.resolveApprovalRuleByAmount("leave_request", data.days);
+    if (!rule) throw new Error("No approval rule is configured for a leave request of this length — ask an administrator to add one in the Approval Matrix before requesting leave");
+    const status = rule.reviewerUserId != null ? "pending_review" : "pending_approval";
+    return (await db.insert(leaveRequests).values({ ...data, status, approvalRuleId: rule.id, createdAt: Date.now() } as InsertLeaveRequest & { status: string; approvalRuleId: number; createdAt: number }).returning())[0];
   }
-  async decideLeaveRequest(id: number, status: "approved" | "rejected", decidedBy: string) {
+  async reviewLeaveRequest(id: number, actor: ApprovalActor, reviewedBy: string) {
     const current = await this.getLeaveRequest(id);
     if (!current) return undefined;
-    if (current.status !== "pending") throw new Error(`This leave request is already ${current.status}`);
-    const updated = (await db.update(leaveRequests).set({ status, approvedBy: decidedBy, approvedAt: Date.now() }).where(eq(leaveRequests.id, id)).returning())[0];
+    if (current.status !== "pending_review") throw new Error(`Cannot review a leave request that is ${current.status.replace("_", " ")}`);
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    this.assertApprovalActor(rule, "review", actor);
+    return (await db.update(leaveRequests).set({ status: "pending_approval", reviewedBy, reviewedAt: Date.now() }).where(eq(leaveRequests.id, id)).returning())[0];
+  }
+  async decideLeaveRequest(id: number, actor: ApprovalActor, status: "approved" | "rejected", decidedBy: string, reason?: string) {
+    const current = await this.getLeaveRequest(id);
+    if (!current) return undefined;
+    if (status === "approved") {
+      if (current.status !== "pending_approval") throw new Error(`This leave request is ${current.status.replace("_", " ")}, not pending approval`);
+    } else {
+      if (current.status !== "pending_approval" && current.status !== "pending_review") {
+        throw new Error(`This leave request is already ${current.status.replace("_", " ")}`);
+      }
+    }
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
+    const updated = (await db.update(leaveRequests).set(
+      status === "approved"
+        ? { status, approvedBy: decidedBy, approvedAt: Date.now() }
+        : { status, rejectedReason: reason ?? null },
+    ).where(eq(leaveRequests.id, id)).returning())[0];
     if (status === "approved") {
       const year = Number(current.startDate.slice(0, 4));
       const [balance] = await db.select().from(leaveBalances).where(and(eq(leaveBalances.staffId, current.staffId), eq(leaveBalances.leaveTypeId, current.leaveTypeId), eq(leaveBalances.year, year)));
@@ -2658,6 +2693,9 @@ export class DatabaseStorage implements IStorage {
   async listApprovalMatrixRules() {
     return db.select().from(approvalMatrixRules);
   }
+  async getApprovalMatrixRule(id: number) {
+    return (await db.select().from(approvalMatrixRules).where(eq(approvalMatrixRules.id, id)))[0];
+  }
   async createApprovalMatrixRule(data: InsertApprovalMatrixRule) {
     return (await db.insert(approvalMatrixRules).values(data).returning())[0];
   }
@@ -2667,6 +2705,39 @@ export class DatabaseStorage implements IStorage {
   async deleteApprovalMatrixRule(id: number) {
     const result = await db.delete(approvalMatrixRules).where(eq(approvalMatrixRules.id, id));
     return { changes: result.count ?? 0 };
+  }
+  // Amount-banded resolution — used by payment_voucher, purchase_requisition,
+  // purchase_order (KES) and leave_request (day-count reusing the same band fields).
+  // Picks the first active rule whose [minAmount, maxAmount] band contains `amount`;
+  // null maxAmount means unbounded. Returns undefined when nothing matches — callers
+  // must block submission in that case per the "no-match blocks" policy.
+  async resolveApprovalRuleByAmount(documentType: string, amount: number) {
+    const rules = await db.select().from(approvalMatrixRules)
+      .where(and(eq(approvalMatrixRules.documentType, documentType), eq(approvalMatrixRules.active, 1)));
+    return rules.find((r) => amount >= r.minAmount && (r.maxAmount == null || amount <= r.maxAmount));
+  }
+  // Category-routed resolution — used by internal_requisition. Matches `category`
+  // case-insensitively against a rule's itemCategory; falls back to a wildcard rule
+  // (itemCategory left null) if no category-specific rule matches. Returns undefined
+  // when nothing matches (including when there is no wildcard rule configured).
+  async resolveApprovalRuleByCategory(documentType: string, category: string | null) {
+    const rules = await db.select().from(approvalMatrixRules)
+      .where(and(eq(approvalMatrixRules.documentType, documentType), eq(approvalMatrixRules.active, 1)));
+    const normalized = (category ?? "").trim().toLowerCase();
+    const exact = rules.find((r) => r.itemCategory && r.itemCategory.trim().toLowerCase() === normalized);
+    if (exact) return exact;
+    return rules.find((r) => !r.itemCategory || !r.itemCategory.trim());
+  }
+  // Shared identity guard for the review/approve steps of any approval-matrix-routed
+  // document. Admins always pass. Otherwise the acting user's id must match the
+  // rule's reviewerUserId (stage "review") or approverUserId (stage "approve").
+  private assertApprovalActor(rule: ApprovalMatrixRule | undefined, stage: "review" | "approve", actor: { id: number; isAdmin: number }) {
+    if (actor.isAdmin) return;
+    if (!rule) throw new Error("No approval rule is linked to this request — an administrator must reconfigure the Approval Matrix");
+    const requiredUserId = stage === "review" ? rule.reviewerUserId : rule.approverUserId;
+    if (requiredUserId != null && actor.id !== requiredUserId) {
+      throw new Error(`You are not the designated ${stage === "review" ? "reviewer" : "approver"} for this request`);
+    }
   }
 
   // ---------------- System Administration: Table-level permissions ----------------
@@ -2952,14 +3023,29 @@ export class DatabaseStorage implements IStorage {
     const current = await this.getPurchaseRequisition(id);
     if (!current) return undefined;
     if (current.status !== "draft") throw new Error(`Only a draft purchase requisition can be submitted (this one is ${current.status.replace("_", " ")})`);
-    return (await db.update(purchaseRequisitions).set({ status: "pending_approval" }).where(eq(purchaseRequisitions.id, id)).returning())[0];
+    const lines = await this.getPurchaseRequisitionLines(id);
+    const amount = lines.reduce((s, l) => s + l.quantity * l.estimatedUnitCost, 0);
+    const rule = await this.resolveApprovalRuleByAmount("purchase_requisition", amount);
+    if (!rule) throw new Error("No approval rule is configured for a purchase requisition of this amount — ask an administrator to add one in the Approval Matrix before submitting");
+    const nextStatus = rule.reviewerUserId != null ? "pending_review" : "pending_approval";
+    return (await db.update(purchaseRequisitions).set({ status: nextStatus, approvalRuleId: rule.id }).where(eq(purchaseRequisitions.id, id)).returning())[0];
   }
-  async approvePurchaseRequisition(id: number, approvedBy: string, poDetails: { supplierId: number; payableAccountId: number; expenseAccountId?: number | null }) {
+  async reviewPurchaseRequisition(id: number, actor: ApprovalActor, reviewedBy: string) {
+    const current = await this.getPurchaseRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "pending_review") throw new Error(`Cannot review a purchase requisition that is ${current.status.replace("_", " ")}`);
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    this.assertApprovalActor(rule, "review", actor);
+    return (await db.update(purchaseRequisitions).set({ status: "pending_approval", reviewedBy, reviewedAt: Date.now() }).where(eq(purchaseRequisitions.id, id)).returning())[0];
+  }
+  async approvePurchaseRequisition(id: number, actor: ApprovalActor, approvedBy: string, poDetails: { supplierId: number; payableAccountId: number; expenseAccountId?: number | null }) {
     const current = await this.getPurchaseRequisition(id);
     if (!current) throw new Error("Purchase requisition not found");
-    if (current.status !== "pending_approval" && current.status !== "draft") {
+    if (current.status !== "pending_approval") {
       throw new Error(`Cannot approve a purchase requisition that is ${current.status.replace("_", " ")}`);
     }
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    this.assertApprovalActor(rule, "approve", actor);
     const lines = await this.getPurchaseRequisitionLines(id);
     if (lines.length === 0) throw new Error("Cannot approve a purchase requisition with no lines");
     if (current.type === "direct" && !poDetails.expenseAccountId) {
@@ -3000,12 +3086,14 @@ export class DatabaseStorage implements IStorage {
       return { requisition: updatedPr, purchaseOrder: po };
     });
   }
-  async rejectPurchaseRequisition(id: number, reason: string) {
+  async rejectPurchaseRequisition(id: number, actor: ApprovalActor, reason: string) {
     const current = await this.getPurchaseRequisition(id);
     if (!current) return undefined;
-    if (current.status !== "pending_approval" && current.status !== "draft") {
+    if (current.status !== "pending_approval" && current.status !== "pending_review") {
       throw new Error(`Cannot reject a purchase requisition that is ${current.status.replace("_", " ")}`);
     }
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
     return (await db.update(purchaseRequisitions).set({ status: "rejected", rejectedReason: reason }).where(eq(purchaseRequisitions.id, id)).returning())[0];
   }
   async cancelPurchaseRequisition(id: number, reason: string) {
@@ -3061,22 +3149,37 @@ export class DatabaseStorage implements IStorage {
     const current = await this.getPurchaseOrder(id);
     if (!current) return undefined;
     if (current.status !== "draft") throw new Error(`Only a draft purchase order can be submitted (this one is ${current.status.replace("_", " ")})`);
-    return (await db.update(purchaseOrders).set({ status: "pending_approval" }).where(eq(purchaseOrders.id, id)).returning())[0];
+    const rule = await this.resolveApprovalRuleByAmount("purchase_order", current.totalAmount);
+    if (!rule) throw new Error("No approval rule is configured for a purchase order of this amount — ask an administrator to add one in the Approval Matrix before submitting");
+    const nextStatus = rule.reviewerUserId != null ? "pending_review" : "pending_approval";
+    return (await db.update(purchaseOrders).set({ status: nextStatus, approvalRuleId: rule.id }).where(eq(purchaseOrders.id, id)).returning())[0];
   }
-  async approvePurchaseOrder(id: number, approvedBy: string) {
+  async reviewPurchaseOrder(id: number, actor: ApprovalActor, reviewedBy: string) {
     const current = await this.getPurchaseOrder(id);
     if (!current) return undefined;
-    if (current.status !== "pending_approval" && current.status !== "draft") {
+    if (current.status !== "pending_review") throw new Error(`Cannot review a purchase order that is ${current.status.replace("_", " ")}`);
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    this.assertApprovalActor(rule, "review", actor);
+    return (await db.update(purchaseOrders).set({ status: "pending_approval", reviewedBy, reviewedAt: Date.now() }).where(eq(purchaseOrders.id, id)).returning())[0];
+  }
+  async approvePurchaseOrder(id: number, actor: ApprovalActor, approvedBy: string) {
+    const current = await this.getPurchaseOrder(id);
+    if (!current) return undefined;
+    if (current.status !== "pending_approval") {
       throw new Error(`Cannot approve a purchase order that is ${current.status.replace("_", " ")}`);
     }
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    this.assertApprovalActor(rule, "approve", actor);
     return (await db.update(purchaseOrders).set({ status: "approved", approvedBy, approvedAt: Date.now() }).where(eq(purchaseOrders.id, id)).returning())[0];
   }
-  async rejectPurchaseOrder(id: number, reason: string) {
+  async rejectPurchaseOrder(id: number, actor: ApprovalActor, reason: string) {
     const current = await this.getPurchaseOrder(id);
     if (!current) return undefined;
-    if (current.status !== "pending_approval" && current.status !== "draft") {
+    if (current.status !== "pending_approval" && current.status !== "pending_review") {
       throw new Error(`Cannot reject a purchase order that is ${current.status.replace("_", " ")}`);
     }
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
     return (await db.update(purchaseOrders).set({ status: "rejected", rejectedReason: reason }).where(eq(purchaseOrders.id, id)).returning())[0];
   }
   async cancelPurchaseOrder(id: number, reason: string) {
@@ -3239,26 +3342,55 @@ export class DatabaseStorage implements IStorage {
       return updated;
     });
   }
+  // Determines the single item category this requisition's lines route by.
+  // Throws if lines span more than one distinct category — category-based
+  // routing is ambiguous in that case and the requisition should be split.
+  private async resolveInternalRequisitionCategory(lines: InternalRequisitionLine[]): Promise<string | null> {
+    const itemIds = Array.from(new Set(lines.map((l) => l.itemId)));
+    const items = itemIds.length ? await db.select().from(inventoryItems).where(inArray(inventoryItems.id, itemIds)) : [];
+    const categories = Array.from(new Set(items.map((i) => (i.category || "").trim().toLowerCase()).filter(Boolean)));
+    if (categories.length > 1) {
+      throw new Error("This internal requisition's items span more than one category, so approval routing is ambiguous — please split it into separate requisitions, one per category");
+    }
+    return categories[0] ?? null;
+  }
   async submitInternalRequisition(id: number) {
     const current = await this.getInternalRequisition(id);
     if (!current) return undefined;
     if (current.status !== "draft") throw new Error(`Only a draft internal requisition can be submitted (this one is ${current.status.replace("_", " ")})`);
-    return (await db.update(internalRequisitions).set({ status: "pending_approval" }).where(eq(internalRequisitions.id, id)).returning())[0];
+    const lines = await this.getInternalRequisitionLines(id);
+    const category = await this.resolveInternalRequisitionCategory(lines);
+    const rule = await this.resolveApprovalRuleByCategory("internal_requisition", category);
+    if (!rule) throw new Error("No approval rule is configured for this item category — ask an administrator to add one (or a catch-all rule) in the Approval Matrix before submitting");
+    const nextStatus = rule.reviewerUserId != null ? "pending_review" : "pending_approval";
+    return (await db.update(internalRequisitions).set({ status: nextStatus, approvalRuleId: rule.id }).where(eq(internalRequisitions.id, id)).returning())[0];
   }
-  async approveInternalRequisition(id: number, approvedBy: string) {
+  async reviewInternalRequisition(id: number, actor: ApprovalActor, reviewedBy: string) {
     const current = await this.getInternalRequisition(id);
     if (!current) return undefined;
-    if (current.status !== "pending_approval" && current.status !== "draft") {
+    if (current.status !== "pending_review") throw new Error(`Cannot review an internal requisition that is ${current.status.replace("_", " ")}`);
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    this.assertApprovalActor(rule, "review", actor);
+    return (await db.update(internalRequisitions).set({ status: "pending_approval", reviewedBy, reviewedAt: Date.now() }).where(eq(internalRequisitions.id, id)).returning())[0];
+  }
+  async approveInternalRequisition(id: number, actor: ApprovalActor, approvedBy: string) {
+    const current = await this.getInternalRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "pending_approval") {
       throw new Error(`Cannot approve an internal requisition that is ${current.status.replace("_", " ")}`);
     }
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    this.assertApprovalActor(rule, "approve", actor);
     return (await db.update(internalRequisitions).set({ status: "approved", approvedBy, approvedAt: Date.now() }).where(eq(internalRequisitions.id, id)).returning())[0];
   }
-  async rejectInternalRequisition(id: number, reason: string) {
+  async rejectInternalRequisition(id: number, actor: ApprovalActor, reason: string) {
     const current = await this.getInternalRequisition(id);
     if (!current) return undefined;
-    if (current.status !== "pending_approval" && current.status !== "draft") {
+    if (current.status !== "pending_approval" && current.status !== "pending_review") {
       throw new Error(`Cannot reject an internal requisition that is ${current.status.replace("_", " ")}`);
     }
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
     return (await db.update(internalRequisitions).set({ status: "rejected", rejectedReason: reason }).where(eq(internalRequisitions.id, id)).returning())[0];
   }
   async issueInternalRequisition(id: number, issuedBy: string) {

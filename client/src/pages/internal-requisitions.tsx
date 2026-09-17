@@ -36,7 +36,7 @@ function titleCase(s: string): string {
 }
 
 const irStatusVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
-  draft: "outline", pending_approval: "default", approved: "default", rejected: "destructive", cancelled: "destructive", issued: "secondary",
+  draft: "outline", pending_review: "outline", pending_approval: "default", approved: "default", rejected: "destructive", cancelled: "destructive", issued: "secondary",
 };
 
 // ================= Reason dialog (reject/cancel) =================
@@ -289,6 +289,11 @@ function InternalRequisitionsTab({ canAdjust }: { canAdjust: boolean }) {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/internal-requisitions"] }); toast({ title: "Requisition submitted for approval" }); },
     onError: (err: Error) => toast({ title: "Couldn't submit requisition", description: extractErrorMessage(err.message), variant: "destructive" }),
   });
+  const reviewIr = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/internal-requisitions/${id}/review`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/internal-requisitions"] }); toast({ title: "Requisition marked as reviewed" }); },
+    onError: (err: Error) => toast({ title: "Couldn't review requisition", description: extractErrorMessage(err.message), variant: "destructive" }),
+  });
   const approveIr = useMutation({
     mutationFn: (id: number) => apiRequest("POST", `/api/internal-requisitions/${id}/approve`),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/internal-requisitions"] }); toast({ title: "Requisition approved" }); },
@@ -356,6 +361,20 @@ function InternalRequisitionsTab({ canAdjust }: { canAdjust: boolean }) {
                             <Send className="h-3.5 w-3.5 mr-1" /> Submit
                           </Button>
                         )}
+                        {ir.status === "pending_review" && (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => reviewIr.mutate(ir.id)} disabled={reviewIr.isPending} data-testid={`button-review-ir-${ir.id}`}>
+                              <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Mark reviewed
+                            </Button>
+                            <ReasonDialog
+                              title={`Reject ${ir.irNumber}?`}
+                              label="Reason for rejection"
+                              confirmLabel="Reject requisition"
+                              onConfirm={(reason) => rejectIr.mutate({ id: ir.id, reason })}
+                              trigger={<Button size="icon" variant="ghost" title="Reject" data-testid={`button-reject-ir-${ir.id}`}><Ban className="h-4 w-4" /></Button>}
+                            />
+                          </>
+                        )}
                         {ir.status === "pending_approval" && (
                           <>
                             <Button size="sm" variant="outline" onClick={() => approveIr.mutate(ir.id)} disabled={approveIr.isPending} data-testid={`button-approve-ir-${ir.id}`}>
@@ -375,7 +394,7 @@ function InternalRequisitionsTab({ canAdjust }: { canAdjust: boolean }) {
                             <PackageMinus className="h-3.5 w-3.5 mr-1" /> Issue stock
                           </Button>
                         )}
-                        {(ir.status === "draft" || ir.status === "pending_approval" || ir.status === "approved") && (
+                        {(ir.status === "draft" || ir.status === "pending_review" || ir.status === "pending_approval" || ir.status === "approved") && (
                           canAdjust ? (
                             <ReasonDialog
                               title={`Cancel ${ir.irNumber}?`}
