@@ -50,7 +50,7 @@ export interface DocLineItem {
 export interface DocPayload {
   docType: "invoice" | "receipt" | "credit_note";
   docNumber: number;
-  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy";
+  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy" | "water";
   customDocNumber?: string; // overrides the auto "INV-00001"/"RCT-00001" label (e.g. a module's own sequence number like RENT-000012)
   recipientName: string;
   recipientEmail?: string | null;
@@ -80,6 +80,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   restaurant: "Restaurant",
   movie: "Movie Room (Seat Booking)",
   tenancy: "Tenancy (Shop Rent)",
+  water: "Water Sales",
 };
 
 export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promise<Buffer> {

@@ -33,6 +33,7 @@ import Finance from "@/pages/finance";
 import SystemAdmin from "@/pages/system-admin";
 import Budgeting from "@/pages/budgeting";
 import AssetsPage from "@/pages/assets";
+import WaterSalesPage from "@/pages/water-sales";
 import Inventory from "@/pages/inventory";
 import Purchasing from "@/pages/purchasing";
 import InternalRequisitions from "@/pages/internal-requisitions";
@@ -89,6 +90,7 @@ function AppRouter() {
       <Route path="/internal-requisitions" component={() => <Guarded moduleKey="internal-requisitions" component={InternalRequisitions} />} />
       <Route path="/budgeting" component={() => <Guarded moduleKey="budgeting" component={Budgeting} />} />
       <Route path="/assets" component={() => <Guarded moduleKey="assets" component={AssetsPage} />} />
+      <Route path="/water-sales" component={() => <Guarded moduleKey="water-sales" component={WaterSalesPage} />} />
       <Route path="/system-admin" component={() => <Guarded moduleKey="system-admin" component={SystemAdmin} />} />
       <Route path="/settings" component={() => <Guarded moduleKey="settings" component={SettingsPage} requireAdminUsername />} />
       <Route component={NotFound} />

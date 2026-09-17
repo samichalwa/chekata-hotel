@@ -12,11 +12,12 @@ const DOC_CATEGORY_TO_TAX_CATEGORY: Record<string, TaxCategory> = {
   restaurant: "restaurant",
   movie: "facilities",
   tenancy: "tenancy",
+  water: "water",
 };
 
 export interface IssueDocumentInput {
   docType: "invoice" | "receipt" | "credit_note";
-  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy";
+  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy" | "water";
   sourceId: number;
   customDocNumber?: string; // e.g. a module's own sequence number like RENT-000012
   recipientName: string;
@@ -198,7 +199,7 @@ function formatDate(): string {
 }
 
 export interface IssueCreditNoteParams {
-  category: "accommodation" | "facility" | "movie" | "bar" | "restaurant";
+  category: "accommodation" | "facility" | "movie" | "bar" | "restaurant" | "water";
   sourceId: number;
   requestedAmount: number;
   reason?: string;

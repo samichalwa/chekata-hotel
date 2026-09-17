@@ -14,6 +14,7 @@ import {
   attendanceRecords, leaveTypes, leaveRequests, leaveBalances,
   statutoryRateTables, payeBands, payrollRuns, payrollLines,
   budgetLines, assetCategories, assets, assetDepreciationSchedules,
+  waterBucketPrices, waterSales,
 } from '@shared/schema';
 import type {
   Room, InsertRoom,
@@ -79,6 +80,8 @@ import type {
   AssetCategory, InsertAssetCategory,
   Asset, InsertAsset,
   AssetDepreciationSchedule, InsertAssetDepreciationSchedule,
+  WaterBucketPrice, InsertWaterBucketPrice,
+  WaterSale, InsertWaterSale,
 } from '@shared/schema';
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -1038,6 +1041,7 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await ensureColumn("maintenance_issues", "public_token", "TEXT");
   await ensureColumn("accommodation_bookings", "number_of_guests", "INTEGER NOT NULL DEFAULT 1");
   await ensureColumn("taxes", "applies_tenancy", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("taxes", "applies_water", "INTEGER NOT NULL DEFAULT 0");
 
   // ---- Phase 4: additive staff (Employee Register) columns ----
   await ensureColumn("staff", "photo_url", "TEXT");
@@ -1054,6 +1058,66 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   // PAYE personal relief lives on settings (a single configurable figure), not a table —
   // editable in the Payroll → Statutory Rates screen without a code change.
   await ensureColumn("settings", "paye_personal_relief", "REAL NOT NULL DEFAULT 2400");
+  await ensureColumn("settings", "water_rate_per_litre", "REAL NOT NULL DEFAULT 0");
+
+  // ---- Approval matrix wiring (Sept 2026): PR/PO/IR/leave/payment voucher routing ----
+  await ensureColumn("approval_matrix_rules", "item_category", "TEXT");
+  await ensureColumn("purchase_requisitions", "approval_rule_id", "INTEGER");
+  await ensureColumn("purchase_requisitions", "reviewed_by", "TEXT");
+  await ensureColumn("purchase_requisitions", "reviewed_at", "BIGINT");
+  await ensureColumn("purchase_orders", "approval_rule_id", "INTEGER");
+  await ensureColumn("purchase_orders", "reviewed_by", "TEXT");
+  await ensureColumn("purchase_orders", "reviewed_at", "BIGINT");
+  await ensureColumn("internal_requisitions", "approval_rule_id", "INTEGER");
+  await ensureColumn("internal_requisitions", "reviewed_by", "TEXT");
+  await ensureColumn("internal_requisitions", "reviewed_at", "BIGINT");
+  await ensureColumn("leave_requests", "approval_rule_id", "INTEGER");
+  await ensureColumn("leave_requests", "reviewed_by", "TEXT");
+  await ensureColumn("leave_requests", "reviewed_at", "BIGINT");
+  await ensureColumn("leave_requests", "rejected_reason", "TEXT");
+  await ensureColumn("payment_vouchers", "approval_rule_id", "INTEGER");
+  await ensureColumn("payment_vouchers", "reviewed_at", "BIGINT");
+  await ensureColumn("payment_vouchers", "approved_at", "BIGINT");
+
+  // ---- Water Sales (Sept 2026) ----
+  // NOTE: postgres.js sends each tagged-template query as a single prepared statement,
+  // which rejects multiple semicolon-separated commands in one call ("cannot insert
+  // multiple commands into a prepared statement") — especially over the pgbouncer
+  // transaction-mode pooler used for the Test DB. Each CREATE TABLE must be its own call.
+  await sql`
+CREATE TABLE IF NOT EXISTS water_bucket_prices (
+  id SERIAL PRIMARY KEY,
+  size_litres REAL NOT NULL UNIQUE,
+  price REAL NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1
+)`;
+  await sql`
+CREATE TABLE IF NOT EXISTS water_sales (
+  id SERIAL PRIMARY KEY,
+  sale_number TEXT NOT NULL UNIQUE,
+  sale_date TEXT NOT NULL,
+  sale_type TEXT NOT NULL,
+  bucket_size_litres REAL,
+  bucket_count INTEGER,
+  meter_start REAL,
+  meter_end REAL,
+  litres_sold REAL NOT NULL,
+  unit_price REAL,
+  rate_per_litre REAL,
+  total_amount REAL NOT NULL,
+  customer_name TEXT NOT NULL,
+  customer_phone TEXT,
+  customer_email TEXT,
+  payment_method TEXT,
+  payment_reference TEXT,
+  status TEXT NOT NULL DEFAULT 'completed',
+  notes TEXT,
+  cancel_reason TEXT,
+  credited_amount REAL NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL,
+  created_at BIGINT NOT NULL
+)`;
+  await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('water_sale', 'WS', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
   // Approval-workflow additions: standalone purchase orders now go through the same
   // draft -> pending_approval -> approved/rejected flow as requisitions.
   await ensureColumn("purchase_orders", "rejected_reason", "TEXT");
@@ -1768,6 +1832,18 @@ export interface IStorage {
 
   listAssetDepreciationSchedules(assetId?: number): Promise<AssetDepreciationSchedule[]>;
   runDepreciationForPeriod(periodMonth: string, createdBy: string): Promise<{ journalEntryId: number | null; scheduleRows: AssetDepreciationSchedule[]; totalDepreciation: number }>;
+
+  // Water Sales
+  listWaterBucketPrices(): Promise<WaterBucketPrice[]>;
+  createWaterBucketPrice(data: InsertWaterBucketPrice): Promise<WaterBucketPrice>;
+  updateWaterBucketPrice(id: number, data: Partial<InsertWaterBucketPrice>): Promise<WaterBucketPrice | undefined>;
+  deleteWaterBucketPrice(id: number): Promise<{ changes: number }>;
+
+  listWaterSales(filters?: { from?: string; to?: string }): Promise<WaterSale[]>;
+  getWaterSale(id: number): Promise<WaterSale | undefined>;
+  createWaterSale(data: InsertWaterSale, createdBy: string): Promise<WaterSale>;
+  cancelWaterSale(id: number, reason: string): Promise<WaterSale | undefined>;
+  creditWaterSale(id: number, amount: number): Promise<WaterSale | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -3716,6 +3792,92 @@ export class DatabaseStorage implements IStorage {
     ).returning();
 
     return { journalEntryId: created.id, scheduleRows, totalDepreciation };
+  }
+
+  // ---- Water Sales ----
+  async listWaterBucketPrices() {
+    return db.select().from(waterBucketPrices).orderBy(waterBucketPrices.sizeLitres);
+  }
+  async createWaterBucketPrice(data: InsertWaterBucketPrice) {
+    return (await db.insert(waterBucketPrices).values(data).returning())[0];
+  }
+  async updateWaterBucketPrice(id: number, data: Partial<InsertWaterBucketPrice>) {
+    return (await db.update(waterBucketPrices).set(data).where(eq(waterBucketPrices.id, id)).returning())[0];
+  }
+  async deleteWaterBucketPrice(id: number) {
+    const result = await db.delete(waterBucketPrices).where(eq(waterBucketPrices.id, id));
+    return { changes: result.count ?? 0 };
+  }
+
+  async listWaterSales(filters?: { from?: string; to?: string }) {
+    const conditions = [];
+    if (filters?.from) conditions.push(gte(waterSales.saleDate, filters.from));
+    if (filters?.to) conditions.push(lte(waterSales.saleDate, filters.to));
+    const query = db.select().from(waterSales).orderBy(desc(waterSales.id));
+    if (conditions.length) return query.where(and(...conditions));
+    return query;
+  }
+  async getWaterSale(id: number) {
+    return (await db.select().from(waterSales).where(eq(waterSales.id, id)))[0];
+  }
+  async createWaterSale(data: InsertWaterSale, createdBy: string) {
+    let litresSold = 0;
+    let unitPrice: number | null = null;
+    let ratePerLitre: number | null = null;
+    let totalAmount = 0;
+
+    if (data.saleType === "bucket") {
+      if (!data.bucketSizeLitres || !data.bucketCount || data.bucketCount <= 0) {
+        throw new Error("Bucket sales require a bucket size and a positive bucket count");
+      }
+      const [priceRow] = await db.select().from(waterBucketPrices)
+        .where(and(eq(waterBucketPrices.sizeLitres, data.bucketSizeLitres), eq(waterBucketPrices.active, 1)));
+      if (!priceRow) throw new Error(`No active price is configured for a ${data.bucketSizeLitres}L bucket`);
+      unitPrice = priceRow.price;
+      litresSold = data.bucketSizeLitres * data.bucketCount;
+      totalAmount = unitPrice * data.bucketCount;
+    } else if (data.saleType === "bulk") {
+      if (data.meterStart == null || data.meterEnd == null) {
+        throw new Error("Bulk sales require a meter start and end reading");
+      }
+      if (data.meterEnd <= data.meterStart) {
+        throw new Error("Meter end reading must be greater than the meter start reading");
+      }
+      const settings = await this.getSettings();
+      ratePerLitre = settings.waterRatePerLitre;
+      if (!ratePerLitre || ratePerLitre <= 0) {
+        throw new Error("Configure a water rate per litre in Settings before recording bulk sales");
+      }
+      litresSold = data.meterEnd - data.meterStart;
+      totalAmount = litresSold * ratePerLitre;
+    } else {
+      throw new Error(`Unknown water sale type "${data.saleType}"`);
+    }
+
+    const saleNumber = await this.getNextSequenceNumber("water_sale");
+    const [created] = await db.insert(waterSales).values({
+      ...data,
+      saleNumber,
+      litresSold,
+      unitPrice,
+      ratePerLitre,
+      totalAmount,
+      status: "completed",
+      creditedAmount: 0,
+      createdBy,
+      createdAt: Date.now(),
+    }).returning();
+    return created;
+  }
+  async cancelWaterSale(id: number, reason: string) {
+    return (await db.update(waterSales).set({ status: "cancelled", cancelReason: reason })
+      .where(eq(waterSales.id, id)).returning())[0];
+  }
+  async creditWaterSale(id: number, amount: number) {
+    const [sale] = await db.select().from(waterSales).where(eq(waterSales.id, id));
+    if (!sale) return undefined;
+    return (await db.update(waterSales).set({ creditedAmount: sale.creditedAmount + amount })
+      .where(eq(waterSales.id, id)).returning())[0];
   }
 }
 

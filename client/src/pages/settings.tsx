@@ -358,6 +358,7 @@ const taxFormSchema = z.object({
   appliesBar: z.coerce.number(),
   appliesRestaurant: z.coerce.number(),
   appliesTenancy: z.coerce.number(),
+  appliesWater: z.coerce.number(),
 });
 
 type TaxFormValues = z.infer<typeof taxFormSchema>;
@@ -368,8 +369,8 @@ function TaxFormDialog({ tax, trigger }: { tax?: Tax; trigger: React.ReactNode }
   const form = useForm<TaxFormValues>({
     resolver: zodResolver(taxFormSchema),
     defaultValues: tax
-      ? { name: tax.name, ratePercent: tax.ratePercent, active: tax.active, appliesAccommodation: tax.appliesAccommodation, appliesFacilities: tax.appliesFacilities, appliesBar: tax.appliesBar, appliesRestaurant: tax.appliesRestaurant, appliesTenancy: tax.appliesTenancy }
-      : { name: "", ratePercent: 0, active: 1, appliesAccommodation: 0, appliesFacilities: 0, appliesBar: 0, appliesRestaurant: 0, appliesTenancy: 0 },
+      ? { name: tax.name, ratePercent: tax.ratePercent, active: tax.active, appliesAccommodation: tax.appliesAccommodation, appliesFacilities: tax.appliesFacilities, appliesBar: tax.appliesBar, appliesRestaurant: tax.appliesRestaurant, appliesTenancy: tax.appliesTenancy, appliesWater: tax.appliesWater }
+      : { name: "", ratePercent: 0, active: 1, appliesAccommodation: 0, appliesFacilities: 0, appliesBar: 0, appliesRestaurant: 0, appliesTenancy: 0, appliesWater: 0 },
   });
 
   const mutation = useMutation({
@@ -392,6 +393,7 @@ function TaxFormDialog({ tax, trigger }: { tax?: Tax; trigger: React.ReactNode }
     { key: "appliesBar", label: "Bar" },
     { key: "appliesRestaurant", label: "Restaurant" },
     { key: "appliesTenancy", label: "Tenancy" },
+    { key: "appliesWater", label: "Water Sales" },
   ];
 
   return (
@@ -493,6 +495,7 @@ function TaxesTab() {
                     t.appliesBar && "Bar",
                     t.appliesRestaurant && "Restaurant",
                     t.appliesTenancy && "Tenancy",
+                    t.appliesWater && "Water Sales",
                   ].filter(Boolean) as string[];
                   return (
                     <TableRow key={t.id} data-testid={`row-tax-${t.id}`}>

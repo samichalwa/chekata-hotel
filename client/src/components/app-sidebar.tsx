@@ -28,6 +28,7 @@ import {
   Landmark,
   PiggyBank,
   Boxes,
+  Droplets,
 } from "lucide-react";
 import {
   Sidebar,
@@ -68,6 +69,7 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Finance", url: "/finance", icon: Wallet, key: "finance" },
   { title: "Budgeting", url: "/budgeting", icon: PiggyBank, key: "budgeting" },
   { title: "Assets", url: "/assets", icon: Boxes, key: "assets" },
+  { title: "Water Sales", url: "/water-sales", icon: Droplets, key: "water-sales" },
   { title: "Inventory", url: "/inventory", icon: Package, key: "inventory" },
   { title: "Purchasing", url: "/purchasing", icon: ShoppingCart, key: "purchasing" },
   { title: "Internal Requisitions", url: "/internal-requisitions", icon: ClipboardCheck, key: "internal-requisitions" },

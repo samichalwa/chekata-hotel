@@ -25,6 +25,7 @@ const categoryLabel: Record<string, string> = {
   bar: "Bar",
   restaurant: "Restaurant",
   movie: "Movie Room (Seat)",
+  water: "Water Sales",
 };
 
 function formatDateTime(ts: number): string {

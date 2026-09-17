@@ -313,6 +313,9 @@ export const insertLeaveTypeSchema = createInsertSchema(leaveTypes).omit({ id: t
 export type InsertLeaveType = z.infer<typeof insertLeaveTypeSchema>;
 export type LeaveType = typeof leaveTypes.$inferSelect;
 
+export const LEAVE_STATUSES = ["pending_review", "pending_approval", "approved", "rejected", "cancelled"] as const;
+export type LeaveStatus = typeof LEAVE_STATUSES[number];
+
 export const leaveRequests = pgTable("leave_requests", {
   id: serial("id").primaryKey(),
   staffId: integer("staff_id").notNull(),
@@ -321,13 +324,17 @@ export const leaveRequests = pgTable("leave_requests", {
   endDate: text("end_date").notNull(),
   days: real("days").notNull(),
   reason: text("reason"),
-  status: text("status").notNull().default("pending"), // pending | approved | rejected | cancelled
+  status: text("status").notNull().default("pending_approval"), // pending_review | pending_approval | approved | rejected | cancelled
+  approvalRuleId: integer("approval_rule_id"),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: bigint("reviewed_at", { mode: "number" }),
   approvedBy: text("approved_by"),
   approvedAt: bigint("approved_at", { mode: "number" }),
+  rejectedReason: text("rejected_reason"),
   cancelReason: text("cancel_reason"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
-export const insertLeaveRequestSchema = createInsertSchema(leaveRequests).omit({ id: true, createdAt: true, status: true, approvedBy: true, approvedAt: true, cancelReason: true });
+export const insertLeaveRequestSchema = createInsertSchema(leaveRequests).omit({ id: true, createdAt: true, status: true, approvalRuleId: true, reviewedBy: true, reviewedAt: true, approvedBy: true, approvedAt: true, rejectedReason: true, cancelReason: true });
 export type InsertLeaveRequest = z.infer<typeof insertLeaveRequestSchema>;
 export type LeaveRequest = typeof leaveRequests.$inferSelect;
 
@@ -453,6 +460,7 @@ export const settings = pgTable("settings", {
   smsSenderId: text("sms_sender_id"), // optional AT short code / sender ID
   smsEnabled: integer("sms_enabled").notNull().default(0),
   payePersonalRelief: real("paye_personal_relief").notNull().default(2400), // KES/month — Phase 4 payroll
+  waterRatePerLitre: real("water_rate_per_litre").notNull().default(0), // KES/litre, tax-inclusive — used for bulk/metered water sales
 });
 
 export const insertSettingsSchema = createInsertSchema(settings).omit({ id: true });
@@ -512,6 +520,7 @@ export const MODULE_KEYS = [
   "payroll",
   "budgeting",
   "assets",
+  "water-sales",
 ] as const;
 export type ModuleKey = typeof MODULE_KEYS[number];
 
@@ -540,16 +549,17 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   payroll: "Payroll",
   budgeting: "Budgeting",
   assets: "Assets",
+  "water-sales": "Water Sales",
 };
 
 // Cosmetic grouping used both by the Settings > Users module-access checkboxes
 // and by the main sidebar navigation, so the two stay in sync automatically.
 // Every module key except "settings" (which is never permission-assignable
 // and always sits outside these categories) must appear in exactly one
-// group here — all 23 operational modules, covered exactly once.
+// group here — all 24 operational modules, covered exactly once.
 export const MODULE_CATEGORY_GROUPS: { label: string; keys: ModuleKey[] }[] = [
   { label: "Operations", keys: ["dashboard", "accommodation", "maintenance"] },
-  { label: "Facilities", keys: ["facilities", "movie-room", "bar-restaurant", "fnb-costing"] },
+  { label: "Facilities", keys: ["facilities", "movie-room", "bar-restaurant", "fnb-costing", "water-sales"] },
   { label: "Finance & Accounting", keys: ["finance", "budgeting", "documents", "expenses"] },
   { label: "HR", keys: ["staff", "attendance", "leave", "payroll"] },
   { label: "Supply", keys: ["purchasing", "internal-requisitions", "inventory", "assets"] },
@@ -577,16 +587,23 @@ export const PERMISSION_TABLE_LABELS: Record<PermissionTableKey, string> = {
 };
 
 // Document types the Approval Matrix can route. Grows in later phases
-// (purchase_order, internal_requisition, leave_request join once those
-// modules exist).
-export const APPROVAL_DOCUMENT_TYPES = ["payment_voucher", "purchase_requisition", "purchase_order", "internal_requisition"] as const;
+export const APPROVAL_DOCUMENT_TYPES = ["payment_voucher", "purchase_requisition", "purchase_order", "internal_requisition", "leave_request"] as const;
 export type ApprovalDocumentType = typeof APPROVAL_DOCUMENT_TYPES[number];
 export const APPROVAL_DOCUMENT_TYPE_LABELS: Record<ApprovalDocumentType, string> = {
   payment_voucher: "Payment Voucher",
   purchase_requisition: "Purchase Requisition",
   purchase_order: "Purchase Order",
   internal_requisition: "Internal Requisition",
+  leave_request: "Leave Request",
 };
+// Document types that route by KES amount band (minAmount/maxAmount on the
+// rule). internal_requisition is the one exception — it has no monetary
+// value and instead routes by the requisitioned item(s)' category, matched
+// against a rule's itemCategory (see resolveApprovalRuleByCategory in
+// storage.ts). leave_request uses amount-band matching too, but on the
+// number of days requested rather than KES — admins can leave a single
+// unbounded (0..∞) rule for a flat, non-banded leave approval chain.
+export const APPROVAL_CATEGORY_ROUTED_TYPES: ApprovalDocumentType[] = ["internal_requisition"];
 
 // ---------- Finance: Chart of Accounts ----------
 export const ACCOUNT_TYPES = ["asset", "liability", "equity", "income", "expense"] as const;
@@ -721,10 +738,13 @@ export const paymentVouchers = pgTable("payment_vouchers", {
   expenseAccountId: integer("expense_account_id").notNull(), // debit side (expense/payable account)
   bankAccountId: integer("bank_account_id").notNull(), // credit side (cash/bank)
   description: text("description").notNull(),
-  status: text("status").notNull().default("draft"), // draft | pending_approval | approved | posted | cancelled
+  status: text("status").notNull().default("draft"), // draft | pending_review | pending_approval | approved | posted | cancelled
   requestedBy: text("requested_by").notNull(),
+  approvalRuleId: integer("approval_rule_id"),
   reviewedBy: text("reviewed_by"),
+  reviewedAt: bigint("reviewed_at", { mode: "number" }),
   approvedBy: text("approved_by"),
+  approvedAt: bigint("approved_at", { mode: "number" }),
   journalEntryId: integer("journal_entry_id"), // set once posted
   cancelReason: text("cancel_reason"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
@@ -756,6 +776,12 @@ export const approvalMatrixRules = pgTable("approval_matrix_rules", {
   maxAmount: doublePrecision("max_amount"), // null = unbounded — doublePrecision (not real) since approval bands for large capex/procurement can exceed float32's ~8.3M safe range
   reviewerUserId: integer("reviewer_user_id"), // optional middle step
   approverUserId: integer("approver_user_id").notNull(), // final approver; may also act as final if no reviewer set
+  // Only used for documentType values in APPROVAL_CATEGORY_ROUTED_TYPES (currently
+  // internal_requisition). Free-text, matched case-insensitively against
+  // inventoryItems.category. Null = a catch-all/wildcard rule for that document
+  // type, used when no category-specific rule matches. Ignored (left null) for
+  // amount-banded document types, which use minAmount/maxAmount instead.
+  itemCategory: text("item_category"),
   active: integer("active").notNull().default(1),
 });
 export const insertApprovalMatrixRuleSchema = createInsertSchema(approvalMatrixRules).omit({ id: true });
@@ -853,12 +879,13 @@ export const taxes = pgTable("taxes", {
   appliesBar: integer("applies_bar").notNull().default(0),
   appliesRestaurant: integer("applies_restaurant").notNull().default(0),
   appliesTenancy: integer("applies_tenancy").notNull().default(0),
+  appliesWater: integer("applies_water").notNull().default(0),
 });
 
 export const insertTaxSchema = createInsertSchema(taxes).omit({ id: true });
 export type InsertTax = z.infer<typeof insertTaxSchema>;
 export type Tax = typeof taxes.$inferSelect;
-export type TaxCategory = "accommodation" | "facilities" | "bar" | "restaurant" | "tenancy";
+export type TaxCategory = "accommodation" | "facilities" | "bar" | "restaurant" | "tenancy" | "water";
 
 // ============================================================================
 // Phase 2: Inventory, Purchasing, Internal Requisitions
@@ -939,7 +966,7 @@ export type Supplier = typeof suppliers.$inferSelect;
 // one-off expense purchase that skips stock entirely once its PO is received.
 export const PR_TYPES = ["stock", "direct"] as const;
 export type PrType = typeof PR_TYPES[number];
-export const PR_STATUSES = ["draft", "pending_approval", "approved", "rejected", "cancelled"] as const;
+export const PR_STATUSES = ["draft", "pending_review", "pending_approval", "approved", "rejected", "cancelled"] as const;
 export type PrStatus = typeof PR_STATUSES[number];
 
 export const purchaseRequisitions = pgTable("purchase_requisitions", {
@@ -951,6 +978,10 @@ export const purchaseRequisitions = pgTable("purchase_requisitions", {
   type: text("type").notNull().default("stock"), // stock | direct
   status: text("status").notNull().default("draft"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  // Approval Matrix rule matched at submit time — drives who may review/approve.
+  approvalRuleId: integer("approval_rule_id"),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: bigint("reviewed_at", { mode: "number" }),
   approvedBy: text("approved_by"),
   approvedAt: bigint("approved_at", { mode: "number" }),
   rejectedReason: text("rejected_reason"),
@@ -975,7 +1006,7 @@ export type InsertPurchaseRequisitionLine = z.infer<typeof insertPurchaseRequisi
 export type PurchaseRequisitionLine = typeof purchaseRequisitionLines.$inferSelect;
 
 // ---------- Purchasing: Purchase Orders ----------
-export const PO_STATUSES = ["draft", "pending_approval", "approved", "rejected", "partially_received", "received", "cancelled"] as const;
+export const PO_STATUSES = ["draft", "pending_review", "pending_approval", "approved", "rejected", "partially_received", "received", "cancelled"] as const;
 export type PoStatus = typeof PO_STATUSES[number];
 
 export const purchaseOrders = pgTable("purchase_orders", {
@@ -990,6 +1021,9 @@ export const purchaseOrders = pgTable("purchase_orders", {
   totalAmount: real("total_amount").notNull().default(0),
   createdBy: text("created_by").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  approvalRuleId: integer("approval_rule_id"),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: bigint("reviewed_at", { mode: "number" }),
   approvedBy: text("approved_by"),
   approvedAt: bigint("approved_at", { mode: "number" }),
   rejectedReason: text("rejected_reason"),
@@ -1047,7 +1081,7 @@ export type GoodsReceiptLine = typeof goodsReceiptLines.$inferSelect;
 // relocates stock (goods remain company property) and posts no JE at all.
 export const IR_TYPES = ["permanent", "loan"] as const;
 export type IrType = typeof IR_TYPES[number];
-export const IR_STATUSES = ["draft", "pending_approval", "approved", "rejected", "cancelled", "issued"] as const;
+export const IR_STATUSES = ["draft", "pending_review", "pending_approval", "approved", "rejected", "cancelled", "issued"] as const;
 export type IrStatus = typeof IR_STATUSES[number];
 
 export const internalRequisitions = pgTable("internal_requisitions", {
@@ -1061,6 +1095,9 @@ export const internalRequisitions = pgTable("internal_requisitions", {
   status: text("status").notNull().default("draft"),
   purpose: text("purpose").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  approvalRuleId: integer("approval_rule_id"),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: bigint("reviewed_at", { mode: "number" }),
   approvedBy: text("approved_by"),
   approvedAt: bigint("approved_at", { mode: "number" }),
   rejectedReason: text("rejected_reason"),
@@ -1319,3 +1356,62 @@ export const assetDepreciationSchedules = pgTable("asset_depreciation_schedules"
 export const insertAssetDepreciationScheduleSchema = createInsertSchema(assetDepreciationSchedules).omit({ id: true, createdAt: true });
 export type InsertAssetDepreciationSchedule = z.infer<typeof insertAssetDepreciationScheduleSchema>;
 export type AssetDepreciationSchedule = typeof assetDepreciationSchedules.$inferSelect;
+
+// ============================================================================
+// Water Sales (bulk water — buckets or metered bulk fill)
+// ============================================================================
+
+// "bucket": customer's own container of a configured size (e.g. 10L, 20L),
+// charged the fixed configured price for that size.
+// "bulk": filled based on a water meter reading difference, charged at the
+// configured per-litre rate.
+export const WATER_SALE_TYPES = ["bucket", "bulk"] as const;
+export type WaterSaleType = typeof WATER_SALE_TYPES[number];
+
+export const WATER_SALE_STATUSES = ["completed", "cancelled"] as const;
+export type WaterSaleStatus = typeof WATER_SALE_STATUSES[number];
+
+// Admin-configurable catalogue of bucket sizes and their fixed prices —
+// nothing hardcoded to exactly "10L"/"20L"; sizes/prices are full CRUD.
+export const waterBucketPrices = pgTable("water_bucket_prices", {
+  id: serial("id").primaryKey(),
+  sizeLitres: real("size_litres").notNull().unique(),
+  price: real("price").notNull(), // KES, tax-inclusive
+  active: integer("active").notNull().default(1),
+});
+export const insertWaterBucketPriceSchema = createInsertSchema(waterBucketPrices).omit({ id: true });
+export type InsertWaterBucketPrice = z.infer<typeof insertWaterBucketPriceSchema>;
+export type WaterBucketPrice = typeof waterBucketPrices.$inferSelect;
+
+export const waterSales = pgTable("water_sales", {
+  id: serial("id").primaryKey(),
+  saleNumber: text("sale_number").notNull().unique(), // e.g. WS-000001
+  saleDate: text("sale_date").notNull(), // YYYY-MM-DD
+  saleType: text("sale_type").notNull(), // bucket | bulk
+  bucketSizeLitres: real("bucket_size_litres"), // required for saleType "bucket"
+  bucketCount: integer("bucket_count"), // required for saleType "bucket"
+  meterStart: real("meter_start"), // required for saleType "bulk"
+  meterEnd: real("meter_end"), // required for saleType "bulk"
+  litresSold: real("litres_sold").notNull(), // bucketSizeLitres*bucketCount, or meterEnd-meterStart
+  unitPrice: real("unit_price"), // bucket sales: price per bucket, snapshotted at sale time
+  ratePerLitre: real("rate_per_litre"), // bulk sales: rate per litre, snapshotted at sale time
+  totalAmount: real("total_amount").notNull(),
+  customerName: text("customer_name").notNull(),
+  customerPhone: text("customer_phone"),
+  customerEmail: text("customer_email"),
+  paymentMethod: text("payment_method"), // cash | mpesa | card
+  paymentReference: text("payment_reference"),
+  status: text("status").notNull().default("completed"), // completed | cancelled
+  notes: text("notes"),
+  cancelReason: text("cancel_reason"),
+  creditedAmount: real("credited_amount").notNull().default(0), // amount refunded back via credit notes against this sale's receipt
+  createdBy: text("created_by").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export const insertWaterSaleSchema = createInsertSchema(waterSales).omit({
+  id: true, saleNumber: true, litresSold: true, unitPrice: true, ratePerLitre: true,
+  totalAmount: true, status: true, cancelReason: true, creditedAmount: true, createdAt: true,
+  createdBy: true, // server-set from the authenticated session — passive audit stamp, never client input
+});
+export type InsertWaterSale = z.infer<typeof insertWaterSaleSchema>;
+export type WaterSale = typeof waterSales.$inferSelect;

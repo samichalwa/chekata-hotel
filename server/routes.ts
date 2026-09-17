@@ -29,6 +29,7 @@ import {
   insertAttendanceRecordSchema, insertLeaveTypeSchema, insertLeaveRequestSchema, insertLeaveBalanceSchema,
   insertStatutoryRateTableSchema, insertPayeBandSchema,
   insertBudgetLineSchema, insertAssetCategorySchema, insertAssetSchema, DEPRECIATION_METHODS, ASSET_STATUSES,
+  insertWaterBucketPriceSchema, insertWaterSaleSchema, WATER_SALE_TYPES,
 } from "@shared/schema";
 import { issueDocument, issueCreditNote } from "./documents";
 import { buildDocumentPdf, buildMaintenanceReportPdf, buildPayslipPdf } from "./pdf";
@@ -2640,6 +2641,122 @@ export async function registerRoutes(
     } catch (err: any) {
       if (err instanceof z.ZodError) return handleZodError(res, err);
       res.status(400).json({ error: err?.message ?? "Failed to run depreciation" });
+    }
+  });
+
+  // ---------- Water Sales ----------
+  // Scoped rate-per-litre endpoint (bulk sales), gated only by the water-sales module —
+  // NOT the generic /api/settings route, which additionally requires requireAdminUsername.
+  // Anyone granted the Water Sales module checkbox can configure this without full admin access.
+  app.get("/api/water-sales/rate", requireModule("water-sales"), async (_req, res) => {
+    const settings = await storage.getSettings();
+    res.json({ waterRatePerLitre: settings.waterRatePerLitre });
+  });
+  app.patch("/api/water-sales/rate", requireModule("water-sales"), async (req, res) => {
+    try {
+      const schema = z.object({ waterRatePerLitre: z.coerce.number().min(0, "Rate can't be negative") });
+      const { waterRatePerLitre } = schema.parse(req.body);
+      await storage.updateSettings({ waterRatePerLitre });
+      res.json({ waterRatePerLitre });
+    } catch (err) { handleZodError(res, err); }
+  });
+
+  app.get("/api/water-sales/bucket-prices", requireModule("water-sales"), async (_req, res) => {
+    res.json(await storage.listWaterBucketPrices());
+  });
+  app.post("/api/water-sales/bucket-prices", requireModule("water-sales"), async (req, res) => {
+    try {
+      const data = insertWaterBucketPriceSchema.parse(req.body);
+      res.status(201).json(await storage.createWaterBucketPrice(data));
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/water-sales/bucket-prices/:id", requireModule("water-sales"), async (req, res) => {
+    try {
+      const data = insertWaterBucketPriceSchema.partial().parse(req.body);
+      const updated = await storage.updateWaterBucketPrice(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Bucket price not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/water-sales/bucket-prices/:id", requireModule("water-sales"), async (req, res) => {
+    await storage.deleteWaterBucketPrice(Number(req.params.id));
+    res.status(204).end();
+  });
+
+  app.get("/api/water-sales", requireModule("water-sales"), async (req, res) => {
+    const { from, to } = req.query as { from?: string; to?: string };
+    res.json(await storage.listWaterSales({ from, to }));
+  });
+  app.get("/api/water-sales/:id", requireModule("water-sales"), async (req, res) => {
+    const row = await storage.getWaterSale(Number(req.params.id));
+    if (!row) return res.status(404).json({ error: "Water sale not found" });
+    res.json(row);
+  });
+  app.post("/api/water-sales", requireModule("water-sales"), async (req, res) => {
+    try {
+      const data = insertWaterSaleSchema.parse(req.body);
+      const currentUser = (req as any).user;
+      const sale = await storage.createWaterSale(data, currentUser?.fullName ?? "system");
+      const label = sale.saleType === "bucket"
+        ? `${sale.bucketCount} x ${sale.bucketSizeLitres}L bucket${(sale.bucketCount ?? 0) > 1 ? "s" : ""}`
+        : `Bulk water \u2014 ${sale.litresSold.toFixed(1)}L (meter ${sale.meterStart} \u2192 ${sale.meterEnd})`;
+      const doc = await issueDocument(storage, {
+        docType: "receipt",
+        category: "water",
+        sourceId: sale.id,
+        customDocNumber: sale.saleNumber,
+        recipientName: sale.customerName,
+        recipientEmail: sale.customerEmail,
+        issueDate: formatDate(),
+        lineItems: [{ label: "Water sale", detail: label, amount: sale.totalAmount }],
+        totalAmount: sale.totalAmount,
+        amountPaid: sale.totalAmount,
+        balance: 0,
+        paymentAmount: sale.totalAmount,
+        paymentMethod: sale.paymentMethod,
+        paymentReference: sale.paymentReference,
+      });
+      res.status(201).json({ ...sale, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) return handleZodError(res, err);
+      res.status(400).json({ error: err?.message ?? "Failed to record water sale" });
+    }
+  });
+  app.post("/api/water-sales/:id/cancel", requireModule("water-sales"), async (req, res) => {
+    try {
+      const schema = z.object({ reason: z.string().min(1, "A cancellation reason is required") });
+      const { reason } = schema.parse(req.body);
+      const updated = await storage.cancelWaterSale(Number(req.params.id), reason);
+      if (!updated) return res.status(404).json({ error: "Water sale not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.post("/api/water-sales/:id/credit-note", requireModule("water-sales"), async (req, res) => {
+    try {
+      const schema = z.object({ amount: z.number().positive(), reason: z.string().min(1) });
+      const { amount, reason } = schema.parse(req.body);
+      const id = Number(req.params.id);
+      const sale = await storage.getWaterSale(id);
+      if (!sale) return res.status(404).json({ error: "Water sale not found" });
+      const result = await issueCreditNote(storage, {
+        category: "water",
+        sourceId: id,
+        requestedAmount: amount,
+        reason,
+        recipientName: sale.customerName,
+        recipientEmail: sale.customerEmail,
+        currentCreditedAmount: sale.creditedAmount ?? 0,
+        totalAmount: sale.totalAmount,
+        amountPaid: sale.totalAmount,
+        lineItemLabel: `Water sale ${sale.saleNumber} \u2014 credit note`,
+      });
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      await storage.creditWaterSale(id, amount);
+      const doc = result.document;
+      res.status(201).json({ status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) return handleZodError(res, err);
+      res.status(400).json({ error: err?.message ?? "Failed to issue credit note" });
     }
   });
 
