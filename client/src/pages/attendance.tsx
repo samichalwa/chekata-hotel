@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { CalendarCheck, Save, Trash2, Users } from "lucide-react";
+import { CalendarCheck, Save, Trash2, Users, Download, Upload, CheckCircle2, AlertTriangle, FileSpreadsheet } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -16,10 +16,10 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import { formatDate, titleCase, todayISO } from "@/lib/format";
 import type { Staff as StaffMember, AttendanceRecord } from "@shared/schema";
 
-const statusOptions = ["present", "absent", "half_day", "on_leave", "rest_day"];
-const statusLabel: Record<string, string> = { present: "Present", absent: "Absent", half_day: "Half day", on_leave: "On leave", rest_day: "Rest day" };
+const statusOptions = ["present", "absent", "half_day", "on_leave", "rest_day", "public_holiday"];
+const statusLabel: Record<string, string> = { present: "Present", absent: "Absent", half_day: "Half day", on_leave: "On leave", rest_day: "Rest day", public_holiday: "Public holiday" };
 const statusVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
-  present: "secondary", absent: "destructive", half_day: "outline", on_leave: "default", rest_day: "outline",
+  present: "secondary", absent: "destructive", half_day: "outline", on_leave: "default", rest_day: "outline", public_holiday: "outline",
 };
 
 function monthStart(): string { return `${todayISO().slice(0, 7)}-01`; }
@@ -133,6 +133,176 @@ function DailyEntryTab() {
   );
 }
 
+type ImportRow = {
+  rowNumber: number;
+  employeeIdRaw: string;
+  employeeName: string;
+  staffId: number | null;
+  date: string;
+  status: string | null;
+  statusRaw: string;
+  timeIn: string | null;
+  timeOut: string | null;
+  hoursWorked: number;
+  overtimeHours: number;
+  shiftCode: string | null;
+  leaveTypeRaw: string | null;
+  notes: string | null;
+  errors: string[];
+  warnings: string[];
+};
+type ImportPreview = { ok: boolean; topLevelError?: string; rows: ImportRow[]; totalRows: number; validCount: number; errorCount: number };
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function BulkUploadTab() {
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName] = useState("");
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+
+  const previewMutation = useMutation({
+    mutationFn: async (dataBase64: string) => {
+      const res = await apiRequest("POST", "/api/attendance/bulk-import/preview", { dataBase64 });
+      return (await res.json()) as ImportPreview;
+    },
+    onSuccess: (data) => setPreview(data),
+    onError: (err: Error) => toast({ title: "Could not read this file", description: err.message, variant: "destructive" }),
+  });
+
+  const commitMutation = useMutation({
+    mutationFn: async () => {
+      const rows = (preview?.rows ?? []).filter((r) => r.errors.length === 0);
+      const res = await apiRequest("POST", "/api/attendance/bulk-import/commit", { rows });
+      return (await res.json()) as { created: number; failed: number; failures: { rowNumber: number; error: string }[] };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance"] });
+      toast({
+        title: `Attendance imported: ${data.created} record${data.created === 1 ? "" : "s"} saved`,
+        description: data.failed > 0 ? `${data.failed} row(s) could not be saved.` : undefined,
+        variant: data.failed > 0 ? "destructive" : undefined,
+      });
+      setPreview(null);
+      setFileName("");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    },
+    onError: (err: Error) => toast({ title: "Could not import attendance", description: err.message, variant: "destructive" }),
+  });
+
+  const handleFile = async (file: File | undefined) => {
+    if (!file) return;
+    setFileName(file.name);
+    setPreview(null);
+    const dataBase64 = await fileToBase64(file);
+    previewMutation.mutate(dataBase64);
+  };
+
+  return (
+    <Card>
+      <div className="p-4 border-b space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="outline" size="sm" asChild data-testid="button-download-attendance-template">
+            <a href="/api/attendance/bulk-import/template">
+              <Download className="h-3.5 w-3.5 mr-1.5" /> Download template
+            </a>
+          </Button>
+          <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={previewMutation.isPending} data-testid="button-choose-attendance-file">
+            <Upload className="h-3.5 w-3.5 mr-1.5" /> {previewMutation.isPending ? "Reading…" : "Choose file to upload"}
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx"
+            className="hidden"
+            onChange={(e) => handleFile(e.target.files?.[0])}
+            data-testid="input-attendance-bulk-file"
+          />
+          {fileName && <span className="text-sm text-muted-foreground flex items-center gap-1.5"><FileSpreadsheet className="h-3.5 w-3.5" />{fileName}</span>}
+        </div>
+        <p className="text-sm text-muted-foreground">Download the template, fill in one row per employee per day, then upload it here for a preview before anything is saved.</p>
+      </div>
+
+      {preview?.topLevelError && (
+        <div className="p-6 text-sm text-destructive flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" /> {preview.topLevelError}
+        </div>
+      )}
+
+      {preview?.ok && (
+        <div className="p-4 space-y-4">
+          <div className="flex flex-wrap items-center gap-4">
+            <Badge variant="secondary">{preview.totalRows} row{preview.totalRows === 1 ? "" : "s"} read</Badge>
+            <Badge variant="default" className="gap-1"><CheckCircle2 className="h-3 w-3" /> {preview.validCount} valid</Badge>
+            {preview.errorCount > 0 && <Badge variant="destructive" className="gap-1"><AlertTriangle className="h-3 w-3" /> {preview.errorCount} with errors</Badge>}
+            <Button
+              size="sm"
+              onClick={() => commitMutation.mutate()}
+              disabled={preview.validCount === 0 || commitMutation.isPending}
+              data-testid="button-commit-attendance-import"
+            >
+              {commitMutation.isPending ? "Posting…" : `Post ${preview.validCount} valid record${preview.validCount === 1 ? "" : "s"}`}
+            </Button>
+          </div>
+
+          {preview.rows.length > 0 && (
+            <div className="overflow-x-auto border rounded-md">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Row</TableHead>
+                    <TableHead>Employee</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Time in/out</TableHead>
+                    <TableHead className="text-right">Hours</TableHead>
+                    <TableHead>Notes / Issues</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {preview.rows.map((r) => (
+                    <TableRow key={r.rowNumber} data-testid={`row-attendance-import-${r.rowNumber}`} className={r.errors.length ? "bg-destructive/5" : undefined}>
+                      <TableCell className="tabular-nums text-muted-foreground">{r.rowNumber}</TableCell>
+                      <TableCell className="font-medium whitespace-nowrap">{r.employeeName || r.employeeIdRaw || "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap">{r.date || r.statusRaw ? formatDateSafe(r.date) : "—"}</TableCell>
+                      <TableCell>
+                        {r.status ? <Badge variant={statusVariant[r.status] ?? "outline"}>{statusLabel[r.status] ?? titleCase(r.status)}</Badge> : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-sm">{r.timeIn || r.timeOut ? `${r.timeIn ?? "—"} → ${r.timeOut ?? "—"}` : "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.hoursWorked}</TableCell>
+                      <TableCell className="text-sm max-w-xs">
+                        {r.errors.length > 0 ? (
+                          <ul className="text-destructive space-y-0.5">{r.errors.map((e, i) => <li key={i}>• {e}</li>)}</ul>
+                        ) : r.warnings.length > 0 ? (
+                          <ul className="text-amber-600 dark:text-amber-500 space-y-0.5">{r.warnings.map((w, i) => <li key={i}>• {w}</li>)}</ul>
+                        ) : (
+                          <span className="text-muted-foreground">{r.notes || "OK"}</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function formatDateSafe(date: string): string {
+  if (!date) return "—";
+  try { return formatDate(date); } catch { return date; }
+}
+
 function RegisterTab() {
   const { toast } = useToast();
   const [from, setFrom] = useState(monthStart());
@@ -238,9 +408,11 @@ export default function Attendance() {
         <TabsList>
           <TabsTrigger value="entry" data-testid="tab-attendance-entry">Daily entry</TabsTrigger>
           <TabsTrigger value="register" data-testid="tab-attendance-register">Register</TabsTrigger>
+          <TabsTrigger value="bulk-upload" data-testid="tab-attendance-bulk-upload">Bulk upload</TabsTrigger>
         </TabsList>
         <TabsContent value="entry" className="mt-4"><DailyEntryTab /></TabsContent>
         <TabsContent value="register" className="mt-4"><RegisterTab /></TabsContent>
+        <TabsContent value="bulk-upload" className="mt-4"><BulkUploadTab /></TabsContent>
       </Tabs>
     </div>
   );

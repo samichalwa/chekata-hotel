@@ -303,13 +303,17 @@ export const attendanceRecords = pgTable("attendance_records", {
   id: serial("id").primaryKey(),
   staffId: integer("staff_id").notNull(),
   date: text("date").notNull(), // YYYY-MM-DD
-  status: text("status").notNull().default("present"), // present | absent | half_day | on_leave | rest_day
+  status: text("status").notNull().default("present"), // present | absent | half_day | on_leave | rest_day | public_holiday
   timeIn: text("time_in"),
   timeOut: text("time_out"),
   hoursWorked: real("hours_worked").notNull().default(0),
   notes: text("notes"),
   recordedBy: text("recorded_by").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  // ---- Bulk-upload additions (additive-only) ----
+  shiftCode: text("shift_code"), // e.g. D | N | OFF — from the "shift_code" definition list, optional
+  overtimeHours: real("overtime_hours").notNull().default(0), // pre-approved overtime, entered separately from hoursWorked
+  leaveTypeId: integer("leave_type_id"), // references leaveTypes.id, required only when status = on_leave
 });
 export const insertAttendanceRecordSchema = createInsertSchema(attendanceRecords).omit({ id: true, createdAt: true });
 export type InsertAttendanceRecord = z.infer<typeof insertAttendanceRecordSchema>;

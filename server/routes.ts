@@ -43,6 +43,8 @@ import { saveBase64Upload, UploadValidationError, UPLOADS_ROOT, TEST_UPLOADS_ROO
 import { runTenantBillingCycle } from "./billing";
 import express from "express";
 import { buildReportsWorkbook, REPORT_SHEET_LABELS, type ReportSheetKey } from "./reports-excel";
+import { buildAttendanceTemplateWorkbook } from "./attendance-template";
+import { parseAttendanceWorkbook } from "./attendance-import";
 import {
   requireAuth, requireModule, requireAdmin, requireCanEditMovieBookings,
   requireAnyModule, requireCanManageTablesList, requireCanManageMenuItemsList, requireCanCloseMaintenanceIssues,
@@ -2515,6 +2517,79 @@ export async function registerRoutes(
   app.delete("/api/attendance/:id", requireModule("attendance"), async (req, res) => {
     await storage.deleteAttendanceRecord(Number(req.params.id));
     res.status(204).end();
+  });
+
+  // ---------- Attendance bulk upload (Excel) ----------
+  app.get("/api/attendance/bulk-import/template", requireModule("attendance"), async (_req, res) => {
+    try {
+      const workbook = await buildAttendanceTemplateWorkbook(storage);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="Chekata-Time-Attendance-Upload-Template.xlsx"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Failed to generate the attendance upload template" });
+    }
+  });
+  app.post("/api/attendance/bulk-import/preview", requireModule("attendance"), async (req, res) => {
+    try {
+      const { dataBase64 } = req.body as { dataBase64?: string };
+      if (!dataBase64) return res.status(400).json({ error: "dataBase64 is required." });
+      const commaIdx = dataBase64.indexOf(",");
+      const raw = dataBase64.startsWith("data:") && commaIdx !== -1 ? dataBase64.slice(commaIdx + 1) : dataBase64;
+      const buffer = Buffer.from(raw, "base64");
+      const [staffList, leaveTypesList, shiftList] = await Promise.all([
+        storage.listStaff(),
+        storage.listLeaveTypes(),
+        storage.getDefinitionListByKey("shift_code"),
+      ]);
+      const shiftCodeItems = shiftList ? await storage.listDefinitionListItems(shiftList.id) : [];
+      const result = await parseAttendanceWorkbook(buffer, staffList, leaveTypesList, shiftCodeItems);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Failed to parse the uploaded file." });
+    }
+  });
+  app.post("/api/attendance/bulk-import/commit", requireModule("attendance"), async (req, res) => {
+    try {
+      const { rows } = req.body as { rows?: Array<Record<string, any>> };
+      if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: "No rows to import." });
+      const recordedBy = (req.session as any)?.username ? String((req.session as any).username) : "bulk-upload";
+      let created = 0;
+      const failures: { rowNumber: number; error: string }[] = [];
+      for (const row of rows) {
+        try {
+          if (Array.isArray(row.errors) && row.errors.length > 0) {
+            failures.push({ rowNumber: row.rowNumber ?? -1, error: "Skipped — row still has validation errors." });
+            continue;
+          }
+          if (!row.staffId || !row.date || !row.status) {
+            failures.push({ rowNumber: row.rowNumber ?? -1, error: "Skipped — missing Employee ID, Date, or Status." });
+            continue;
+          }
+          const data = insertAttendanceRecordSchema.parse({
+            staffId: row.staffId,
+            date: row.date,
+            status: row.status,
+            timeIn: row.timeIn || null,
+            timeOut: row.timeOut || null,
+            hoursWorked: row.hoursWorked ?? 0,
+            notes: [row.notes, row.department ? `Dept/Loc (uploaded): ${row.department}` : null].filter(Boolean).join(" | ") || null,
+            recordedBy,
+            shiftCode: row.shiftCode || null,
+            overtimeHours: row.overtimeHours ?? 0,
+            leaveTypeId: row.leaveTypeId ?? null,
+          });
+          await storage.upsertAttendanceRecord(data);
+          created += 1;
+        } catch (err: any) {
+          failures.push({ rowNumber: row.rowNumber ?? -1, error: err?.message ?? "Failed to save this row." });
+        }
+      }
+      res.json({ created, failed: failures.length, failures });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Failed to commit the attendance import." });
+    }
   });
 
   // ---------- Leave (Phase 4) ----------

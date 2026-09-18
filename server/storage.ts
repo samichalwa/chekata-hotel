@@ -1169,6 +1169,12 @@ CREATE TABLE IF NOT EXISTS water_sales (
   await ensureColumn("facility_bookings", "overridden_at", "BIGINT");
   await ensureColumn("facility_bookings", "override_reason", "TEXT");
 
+  // Attendance bulk-upload additions: fields captured by the Excel import that the
+  // manual daily-entry screen doesn't need but the template/report expects.
+  await ensureColumn("attendance_records", "shift_code", "TEXT");
+  await ensureColumn("attendance_records", "overtime_hours", "REAL NOT NULL DEFAULT 0");
+  await ensureColumn("attendance_records", "leave_type_id", "INTEGER");
+
   // ---- Backfill public_token for any pre-existing rows created before that column existed ----
   // (each row needs its OWN random token, so this can't be a single UPDATE ... SET public_token = <one value>).
   async function backfillPublicTokens(table: string) {
