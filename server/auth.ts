@@ -72,6 +72,7 @@ export function toSafeUser(user: {
   canManageMenuItemsList?: number;
   canCloseMaintenanceIssues?: number;
   canAdjustInventory?: number;
+  canConfirmBookingWithoutPayment?: number;
   canAccessLive?: number;
   canAccessTest?: number;
   active: number;
@@ -89,6 +90,7 @@ export function toSafeUser(user: {
     canManageMenuItemsList: user.canManageMenuItemsList ?? 0,
     canCloseMaintenanceIssues: user.canCloseMaintenanceIssues ?? 0,
     canAdjustInventory: user.canAdjustInventory ?? 0,
+    canConfirmBookingWithoutPayment: user.canConfirmBookingWithoutPayment ?? 0,
     canAccessLive: user.canAccessLive ?? 1,
     canAccessTest: user.canAccessTest ?? 0,
     active: user.active,
@@ -244,6 +246,17 @@ export function requireCanAdjustInventory(req: Request, res: Response, next: Nex
   if (!user) return res.status(401).json({ error: "Not signed in" });
   if (user.isAdmin || user.canAdjustInventory) return next();
   return res.status(403).json({ error: "You don't have rights to adjust inventory or cancel this document" });
+}
+
+// Requires the signed-in user to be an administrator OR to hold the dedicated
+// "confirm booking without payment" right — used to gate the Director's-
+// discretion override that confirms an accommodation/facility booking before
+// any payment has been recorded.
+export function requireCanConfirmBookingWithoutPayment(req: Request, res: Response, next: NextFunction) {
+  const user = (req as any).user;
+  if (!user) return res.status(401).json({ error: "Not signed in" });
+  if (user.isAdmin || user.canConfirmBookingWithoutPayment) return next();
+  return res.status(403).json({ error: "You don't have rights to confirm a booking without payment" });
 }
 
 // Settings is restricted to the literal "admin" account only, per governance

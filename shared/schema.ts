@@ -30,11 +30,18 @@ export const accommodationBookings = pgTable("accommodation_bookings", {
   amountPaid: real("amount_paid").notNull().default(0),
   paymentMethod: text("payment_method"), // cash | mpesa | card | bank_transfer
   paymentReference: text("payment_reference"), // M-Pesa code, card slip #, bank ref, etc.
-  status: text("status").notNull().default("confirmed"), // confirmed | checked_in | checked_out | cancelled
+  status: text("status").notNull().default("confirmed"), // pending_payment | confirmed | checked_in | checked_out | cancelled
   notes: text("notes"),
   numberOfGuests: integer("number_of_guests").notNull().default(1), // enforced max 2 at API level
   creditedAmount: real("credited_amount").notNull().default(0), // total issued against this booking's invoice via credit notes
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  // ---- Payment-gated confirmation (additive-only) ----
+  // A booking only reaches "confirmed" once a payment is recorded (amountPaid > 0),
+  // unless overridden by someone with canConfirmBookingWithoutPayment (Director's
+  // discretion). Override fields are the audit trail for that exception.
+  overriddenBy: text("overridden_by"),
+  overriddenAt: bigint("overridden_at", { mode: "number" }),
+  overrideReason: text("override_reason"),
 });
 
 export const insertAccommodationBookingSchema = createInsertSchema(accommodationBookings).omit({ id: true });
@@ -89,10 +96,14 @@ export const facilityBookings = pgTable("facility_bookings", {
   amountPaid: real("amount_paid").notNull().default(0),
   paymentMethod: text("payment_method"), // cash | mpesa | card | bank_transfer
   paymentReference: text("payment_reference"), // M-Pesa code, card slip #, bank ref, etc.
-  status: text("status").notNull().default("confirmed"), // confirmed | completed | cancelled
+  status: text("status").notNull().default("confirmed"), // pending_payment | confirmed | completed | cancelled
   notes: text("notes"),
   creditedAmount: real("credited_amount").notNull().default(0), // total issued against this booking's invoice via credit notes
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  // ---- Payment-gated confirmation (additive-only, mirrors accommodationBookings) ----
+  overriddenBy: text("overridden_by"),
+  overriddenAt: bigint("overridden_at", { mode: "number" }),
+  overrideReason: text("override_reason"),
 });
 
 export const insertFacilityBookingSchema = createInsertSchema(facilityBookings).omit({ id: true });
@@ -867,6 +878,7 @@ export const users = pgTable("users", {
   canManageMenuItemsList: integer("can_manage_menu_items_list").notNull().default(0), // Lists module: edit the Menu Items list
   canCloseMaintenanceIssues: integer("can_close_maintenance_issues").notNull().default(0), // Maintenance module: close a reported issue
   canAdjustInventory: integer("can_adjust_inventory").notNull().default(0), // Inventory/Purchasing/Internal Requisitions: cancel PR/PO/IR and make manual stock adjustments
+  canConfirmBookingWithoutPayment: integer("can_confirm_booking_without_payment").notNull().default(0), // Accommodation/Facilities: override — confirm a booking before payment is received (e.g. Director's discretion)
   canAccessLive: integer("can_access_live").notNull().default(1), // Environment access: log in to the Live (production) environment
   canAccessTest: integer("can_access_test").notNull().default(0), // Environment access: log in to the Test environment. Admins always bypass both checks.
   active: integer("active").notNull().default(1),

@@ -46,7 +46,7 @@ import { buildReportsWorkbook, REPORT_SHEET_LABELS, type ReportSheetKey } from "
 import {
   requireAuth, requireModule, requireAdmin, requireCanEditMovieBookings,
   requireAnyModule, requireCanManageTablesList, requireCanManageMenuItemsList, requireCanCloseMaintenanceIssues,
-  requireAdminUsername, requireTablePermission, requireCanAdjustInventory,
+  requireAdminUsername, requireTablePermission, requireCanAdjustInventory, requireCanConfirmBookingWithoutPayment,
   hashPassword, verifyPassword, toSafeUser, parsePermissions, resolveUserIdFromHeaderToken,
 } from "./auth";
 import { isTestDbConfigured } from "./storage";
@@ -322,10 +322,10 @@ export async function registerRoutes(
   });
   app.post("/api/users", requireAdmin, async (req, res) => {
     try {
-      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canAccessLive, canAccessTest, staffId } = req.body as {
+      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canConfirmBookingWithoutPayment, canAccessLive, canAccessTest, staffId } = req.body as {
         username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean;
         canEditMovieBookings?: boolean; canManageTablesList?: boolean; canManageMenuItemsList?: boolean; canCloseMaintenanceIssues?: boolean;
-        canAdjustInventory?: boolean; canAccessLive?: boolean; canAccessTest?: boolean; staffId?: number | null;
+        canAdjustInventory?: boolean; canConfirmBookingWithoutPayment?: boolean; canAccessLive?: boolean; canAccessTest?: boolean; staffId?: number | null;
       };
       if (!username || !password || !fullName) return res.status(400).json({ error: "Username, password and full name are required." });
       if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
@@ -348,6 +348,7 @@ export async function registerRoutes(
         canManageMenuItemsList: canManageMenuItemsList ? 1 : 0,
         canCloseMaintenanceIssues: canCloseMaintenanceIssues ? 1 : 0,
         canAdjustInventory: canAdjustInventory ? 1 : 0,
+        canConfirmBookingWithoutPayment: canConfirmBookingWithoutPayment ? 1 : 0,
         canAccessLive: canAccessLive === false ? 0 : 1,
         canAccessTest: canAccessTest ? 1 : 0,
         active: active === false ? 0 : 1,
@@ -365,10 +366,10 @@ export async function registerRoutes(
       const id = Number(req.params.id);
       const target = await storage.getUser(id);
       if (!target) return res.status(404).json({ error: "User not found" });
-      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canAccessLive, canAccessTest, staffId } = req.body as {
+      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canConfirmBookingWithoutPayment, canAccessLive, canAccessTest, staffId } = req.body as {
         username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean;
         canEditMovieBookings?: boolean; canManageTablesList?: boolean; canManageMenuItemsList?: boolean; canCloseMaintenanceIssues?: boolean;
-        canAdjustInventory?: boolean; canAccessLive?: boolean; canAccessTest?: boolean; staffId?: number | null;
+        canAdjustInventory?: boolean; canConfirmBookingWithoutPayment?: boolean; canAccessLive?: boolean; canAccessTest?: boolean; staffId?: number | null;
       };
       const currentUserId = (req as any).user.id;
       if (currentUserId === id && isAdmin === false) {
@@ -392,6 +393,7 @@ export async function registerRoutes(
       if (typeof canManageMenuItemsList === "boolean") patch.canManageMenuItemsList = canManageMenuItemsList ? 1 : 0;
       if (typeof canCloseMaintenanceIssues === "boolean") patch.canCloseMaintenanceIssues = canCloseMaintenanceIssues ? 1 : 0;
       if (typeof canAdjustInventory === "boolean") patch.canAdjustInventory = canAdjustInventory ? 1 : 0;
+      if (typeof canConfirmBookingWithoutPayment === "boolean") patch.canConfirmBookingWithoutPayment = canConfirmBookingWithoutPayment ? 1 : 0;
       if (typeof canAccessLive === "boolean") patch.canAccessLive = canAccessLive ? 1 : 0;
       if (typeof canAccessTest === "boolean") patch.canAccessTest = canAccessTest ? 1 : 0;
       if (staffId !== undefined) {
@@ -476,6 +478,12 @@ export async function registerRoutes(
       if ((data.numberOfGuests ?? 1) > 2) {
         return res.status(400).json({ error: "A booking cannot have more than 2 guests. Please create a separate booking for additional guests." });
       }
+      // Payment-gated confirmation: a booking only starts "confirmed" when a
+      // payment has already been recorded (amountPaid > 0). Otherwise it
+      // starts "pending_payment" — the director can override via the
+      // dedicated /confirm-override endpoint below. Status is server-computed
+      // here so client input can't bypass the gate.
+      data.status = (data.amountPaid ?? 0) > 0 ? "confirmed" : "pending_payment";
       const booking = await storage.createAccommodationBooking(data);
       const room = await storage.getRoom(booking.roomId);
       const nights = nightsBetween(booking.checkIn, booking.checkOut);
@@ -509,10 +517,26 @@ export async function registerRoutes(
       if (data.numberOfGuests !== undefined && data.numberOfGuests > 2) {
         return res.status(400).json({ error: "A booking cannot have more than 2 guests. Please create a separate booking for additional guests." });
       }
-      const updated = await storage.updateAccommodationBooking(id, data);
+      // Payment-gated confirmation: block a direct attempt to set status to
+      // "confirmed" from a pending_payment booking unless a payment is part
+      // of this same update, or the requester holds the override right. Use
+      // the dedicated /confirm-override endpoint for the no-payment exception.
+      if (data.status === "confirmed" && before.status === "pending_payment") {
+        const resultingAmountPaid = data.amountPaid !== undefined ? data.amountPaid : before.amountPaid;
+        const currentUser = (req as any).user;
+        if ((resultingAmountPaid ?? 0) <= 0 && !(currentUser?.isAdmin || currentUser?.canConfirmBookingWithoutPayment)) {
+          return res.status(403).json({ error: "This booking can only be confirmed once a payment is recorded, or via the director's no-payment override." });
+        }
+      }
+      let updated = await storage.updateAccommodationBooking(id, data);
       if (!updated) return res.status(404).json({ error: "Booking not found" });
       let docResult: any = null;
       const paymentDelta = (updated.amountPaid ?? 0) - (before.amountPaid ?? 0);
+      // Auto-promote pending_payment → confirmed as soon as any payment lands,
+      // unless this same request already set a different explicit status.
+      if (before.status === "pending_payment" && paymentDelta > 0 && data.status === undefined) {
+        updated = await storage.updateAccommodationBooking(id, { status: "confirmed" }) ?? updated;
+      }
       if (paymentDelta > 0) {
         const room = await storage.getRoom(updated.roomId);
         const doc = await issueDocument(storage, {
@@ -538,6 +562,28 @@ export async function registerRoutes(
   app.delete("/api/accommodation-bookings/:id", requireModule("accommodation"), async (req, res) => {
     await storage.deleteAccommodationBooking(Number(req.params.id));
     res.status(204).end();
+  });
+  // Director's-discretion override: confirm a booking that has no payment
+  // recorded yet. Gated by canConfirmBookingWithoutPayment (or isAdmin),
+  // separate from general "accommodation" module access.
+  app.post("/api/accommodation-bookings/:id/confirm-override", requireModule("accommodation"), requireCanConfirmBookingWithoutPayment, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const before = await storage.getAccommodationBooking(id);
+      if (!before) return res.status(404).json({ error: "Booking not found" });
+      if (before.status !== "pending_payment") {
+        return res.status(400).json({ error: "Only a booking awaiting payment can be confirmed by override." });
+      }
+      const { reason } = z.object({ reason: z.string().min(1, "A reason is required for this override") }).parse(req.body);
+      const currentUser = (req as any).user;
+      const updated = await storage.updateAccommodationBooking(id, {
+        status: "confirmed",
+        overriddenBy: currentUser?.fullName ?? currentUser?.username ?? "system",
+        overriddenAt: Date.now(),
+        overrideReason: reason,
+      });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
   });
   app.post("/api/accommodation-bookings/:id/credit-note", requireModule("accommodation"), async (req, res) => {
     try {
@@ -595,6 +641,8 @@ export async function registerRoutes(
   app.post("/api/facility-bookings", requireModule("facilities"), async (req, res) => {
     try {
       const data = insertFacilityBookingSchema.parse(req.body);
+      // Payment-gated confirmation: same rule as accommodation bookings.
+      data.status = (data.amountPaid ?? 0) > 0 ? "confirmed" : "pending_payment";
       const booking = await storage.createFacilityBooking(data);
       const facility = await storage.getFacility(booking.facilityId);
       const doc = await issueDocument(storage, {
@@ -624,10 +672,20 @@ export async function registerRoutes(
       const before = await storage.getFacilityBooking(id);
       if (!before) return res.status(404).json({ error: "Booking not found" });
       const data = insertFacilityBookingSchema.partial().parse(req.body);
-      const updated = await storage.updateFacilityBooking(id, data);
+      if (data.status === "confirmed" && before.status === "pending_payment") {
+        const resultingAmountPaid = data.amountPaid !== undefined ? data.amountPaid : before.amountPaid;
+        const currentUser = (req as any).user;
+        if ((resultingAmountPaid ?? 0) <= 0 && !(currentUser?.isAdmin || currentUser?.canConfirmBookingWithoutPayment)) {
+          return res.status(403).json({ error: "This booking can only be confirmed once a payment is recorded, or via the director's no-payment override." });
+        }
+      }
+      let updated = await storage.updateFacilityBooking(id, data);
       if (!updated) return res.status(404).json({ error: "Booking not found" });
       let docResult: any = null;
       const paymentDelta = (updated.amountPaid ?? 0) - (before.amountPaid ?? 0);
+      if (before.status === "pending_payment" && paymentDelta > 0 && data.status === undefined) {
+        updated = await storage.updateFacilityBooking(id, { status: "confirmed" }) ?? updated;
+      }
       if (paymentDelta > 0) {
         const facility = await storage.getFacility(updated.facilityId);
         const doc = await issueDocument(storage, {
@@ -653,6 +711,25 @@ export async function registerRoutes(
   app.delete("/api/facility-bookings/:id", requireModule("facilities"), async (req, res) => {
     await storage.deleteFacilityBooking(Number(req.params.id));
     res.status(204).end();
+  });
+  app.post("/api/facility-bookings/:id/confirm-override", requireModule("facilities"), requireCanConfirmBookingWithoutPayment, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const before = await storage.getFacilityBooking(id);
+      if (!before) return res.status(404).json({ error: "Booking not found" });
+      if (before.status !== "pending_payment") {
+        return res.status(400).json({ error: "Only a booking awaiting payment can be confirmed by override." });
+      }
+      const { reason } = z.object({ reason: z.string().min(1, "A reason is required for this override") }).parse(req.body);
+      const currentUser = (req as any).user;
+      const updated = await storage.updateFacilityBooking(id, {
+        status: "confirmed",
+        overriddenBy: currentUser?.fullName ?? currentUser?.username ?? "system",
+        overriddenAt: Date.now(),
+        overrideReason: reason,
+      });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
   });
   app.post("/api/facility-bookings/:id/credit-note", requireModule("facilities"), async (req, res) => {
     try {
@@ -1549,6 +1626,22 @@ export async function registerRoutes(
       const data = insertDefinitionListSchema.parse(req.body);
       res.status(201).json(await storage.createDefinitionList(data));
     } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/admin/definitions/:id", requireModule("system-admin"), async (req, res) => {
+    try {
+      const data = z.object({ label: z.string().min(1).optional(), description: z.string().nullable().optional() }).parse(req.body);
+      const updated = await storage.updateDefinitionList(Number(req.params.id), data);
+      if (!updated) return res.status(404).json({ error: "Definition list not found" });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.delete("/api/admin/definitions/:id", requireModule("system-admin"), async (req, res) => {
+    const lists = await storage.listDefinitionLists();
+    const list = lists.find((l) => l.id === Number(req.params.id));
+    if (!list) return res.status(404).json({ error: "Definition list not found" });
+    if (list.isSystem) return res.status(400).json({ error: "Built-in lists cannot be deleted — they're referenced directly by the system. You can still edit its label, description, and every option in it." });
+    await storage.deleteDefinitionList(list.id);
+    res.status(204).end();
   });
   app.get("/api/admin/definitions/:listKey/items", requireModule("system-admin"), async (req, res) => {
     const list = await storage.getDefinitionListByKey(String(req.params.listKey));

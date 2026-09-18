@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Pencil, Trash2, PartyPopper, CalendarCheck, MessageCircle, Undo2 } from "lucide-react";
+import { Plus, Pencil, Trash2, PartyPopper, CalendarCheck, MessageCircle, Undo2, ShieldCheck } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -22,6 +22,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, formatDate, hoursBetween, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import { CreditNoteDialog } from "@/components/credit-note-dialog";
+import { ConfirmOverrideDialog } from "@/components/confirm-override-dialog";
 import type { Facility, FacilityBooking } from "@shared/schema";
 
 const facilityFormSchema = z.object({
@@ -153,7 +154,7 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
     resolver: zodResolver(bookingFormSchema),
     defaultValues: booking
       ? { facilityId: booking.facilityId, clientName: booking.clientName, clientPhone: booking.clientPhone ?? "", clientEmail: booking.clientEmail ?? "", eventDate: booking.eventDate, startTime: booking.startTime ?? "", endTime: booking.endTime ?? "", rate: booking.rate, amountPaid: booking.amountPaid, paymentMethod: booking.paymentMethod ?? "", paymentReference: booking.paymentReference ?? "", status: booking.status, notes: booking.notes ?? "" }
-      : { facilityId: facilities[0]?.id ?? 0, clientName: "", clientPhone: "", clientEmail: "", eventDate: "", startTime: "", endTime: "", rate: facilities[0]?.rate ?? 0, amountPaid: 0, paymentMethod: "", paymentReference: "", status: "confirmed", notes: "" },
+      : { facilityId: facilities[0]?.id ?? 0, clientName: "", clientPhone: "", clientEmail: "", eventDate: "", startTime: "", endTime: "", rate: facilities[0]?.rate ?? 0, amountPaid: 0, paymentMethod: "", paymentReference: "", status: "pending_payment", notes: "" },
   });
 
   const facilityId = form.watch("facilityId");
@@ -322,6 +323,7 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
                 <Select onValueChange={field.onChange} value={field.value}>
                   <FormControl><SelectTrigger data-testid="select-facility-booking-status"><SelectValue /></SelectTrigger></FormControl>
                   <SelectContent>
+                    <SelectItem value="pending_payment">Pending payment</SelectItem>
                     <SelectItem value="confirmed">Confirmed</SelectItem>
                     <SelectItem value="completed">Completed</SelectItem>
                     <SelectItem value="cancelled">Cancelled</SelectItem>
@@ -370,6 +372,7 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
 }
 
 const statusVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+  pending_payment: "outline",
   confirmed: "secondary",
   completed: "outline",
   cancelled: "destructive",
@@ -392,7 +395,7 @@ export default function Facilities() {
   });
 
   const revenue = bookings.filter((b) => b.status !== "cancelled").reduce((s, b) => s + b.totalAmount - (b.creditedAmount ?? 0), 0);
-  const upcoming = bookings.filter((b) => b.status === "confirmed").length;
+  const upcoming = bookings.filter((b) => b.status === "confirmed" || b.status === "pending_payment").length;
   const sortedBookings = [...bookings].sort((a, b) => b.createdAt - a.createdAt);
   const sortedFacilities = [...facilities].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -451,6 +454,18 @@ export default function Facilities() {
                           <TableCell><Badge variant={statusVariant[b.status]}>{titleCase(b.status)}</Badge></TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-1">
+                              {b.status === "pending_payment" && (
+                                <ConfirmOverrideDialog
+                                  endpoint={`/api/facility-bookings/${b.id}/confirm-override`}
+                                  invalidateKeys={[["/api/facility-bookings"]]}
+                                  recipientName={b.clientName}
+                                  trigger={
+                                    <Button size="icon" variant="ghost" title="Confirm without payment (Director override)" data-testid={`button-confirm-override-${b.id}`}>
+                                      <ShieldCheck className="h-4 w-4" />
+                                    </Button>
+                                  }
+                                />
+                              )}
                               <FacilityBookingFormDialog booking={b} facilities={facilities} trigger={
                                 <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-facility-booking-${b.id}`}><Pencil className="h-4 w-4" /></Button>
                               } />

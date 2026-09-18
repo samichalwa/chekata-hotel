@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Pencil, Trash2, LogIn, LogOut, BedDouble, MessageCircle, IdCard, Upload, Undo2 } from "lucide-react";
+import { Plus, Pencil, Trash2, LogIn, LogOut, BedDouble, MessageCircle, IdCard, Upload, Undo2, ShieldCheck } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -22,6 +22,8 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, formatDate, nightsBetween, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import { CreditNoteDialog } from "@/components/credit-note-dialog";
+import { ConfirmOverrideDialog } from "@/components/confirm-override-dialog";
+import { CameraCapture } from "@/components/camera-capture";
 import type { Room, AccommodationBooking, GuestIdentityDocument } from "@shared/schema";
 
 const roomFormSchema = z.object({
@@ -175,7 +177,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
         }
       : {
           roomId: rooms[0]?.id ?? 0, guestName: "", guestPhone: "", guestEmail: "", numberOfGuests: 1, checkIn: "", checkOut: "",
-          rate: rooms[0]?.rate ?? 0, amountPaid: 0, paymentMethod: "", paymentReference: "", status: "confirmed", notes: "",
+          rate: rooms[0]?.rate ?? 0, amountPaid: 0, paymentMethod: "", paymentReference: "", status: "pending_payment", notes: "",
         },
   });
 
@@ -347,6 +349,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                 <Select onValueChange={field.onChange} value={field.value}>
                   <FormControl><SelectTrigger data-testid="select-booking-status"><SelectValue /></SelectTrigger></FormControl>
                   <SelectContent>
+                    <SelectItem value="pending_payment">Pending payment</SelectItem>
                     <SelectItem value="confirmed">Confirmed</SelectItem>
                     <SelectItem value="checked_in">Checked in</SelectItem>
                     <SelectItem value="checked_out">Checked out</SelectItem>
@@ -505,17 +508,30 @@ function IdentityDocumentsDialog({ booking, trigger }: { booking: AccommodationB
                 <Input value={guestName} onChange={(e) => setGuestName(e.target.value)} data-testid="input-id-guest-name" />
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <div>
+                <div className="space-y-2">
                   <label className="text-sm font-medium">Front of ID (photo)</label>
-                  <Input type="file" accept="image/*" onChange={(e) => setFrontFile(e.target.files?.[0] ?? null)} data-testid="input-id-front-image" />
+                  <div className="flex gap-2">
+                    <Input type="file" accept="image/*" onChange={(e) => setFrontFile(e.target.files?.[0] ?? null)} data-testid="input-id-front-image" />
+                    <CameraCapture onCapture={setFrontFile} testId="button-camera-front" />
+                  </div>
+                  {frontFile && (
+                    <img src={URL.createObjectURL(frontFile)} alt="Front of ID preview" className="h-20 rounded-md border object-cover" data-testid="img-front-id-preview" />
+                  )}
                 </div>
                 {idType === "national_id" && (
-                  <div>
+                  <div className="space-y-2">
                     <label className="text-sm font-medium">Back of ID (photo)</label>
-                    <Input type="file" accept="image/*" onChange={(e) => setBackFile(e.target.files?.[0] ?? null)} data-testid="input-id-back-image" />
+                    <div className="flex gap-2">
+                      <Input type="file" accept="image/*" onChange={(e) => setBackFile(e.target.files?.[0] ?? null)} data-testid="input-id-back-image" />
+                      <CameraCapture onCapture={setBackFile} testId="button-camera-back" />
+                    </div>
+                    {backFile && (
+                      <img src={URL.createObjectURL(backFile)} alt="Back of ID preview" className="h-20 rounded-md border object-cover" data-testid="img-back-id-preview" />
+                    )}
                   </div>
                 )}
               </div>
+              <p className="text-xs text-muted-foreground">Use "Choose file" for a document already scanned or saved on this device, or "Use camera" to capture it live with a phone or webcam.</p>
               <Button type="button" onClick={() => mutation.mutate()} disabled={mutation.isPending || !guestName || !frontFile} data-testid="button-save-identity-document">
                 <Upload className="h-4 w-4 mr-1" /> {mutation.isPending ? "Uploading..." : "Save ID document"}
               </Button>
@@ -531,6 +547,7 @@ function IdentityDocumentsDialog({ booking, trigger }: { booking: AccommodationB
 }
 
 const statusVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+  pending_payment: "outline",
   confirmed: "secondary",
   checked_in: "default",
   checked_out: "outline",
@@ -571,7 +588,7 @@ export default function Accommodation() {
   });
 
   const occupied = rooms.filter((r) => r.status === "occupied").length;
-  const activeBookings = bookings.filter((b) => b.status === "confirmed" || b.status === "checked_in");
+  const activeBookings = bookings.filter((b) => b.status === "confirmed" || b.status === "checked_in" || b.status === "pending_payment");
   const outstanding = bookings.reduce((s, b) => s + Math.max(0, b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0)), 0);
   const totalRevenue = bookings.filter((b) => b.status !== "cancelled").reduce((s, b) => s + b.totalAmount - (b.creditedAmount ?? 0), 0);
 
@@ -644,6 +661,18 @@ export default function Accommodation() {
                           <TableCell><Badge variant={statusVariant[b.status]}>{titleCase(b.status)}</Badge></TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-1">
+                              {b.status === "pending_payment" && (
+                                <ConfirmOverrideDialog
+                                  endpoint={`/api/accommodation-bookings/${b.id}/confirm-override`}
+                                  invalidateKeys={[["/api/accommodation-bookings"]]}
+                                  recipientName={b.guestName}
+                                  trigger={
+                                    <Button size="icon" variant="ghost" title="Confirm without payment (Director override)" data-testid={`button-confirm-override-${b.id}`}>
+                                      <ShieldCheck className="h-4 w-4" />
+                                    </Button>
+                                  }
+                                />
+                              )}
                               {b.status === "confirmed" && (
                                 <Button size="icon" variant="ghost" title="Check in" onClick={() => setBookingStatus.mutate({ id: b.id, status: "checked_in", roomId: b.roomId })} data-testid={`button-checkin-${b.id}`}>
                                   <LogIn className="h-4 w-4" />

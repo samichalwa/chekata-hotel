@@ -1051,6 +1051,7 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await ensureColumn("users", "can_manage_menu_items_list", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("users", "can_close_maintenance_issues", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("users", "can_adjust_inventory", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("users", "can_confirm_booking_without_payment", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("users", "can_access_live", "INTEGER NOT NULL DEFAULT 1");
   await ensureColumn("users", "can_access_test", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("settings", "sms_provider", "TEXT NOT NULL DEFAULT ''");
@@ -1159,6 +1160,14 @@ CREATE TABLE IF NOT EXISTS water_sales (
   // Approval-workflow additions: standalone purchase orders now go through the same
   // draft -> pending_approval -> approved/rejected flow as requisitions.
   await ensureColumn("purchase_orders", "rejected_reason", "TEXT");
+
+  // Payment-gated booking confirmation: pending_payment status + override audit trail.
+  await ensureColumn("accommodation_bookings", "overridden_by", "TEXT");
+  await ensureColumn("accommodation_bookings", "overridden_at", "BIGINT");
+  await ensureColumn("accommodation_bookings", "override_reason", "TEXT");
+  await ensureColumn("facility_bookings", "overridden_by", "TEXT");
+  await ensureColumn("facility_bookings", "overridden_at", "BIGINT");
+  await ensureColumn("facility_bookings", "override_reason", "TEXT");
 
   // ---- Backfill public_token for any pre-existing rows created before that column existed ----
   // (each row needs its OWN random token, so this can't be a single UPDATE ... SET public_token = <one value>).
@@ -1734,6 +1743,8 @@ export interface IStorage {
   listDefinitionLists(): Promise<DefinitionList[]>;
   getDefinitionListByKey(listKey: string): Promise<DefinitionList | undefined>;
   createDefinitionList(data: InsertDefinitionList): Promise<DefinitionList>;
+  updateDefinitionList(id: number, data: { label?: string; description?: string | null }): Promise<DefinitionList | undefined>;
+  deleteDefinitionList(id: number): Promise<{ changes: number }>;
   listDefinitionListItems(listId: number): Promise<DefinitionListItem[]>;
   createDefinitionListItem(data: InsertDefinitionListItem): Promise<DefinitionListItem>;
   updateDefinitionListItem(id: number, data: Partial<InsertDefinitionListItem>): Promise<DefinitionListItem | undefined>;
@@ -2827,6 +2838,19 @@ export class DatabaseStorage implements IStorage {
   }
   async createDefinitionList(data: InsertDefinitionList) {
     return (await db.insert(definitionLists).values(data).returning())[0];
+  }
+  // Label/description are editable for every list, including seeded ("Built-in")
+  // ones — only listKey and isSystem are immutable here, since code elsewhere
+  // references listKey directly. Use updateDefinitionListItem for the options.
+  async updateDefinitionList(id: number, data: { label?: string; description?: string | null }) {
+    return (await db.update(definitionLists).set(data).where(eq(definitionLists.id, id)).returning())[0];
+  }
+  // Built-in (isSystem) lists cannot be deleted — enforced in the route layer —
+  // because their listKey is referenced directly elsewhere in the codebase.
+  async deleteDefinitionList(id: number) {
+    await db.delete(definitionListItems).where(eq(definitionListItems.listId, id));
+    const result = await db.delete(definitionLists).where(eq(definitionLists.id, id));
+    return { changes: result.count ?? 0 };
   }
   async listDefinitionListItems(listId: number) {
     return db.select().from(definitionListItems).where(eq(definitionListItems.listId, listId));

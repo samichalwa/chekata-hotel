@@ -272,8 +272,66 @@ function TablePermissionsTab() {
 }
 
 // ================= Definitions (admin-editable dropdown lists) =================
+function DefinitionItemEditRow({ item, listKey, onDone }: { item: DefinitionListItem; listKey: string; onDone: () => void }) {
+  const [code, setCode] = useState(item.code);
+  const [label, setLabel] = useState(item.label);
+  const [sortOrder, setSortOrder] = useState(String(item.sortOrder));
+  const { toast } = useToast();
+  const save = useMutation({
+    mutationFn: () => apiRequest("PATCH", `/api/admin/definitions/items/${item.id}`, { code, label, sortOrder: Number(sortOrder) || 0 }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: [`/api/admin/definitions/${listKey}/items`] }); toast({ title: "Option updated" }); onDone(); },
+    onError: (err: Error) => toast({ title: "Couldn't update option", description: err.message, variant: "destructive" }),
+  });
+  return (
+    <TableRow data-testid={`row-edit-definition-item-${item.id}`}>
+      <TableCell><Input value={code} onChange={(e) => setCode(e.target.value)} className="h-8 font-mono" data-testid={`input-edit-item-code-${item.id}`} /></TableCell>
+      <TableCell><Input value={label} onChange={(e) => setLabel(e.target.value)} className="h-8" data-testid={`input-edit-item-label-${item.id}`} /></TableCell>
+      <TableCell><Input value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} className="h-8 w-20" type="number" data-testid={`input-edit-item-sort-${item.id}`} /></TableCell>
+      <TableCell className="text-right">
+        <div className="flex justify-end gap-1">
+          <Button size="sm" disabled={!code || !label || save.isPending} onClick={() => save.mutate()} data-testid={`button-save-item-${item.id}`}>Save</Button>
+          <Button size="sm" variant="ghost" onClick={onDone} data-testid={`button-cancel-item-${item.id}`}>Cancel</Button>
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function EditDefinitionListDialog({ list }: { list: DefinitionList }) {
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState(list.label);
+  const [description, setDescription] = useState(list.description ?? "");
+  const { toast } = useToast();
+  const mutation = useMutation({
+    mutationFn: () => apiRequest("PATCH", `/api/admin/definitions/${list.id}`, { label, description: description || null }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/definitions"] }); toast({ title: "List updated" }); setOpen(false); },
+    onError: (err: Error) => toast({ title: "Couldn't update list", description: err.message, variant: "destructive" }),
+  });
+  return (
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (v) { setLabel(list.label); setDescription(list.description ?? ""); } }}>
+      <DialogTrigger asChild>
+        <Button size="icon" variant="ghost" title="Edit list" onClick={(e) => e.stopPropagation()} data-testid={`button-edit-list-${list.listKey}`}>
+          <Pencil className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Edit definition list</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div><label className="text-sm font-medium">Display label</label><Input value={label} onChange={(e) => setLabel(e.target.value)} data-testid={`input-edit-list-label-${list.listKey}`} /></div>
+          <div><label className="text-sm font-medium">Description (optional)</label><Input value={description} onChange={(e) => setDescription(e.target.value)} data-testid={`input-edit-list-description-${list.listKey}`} /></div>
+          <p className="text-xs text-muted-foreground">List key ({list.listKey}) can't be changed since it's referenced directly by the system.</p>
+        </div>
+        <DialogFooter>
+          <Button disabled={!label || mutation.isPending} onClick={() => mutation.mutate()} data-testid={`button-save-definition-list-${list.listKey}`}>Save</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function DefinitionListItemsRow({ list }: { list: DefinitionList }) {
   const [expanded, setExpanded] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const { toast } = useToast();
   const { data: items = [] } = useQuery<DefinitionListItem[]>({
     queryKey: [`/api/admin/definitions/${list.listKey}/items`],
@@ -295,17 +353,44 @@ function DefinitionListItemsRow({ list }: { list: DefinitionList }) {
     mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/definitions/items/${id}`),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: [`/api/admin/definitions/${list.listKey}/items`] }); toast({ title: "Option removed" }); },
   });
+  const deleteList = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/admin/definitions/${list.id}`),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/admin/definitions"] }); toast({ title: "List deleted" }); },
+    onError: (err: Error) => toast({ title: "Couldn't delete list", description: err.message, variant: "destructive" }),
+  });
 
   return (
     <div className="border border-border rounded-md">
-      <button className="w-full flex items-center justify-between p-3 text-left" onClick={() => setExpanded((v) => !v)} data-testid={`button-toggle-list-${list.listKey}`}>
-        <div className="flex items-center gap-2">
+      <div className="w-full flex items-center justify-between p-3">
+        <button className="flex-1 flex items-center gap-2 text-left" onClick={() => setExpanded((v) => !v)} data-testid={`button-toggle-list-${list.listKey}`}>
           {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           <span className="font-medium">{list.label}</span>
           <span className="text-xs text-muted-foreground">({list.listKey})</span>
+        </button>
+        <div className="flex items-center gap-1">
+          {list.isSystem ? <Badge variant="outline">Built-in list</Badge> : null}
+          <EditDefinitionListDialog list={list} />
+          {!list.isSystem && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button size="icon" variant="ghost" title="Delete list" data-testid={`button-delete-list-${list.listKey}`}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete "{list.label}"?</AlertDialogTitle>
+                  <AlertDialogDescription>This removes the list and all of its options. This can't be undone.</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => deleteList.mutate()} data-testid={`button-confirm-delete-list-${list.listKey}`}>Delete</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
         </div>
-        {list.isSystem ? <Badge variant="outline">Built-in list</Badge> : null}
-      </button>
+      </div>
       {expanded && (
         <div className="p-3 border-t border-border space-y-3">
           {list.description && <p className="text-sm text-muted-foreground">{list.description}</p>}
@@ -314,21 +399,28 @@ function DefinitionListItemsRow({ list }: { list: DefinitionList }) {
               <TableHeader><TableRow><TableHead>Code</TableHead><TableHead>Label</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
               <TableBody>
                 {items.sort((a, b) => a.sortOrder - b.sortOrder).map((item) => (
-                  <TableRow key={item.id} data-testid={`row-definition-item-${item.id}`}>
-                    <TableCell className="font-mono">{item.code}</TableCell>
-                    <TableCell>{item.label}</TableCell>
-                    <TableCell><Badge variant={item.active ? "secondary" : "outline"}>{item.active ? "Active" : "Inactive"}</Badge></TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => toggleActive.mutate(item)} data-testid={`button-toggle-item-${item.id}`}>
-                          {item.active ? "Deactivate" : "Activate"}
-                        </Button>
-                        <Button size="icon" variant="ghost" title="Delete" onClick={() => deleteItem.mutate(item.id)} data-testid={`button-delete-item-${item.id}`}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
+                  editingId === item.id ? (
+                    <DefinitionItemEditRow key={item.id} item={item} listKey={list.listKey} onDone={() => setEditingId(null)} />
+                  ) : (
+                    <TableRow key={item.id} data-testid={`row-definition-item-${item.id}`}>
+                      <TableCell className="font-mono">{item.code}</TableCell>
+                      <TableCell>{item.label}</TableCell>
+                      <TableCell><Badge variant={item.active ? "secondary" : "outline"}>{item.active ? "Active" : "Inactive"}</Badge></TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button size="icon" variant="ghost" title="Edit" onClick={() => setEditingId(item.id)} data-testid={`button-edit-item-${item.id}`}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => toggleActive.mutate(item)} data-testid={`button-toggle-item-${item.id}`}>
+                            {item.active ? "Deactivate" : "Activate"}
+                          </Button>
+                          <Button size="icon" variant="ghost" title="Delete" onClick={() => deleteItem.mutate(item.id)} data-testid={`button-delete-item-${item.id}`}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
                 ))}
               </TableBody>
             </Table>

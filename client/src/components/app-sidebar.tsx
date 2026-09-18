@@ -131,11 +131,11 @@ export function AppSidebar() {
           </div>
         </div>
       </SidebarHeader>
-      <SidebarContent>
+      <SidebarContent className="gap-0">
         {groupedMenu.map((group) => {
           const isOpen = openGroups[group.label] ?? false;
           return (
-            <SidebarGroup key={group.label}>
+            <SidebarGroup key={group.label} className="p-0 px-2 py-0.5">
               <Collapsible open={isOpen} onOpenChange={() => toggleGroup(group.label)}>
                 <CollapsibleTrigger asChild>
                   <SidebarGroupLabel
