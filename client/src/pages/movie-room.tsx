@@ -62,7 +62,7 @@ const showFormSchema = z.object({
 function ShowFormDialog({ show, trigger }: { show?: MovieShow; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof showFormSchema>>({
+  const form = useForm<z.input<typeof showFormSchema>, any, z.output<typeof showFormSchema>>({
     resolver: zodResolver(showFormSchema),
     defaultValues: show
       ? { name: show.name, showDate: show.showDate, startTime: show.startTime, endTime: show.endTime ?? "", ticketPrice: show.ticketPrice, status: show.status, notes: show.notes ?? "" }
@@ -123,7 +123,7 @@ function ShowFormDialog({ show, trigger }: { show?: MovieShow; trigger: React.Re
             <FormField control={form.control} name="ticketPrice" render={({ field }) => (
               <FormItem>
                 <FormLabel>Ticket price per seat (KES)</FormLabel>
-                <FormControl><Input type="number" {...field} data-testid="input-show-price" /></FormControl>
+                <FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-show-price" /></FormControl>
                 <FormMessage />
               </FormItem>
             )} />
@@ -486,7 +486,7 @@ function EditBookingDialog({ booking, show, trigger }: { booking: MovieSeatBooki
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
   const { data: currentUser } = useCurrentUser();
-  const form = useForm<z.infer<typeof editBookingSchema>>({
+  const form = useForm<z.input<typeof editBookingSchema>, any, z.output<typeof editBookingSchema>>({
     resolver: zodResolver(editBookingSchema),
     defaultValues: {
       guestName: booking.guestName, guestPhone: booking.guestPhone ?? "", guestEmail: booking.guestEmail ?? "",
@@ -527,7 +527,7 @@ function EditBookingDialog({ booking, show, trigger }: { booking: MovieSeatBooki
                 <FormItem><FormLabel>Phone</FormLabel><FormControl><Input {...field} value={field.value ?? ""} data-testid="input-edit-guest-phone" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="amountPaid" render={({ field }) => (
-                <FormItem><FormLabel>Amount paid (KES)</FormLabel><FormControl><Input type="number" {...field} data-testid="input-edit-amount-paid" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Amount paid (KES)</FormLabel><FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-edit-amount-paid" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
             <div className="grid grid-cols-2 gap-4">

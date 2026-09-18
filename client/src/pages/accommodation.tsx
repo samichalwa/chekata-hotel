@@ -66,7 +66,7 @@ function fileToBase64(file: File): Promise<{ dataBase64: string; mimeType: strin
 function RoomFormDialog({ room, rooms, trigger }: { room?: Room; rooms: Room[]; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof roomFormSchema>>({
+  const form = useForm<z.input<typeof roomFormSchema>, any, z.output<typeof roomFormSchema>>({
     resolver: zodResolver(roomFormSchema),
     defaultValues: room
       ? { name: room.name, type: room.type, rate: room.rate, status: room.status, notes: room.notes ?? "" }
@@ -123,7 +123,7 @@ function RoomFormDialog({ room, rooms, trigger }: { room?: Room; rooms: Room[]; 
               <FormField control={form.control} name="rate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Rate per night (KES)</FormLabel>
-                  <FormControl><Input type="number" step="1" {...field} data-testid="input-room-rate" /></FormControl>
+                  <FormControl><Input type="number" step="1" {...field} value={field.value as any} data-testid="input-room-rate" /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
@@ -165,7 +165,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
   const { data: currentUser } = useCurrentUser();
-  const form = useForm<z.infer<typeof bookingFormSchema>>({
+  const form = useForm<z.input<typeof bookingFormSchema>, any, z.output<typeof bookingFormSchema>>({
     resolver: zodResolver(bookingFormSchema),
     defaultValues: booking
       ? {
@@ -186,7 +186,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
   const checkOut = form.watch("checkOut");
   const rate = form.watch("rate");
   const nights = nightsBetween(checkIn, checkOut);
-  const total = nights * (rate || 0);
+  const total = nights * (Number(rate) || 0);
   const guestName = form.watch("guestName");
   const guestPhone = form.watch("guestPhone");
   const status = form.watch("status");
@@ -278,7 +278,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
               <FormField control={form.control} name="numberOfGuests" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Number of guests (max 2)</FormLabel>
-                  <FormControl><Input type="number" min={1} max={2} {...field} data-testid="input-number-of-guests" /></FormControl>
+                  <FormControl><Input type="number" min={1} max={2} {...field} value={field.value as any} data-testid="input-number-of-guests" /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
@@ -303,14 +303,14 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
               <FormField control={form.control} name="rate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Rate per night (KES)</FormLabel>
-                  <FormControl><Input type="number" {...field} data-testid="input-booking-rate" /></FormControl>
+                  <FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-booking-rate" /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
               <FormField control={form.control} name="amountPaid" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Amount paid (KES)</FormLabel>
-                  <FormControl><Input type="number" {...field} data-testid="input-amount-paid" /></FormControl>
+                  <FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-amount-paid" /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
@@ -372,7 +372,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                 variant="outline"
                 disabled={!buildWhatsAppLink(guestPhone, "x")}
                 onClick={async () => {
-                  const paymentDetail = amountPaidWatch > 0 && (paymentMethodWatch || paymentReferenceWatch)
+                  const paymentDetail = Number(amountPaidWatch) > 0 && (paymentMethodWatch || paymentReferenceWatch)
                     ? ` Payment: ${[paymentMethodWatch, paymentReferenceWatch].filter(Boolean).join(" / ")}.`
                     : "";
                   let message = `Hi ${guestName || "there"}, this confirms your stay at The Chekata in ${selectedRoom?.name || "your room"}${nights ? ` for ${nights} night${nights === 1 ? "" : "s"}` : ""}. Total: ${formatKES(total)}${status === "checked_out" ? " — Paid in full." : " — Balance may be due."}${paymentDetail} We look forward to hosting you.`;

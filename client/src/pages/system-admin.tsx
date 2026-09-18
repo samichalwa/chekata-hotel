@@ -46,7 +46,7 @@ const DAY_BANDED_DOC_TYPES = ["leave_request"];
 function ApprovalRuleFormDialog({ rule, users, trigger }: { rule?: ApprovalMatrixRule; users: SafeUser[]; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof ruleFormSchema>>({
+  const form = useForm<z.input<typeof ruleFormSchema>, any, z.output<typeof ruleFormSchema>>({
     resolver: zodResolver(ruleFormSchema),
     defaultValues: rule
       ? { documentType: rule.documentType, name: rule.name, minAmount: rule.minAmount, maxAmount: rule.maxAmount ?? "", itemCategory: rule.itemCategory ?? "", reviewerUserId: rule.reviewerUserId ?? "", approverUserId: rule.approverUserId, active: rule.active }
@@ -106,10 +106,10 @@ function ApprovalRuleFormDialog({ rule, users, trigger }: { rule?: ApprovalMatri
             ) : (
               <div className="grid grid-cols-2 gap-4">
                 <FormField control={form.control} name="minAmount" render={({ field }) => (
-                  <FormItem><FormLabel>{isDayBanded ? "Min days" : "Min amount (KES)"}</FormLabel><FormControl><Input type="number" {...field} data-testid="input-rule-min" /></FormControl><FormMessage /></FormItem>
+                  <FormItem><FormLabel>{isDayBanded ? "Min days" : "Min amount (KES)"}</FormLabel><FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-rule-min" /></FormControl><FormMessage /></FormItem>
                 )} />
                 <FormField control={form.control} name="maxAmount" render={({ field }) => (
-                  <FormItem><FormLabel>{isDayBanded ? "Max days (blank = unbounded)" : "Max amount (leave blank = unbounded)"}</FormLabel><FormControl><Input type="number" {...field} value={field.value ?? ""} data-testid="input-rule-max" /></FormControl><FormMessage /></FormItem>
+                  <FormItem><FormLabel>{isDayBanded ? "Max days (blank = unbounded)" : "Max amount (leave blank = unbounded)"}</FormLabel><FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-rule-max" /></FormControl><FormMessage /></FormItem>
                 )} />
               </div>
             )}

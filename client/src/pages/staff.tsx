@@ -76,12 +76,13 @@ const staffFormSchema = z
   });
 
 type StaffFormValues = z.infer<typeof staffFormSchema>;
+type StaffFormInput = z.input<typeof staffFormSchema>;
 
 function StaffFormDialog({ member, trigger }: { member?: StaffMember; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const { toast } = useToast();
-  const form = useForm<StaffFormValues>({
+  const form = useForm<StaffFormInput, any, StaffFormValues>({
     resolver: zodResolver(staffFormSchema),
     defaultValues: member
       ? {
@@ -202,7 +203,7 @@ function StaffFormDialog({ member, trigger }: { member?: StaffMember; trigger: R
               <FormField control={form.control} name="salary" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Monthly salary (KES)</FormLabel>
-                  <FormControl><Input type="number" {...field} data-testid="input-staff-salary" /></FormControl>
+                  <FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-staff-salary" /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
@@ -211,14 +212,14 @@ function StaffFormDialog({ member, trigger }: { member?: StaffMember; trigger: R
                 <FormField control={form.control} name="dayRate" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Day rate (KES)</FormLabel>
-                    <FormControl><Input type="number" {...field} value={field.value ?? ""} data-testid="input-staff-day-rate" /></FormControl>
+                    <FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-staff-day-rate" /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )} />
                 <FormField control={form.control} name="hourRate" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Hour rate (KES)</FormLabel>
-                    <FormControl><Input type="number" {...field} value={field.value ?? ""} data-testid="input-staff-hour-rate" /></FormControl>
+                    <FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-staff-hour-rate" /></FormControl>
                     <FormDescription>Set a day rate or an hour rate — not both.</FormDescription>
                     <FormMessage />
                   </FormItem>

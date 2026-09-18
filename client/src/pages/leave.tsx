@@ -56,7 +56,7 @@ const leaveTypeFormSchema = z.object({
 function LeaveTypeFormDialog({ leaveType, trigger }: { leaveType?: LeaveType; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof leaveTypeFormSchema>>({
+  const form = useForm<z.input<typeof leaveTypeFormSchema>, any, z.output<typeof leaveTypeFormSchema>>({
     resolver: zodResolver(leaveTypeFormSchema),
     defaultValues: leaveType
       ? { name: leaveType.name, entitlementDaysPerYear: leaveType.entitlementDaysPerYear, accrualMethod: leaveType.accrualMethod as "annual" | "monthly", isPaid: !!leaveType.isPaid, genderRestriction: leaveType.genderRestriction ?? "", active: !!leaveType.active }
@@ -90,7 +90,7 @@ function LeaveTypeFormDialog({ leaveType, trigger }: { leaveType?: LeaveType; tr
             )} />
             <div className="grid grid-cols-2 gap-4">
               <FormField control={form.control} name="entitlementDaysPerYear" render={({ field }) => (
-                <FormItem><FormLabel>Entitlement days/year</FormLabel><FormControl><Input type="number" {...field} data-testid="input-leavetype-entitlement" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Entitlement days/year</FormLabel><FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-leavetype-entitlement" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="accrualMethod" render={({ field }) => (
                 <FormItem>
@@ -217,7 +217,7 @@ const leaveRequestFormSchema = z.object({
 function NewLeaveRequestDialog({ staff, leaveTypes }: { staff: StaffMember[]; leaveTypes: LeaveType[] }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof leaveRequestFormSchema>>({
+  const form = useForm<z.input<typeof leaveRequestFormSchema>, any, z.output<typeof leaveRequestFormSchema>>({
     resolver: zodResolver(leaveRequestFormSchema),
     defaultValues: { staffId: 0, leaveTypeId: 0, startDate: todayISO(), endDate: todayISO(), reason: "" },
   });

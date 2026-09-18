@@ -39,7 +39,7 @@ function NewOrderDialog({ trigger }: { trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
   const { data: tables = [] } = useQuery<TableEntity[]>({ queryKey: ["/api/tables"], enabled: open });
-  const form = useForm<z.infer<typeof orderFormSchema>>({
+  const form = useForm<z.input<typeof orderFormSchema>, any, z.output<typeof orderFormSchema>>({
     resolver: zodResolver(orderFormSchema),
     defaultValues: { outlet: "bar", reference: "", customerName: "", customerEmail: "", customerPhone: "", orderDate: todayISO() },
   });

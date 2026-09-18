@@ -54,7 +54,7 @@ const shopFormSchema = z.object({
 function ShopFormDialog({ shop, trigger }: { shop?: Shop; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof shopFormSchema>>({
+  const form = useForm<z.input<typeof shopFormSchema>, any, z.output<typeof shopFormSchema>>({
     resolver: zodResolver(shopFormSchema),
     defaultValues: shop
       ? { shopNumber: shop.shopNumber, description: shop.description ?? "", location: shop.location ?? "", sizeSqm: shop.sizeSqm ?? undefined, active: shop.active }
@@ -84,7 +84,7 @@ function ShopFormDialog({ shop, trigger }: { shop?: Shop; trigger: React.ReactNo
                 <FormItem><FormLabel>Shop number</FormLabel><FormControl><Input placeholder="e.g. SH-01" {...field} data-testid="input-shop-number" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="sizeSqm" render={({ field }) => (
-                <FormItem><FormLabel>Size (sqm, optional)</FormLabel><FormControl><Input type="number" step="0.1" {...field} value={field.value ?? ""} data-testid="input-shop-size" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Size (sqm, optional)</FormLabel><FormControl><Input type="number" step="0.1" {...field} value={field.value as any} data-testid="input-shop-size" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
             <FormField control={form.control} name="location" render={({ field }) => (
@@ -193,7 +193,7 @@ const tenantFormSchema = z.object({
 function TenantFormDialog({ tenant, trigger }: { tenant?: Tenant; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof tenantFormSchema>>({
+  const form = useForm<z.input<typeof tenantFormSchema>, any, z.output<typeof tenantFormSchema>>({
     resolver: zodResolver(tenantFormSchema),
     defaultValues: tenant
       ? { name: tenant.name, contactPerson: tenant.contactPerson ?? "", phone: tenant.phone ?? "", email: tenant.email ?? "", idNumber: tenant.idNumber ?? "", active: tenant.active, notes: tenant.notes ?? "" }
@@ -345,7 +345,7 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
   const { data: shops = [] } = useQuery<Shop[]>({ queryKey: ["/api/shops"] });
   const { data: tenants = [] } = useQuery<Tenant[]>({ queryKey: ["/api/tenants-list"] });
   const { data: accounts = [] } = useQuery<ChartOfAccount[]>({ queryKey: ["/api/tenants/gl-accounts"] });
-  const form = useForm<z.infer<typeof leaseFormSchema>>({
+  const form = useForm<z.input<typeof leaseFormSchema>, any, z.output<typeof leaseFormSchema>>({
     resolver: zodResolver(leaseFormSchema),
     defaultValues: lease
       ? { shopId: lease.shopId, tenantId: lease.tenantId, monthlyRent: lease.monthlyRent, electricityRatePerUnit: lease.electricityRatePerUnit, leaseStart: lease.leaseStart, leaseEnd: lease.leaseEnd ?? "", dueDayOfMonth: lease.dueDayOfMonth, reminderDaysBefore: lease.reminderDaysBefore, receivableAccountId: lease.receivableAccountId ?? 0, incomeAccountId: lease.incomeAccountId ?? 0, status: lease.status, notes: lease.notes ?? "" }
@@ -397,10 +397,10 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
             </div>
             <div className="grid grid-cols-2 gap-4">
               <FormField control={form.control} name="monthlyRent" render={({ field }) => (
-                <FormItem><FormLabel>Monthly rent (KES)</FormLabel><FormControl><Input type="number" step="0.01" {...field} data-testid="input-lease-rent" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Monthly rent (KES)</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-lease-rent" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="electricityRatePerUnit" render={({ field }) => (
-                <FormItem><FormLabel>Electricity rate (KES/unit)</FormLabel><FormControl><Input type="number" step="0.01" {...field} data-testid="input-lease-electricity-rate" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Electricity rate (KES/unit)</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-lease-electricity-rate" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -413,10 +413,10 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
             </div>
             <div className="grid grid-cols-2 gap-4">
               <FormField control={form.control} name="dueDayOfMonth" render={({ field }) => (
-                <FormItem><FormLabel>Rent due day of month</FormLabel><FormControl><Input type="number" min={1} max={28} {...field} data-testid="input-lease-due-day" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Rent due day of month</FormLabel><FormControl><Input type="number" min={1} max={28} {...field} value={field.value as any} data-testid="input-lease-due-day" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="reminderDaysBefore" render={({ field }) => (
-                <FormItem><FormLabel>Remind (days before due)</FormLabel><FormControl><Input type="number" min={0} max={28} {...field} data-testid="input-lease-reminder-days" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Remind (days before due)</FormLabel><FormControl><Input type="number" min={0} max={28} {...field} value={field.value as any} data-testid="input-lease-reminder-days" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -552,7 +552,7 @@ function MeterReadingFormDialog({ trigger }: { trigger: React.ReactNode }) {
   const { toast } = useToast();
   const { data: leases = [] } = useQuery<TenancyLease[]>({ queryKey: ["/api/tenancy-leases"] });
   const { data: shops = [] } = useQuery<Shop[]>({ queryKey: ["/api/shops"] });
-  const form = useForm<z.infer<typeof meterReadingFormSchema>>({
+  const form = useForm<z.input<typeof meterReadingFormSchema>, any, z.output<typeof meterReadingFormSchema>>({
     resolver: zodResolver(meterReadingFormSchema),
     defaultValues: { leaseId: 0, periodMonth: todayISO().slice(0, 7), startReading: 0, endReading: 0, readingDate: todayISO(), recordedBy: "" },
   });
@@ -593,10 +593,10 @@ function MeterReadingFormDialog({ trigger }: { trigger: React.ReactNode }) {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <FormField control={form.control} name="startReading" render={({ field }) => (
-                <FormItem><FormLabel>Start reading</FormLabel><FormControl><Input type="number" step="0.01" {...field} data-testid="input-reading-start" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Start reading</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-reading-start" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="endReading" render={({ field }) => (
-                <FormItem><FormLabel>End reading</FormLabel><FormControl><Input type="number" step="0.01" {...field} data-testid="input-reading-end" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>End reading</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-reading-end" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
             <FormField control={form.control} name="recordedBy" render={({ field }) => (

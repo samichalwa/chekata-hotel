@@ -54,7 +54,7 @@ function ReportIssueDialog() {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
   const { data: assets = [] } = useQuery<Asset[]>({ queryKey: ["/api/assets"], enabled: open });
-  const form = useForm<z.infer<typeof issueFormSchema>>({
+  const form = useForm<z.input<typeof issueFormSchema>, any, z.output<typeof issueFormSchema>>({
     resolver: zodResolver(issueFormSchema),
     defaultValues: { category: "electrical", title: "", location: "", description: "", reportedBy: "", reportedPhone: "", priority: "normal", assetId: "none" },
   });

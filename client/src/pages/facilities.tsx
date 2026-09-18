@@ -62,7 +62,7 @@ function computeTotal(facility: Facility | undefined, rate: number, startTime?: 
 function FacilityFormDialog({ facility, trigger }: { facility?: Facility; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof facilityFormSchema>>({
+  const form = useForm<z.input<typeof facilityFormSchema>, any, z.output<typeof facilityFormSchema>>({
     resolver: zodResolver(facilityFormSchema),
     defaultValues: facility
       ? { name: facility.name, rateType: facility.rateType, rate: facility.rate, capacity: facility.capacity ?? undefined, active: facility.active, notes: facility.notes ?? "" }
@@ -115,7 +115,7 @@ function FacilityFormDialog({ facility, trigger }: { facility?: Facility; trigge
               <FormField control={form.control} name="rate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Rate (KES)</FormLabel>
-                  <FormControl><Input type="number" {...field} data-testid="input-facility-rate" /></FormControl>
+                  <FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-facility-rate" /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
@@ -123,7 +123,7 @@ function FacilityFormDialog({ facility, trigger }: { facility?: Facility; trigge
             <FormField control={form.control} name="capacity" render={({ field }) => (
               <FormItem>
                 <FormLabel>Capacity (optional)</FormLabel>
-                <FormControl><Input type="number" {...field} value={field.value ?? ""} data-testid="input-facility-capacity" /></FormControl>
+                <FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-facility-capacity" /></FormControl>
                 <FormMessage />
               </FormItem>
             )} />
@@ -150,7 +150,7 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
   const { data: currentUser } = useCurrentUser();
-  const form = useForm<z.infer<typeof bookingFormSchema>>({
+  const form = useForm<z.input<typeof bookingFormSchema>, any, z.output<typeof bookingFormSchema>>({
     resolver: zodResolver(bookingFormSchema),
     defaultValues: booking
       ? { facilityId: booking.facilityId, clientName: booking.clientName, clientPhone: booking.clientPhone ?? "", clientEmail: booking.clientEmail ?? "", eventDate: booking.eventDate, startTime: booking.startTime ?? "", endTime: booking.endTime ?? "", rate: booking.rate, amountPaid: booking.amountPaid, paymentMethod: booking.paymentMethod ?? "", paymentReference: booking.paymentReference ?? "", status: booking.status, notes: booking.notes ?? "" }
@@ -162,7 +162,7 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
   const startTime = form.watch("startTime");
   const endTime = form.watch("endTime");
   const facility = facilities.find((f) => f.id === facilityId);
-  const total = computeTotal(facility, rate || 0, startTime, endTime);
+  const total = computeTotal(facility, Number(rate) || 0, startTime, endTime);
   const clientName = form.watch("clientName");
   const clientPhone = form.watch("clientPhone");
   const status = form.watch("status");
@@ -277,14 +277,14 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
               <FormField control={form.control} name="rate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Rate (KES)</FormLabel>
-                  <FormControl><Input type="number" {...field} data-testid="input-booking-rate" /></FormControl>
+                  <FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-booking-rate" /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
               <FormField control={form.control} name="amountPaid" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Amount paid (KES)</FormLabel>
-                  <FormControl><Input type="number" {...field} data-testid="input-amount-paid" /></FormControl>
+                  <FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-amount-paid" /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
@@ -345,7 +345,7 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
                 variant="outline"
                 disabled={!buildWhatsAppLink(clientPhone, "x")}
                 onClick={async () => {
-                  const paymentDetail = amountPaidWatch > 0 && (paymentMethodWatch || paymentReferenceWatch)
+                  const paymentDetail = Number(amountPaidWatch) > 0 && (paymentMethodWatch || paymentReferenceWatch)
                     ? ` Payment: ${[paymentMethodWatch, paymentReferenceWatch].filter(Boolean).join(" / ")}.`
                     : "";
                   let message = `Hi ${clientName || "there"}, this confirms your booking for ${facility?.name || "the facility"} at The Chekata. Total: ${formatKES(total)}${status === "completed" ? " — Paid in full." : " — Balance may be due."}${paymentDetail} We look forward to hosting you.`;

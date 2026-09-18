@@ -42,6 +42,7 @@ const settingsFormSchema = z.object({
 });
 
 type SettingsFormValues = z.infer<typeof settingsFormSchema>;
+type SettingsFormInput = z.input<typeof settingsFormSchema>;
 
 function extractErrorMessage(raw: string): string {
   const match = raw.match(/^\d+:\s*([\s\S]*)$/);
@@ -76,7 +77,7 @@ function HotelEmailTab() {
   const [testEmail, setTestEmail] = useState("");
   const [testPhone, setTestPhone] = useState("");
 
-  const form = useForm<SettingsFormValues>({
+  const form = useForm<SettingsFormInput, any, SettingsFormValues>({
     resolver: zodResolver(settingsFormSchema),
     defaultValues: {
       hotelName: "The Chekata",
@@ -362,11 +363,12 @@ const taxFormSchema = z.object({
 });
 
 type TaxFormValues = z.infer<typeof taxFormSchema>;
+type TaxFormInput = z.input<typeof taxFormSchema>;
 
 function TaxFormDialog({ tax, trigger }: { tax?: Tax; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<TaxFormValues>({
+  const form = useForm<TaxFormInput, any, TaxFormValues>({
     resolver: zodResolver(taxFormSchema),
     defaultValues: tax
       ? { name: tax.name, ratePercent: tax.ratePercent, active: tax.active, appliesAccommodation: tax.appliesAccommodation, appliesFacilities: tax.appliesFacilities, appliesBar: tax.appliesBar, appliesRestaurant: tax.appliesRestaurant, appliesTenancy: tax.appliesTenancy, appliesWater: tax.appliesWater }
@@ -414,7 +416,7 @@ function TaxFormDialog({ tax, trigger }: { tax?: Tax; trigger: React.ReactNode }
               <FormField control={form.control} name="ratePercent" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Rate (%)</FormLabel>
-                  <FormControl><Input type="number" step="0.01" {...field} data-testid="input-tax-rate" /></FormControl>
+                  <FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-tax-rate" /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
@@ -569,11 +571,12 @@ const userFormSchema = z.object({
 });
 
 type UserFormValues = z.infer<typeof userFormSchema>;
+type UserFormInput = z.input<typeof userFormSchema>;
 
 function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<UserFormValues>({
+  const form = useForm<UserFormInput, any, UserFormValues>({
     resolver: zodResolver(
       userFormSchema.refine((v) => user || (v.password && v.password.length >= 6), {
         message: "Password must be at least 6 characters",

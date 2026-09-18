@@ -51,6 +51,7 @@ const recipeFormSchema = z.object({
 });
 
 type RecipeFormValues = z.infer<typeof recipeFormSchema>;
+type RecipeFormInput = z.input<typeof recipeFormSchema>;
 
 function ingredientCostPreview(values: RecipeFormValues, items: InventoryItem[]): { ingredientCost: number; laborCost: number; costPerServing: number; suggestedPrice: number } {
   let ingredientCost = 0;
@@ -69,7 +70,7 @@ function RecipeFormDialog({ recipe, trigger }: { recipe?: RecipeWithCost; trigge
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
   const { data: items = [] } = useQuery<InventoryItem[]>({ queryKey: ["/api/inventory/items"] });
-  const form = useForm<RecipeFormValues>({
+  const form = useForm<RecipeFormInput, any, RecipeFormValues>({
     resolver: zodResolver(recipeFormSchema),
     defaultValues: recipe
       ? {
@@ -85,7 +86,7 @@ function RecipeFormDialog({ recipe, trigger }: { recipe?: RecipeWithCost; trigge
   });
   const { fields, append, remove } = useFieldArray({ control: form.control, name: "ingredients" });
   const watched = form.watch();
-  const preview = ingredientCostPreview(watched, items);
+  const preview = ingredientCostPreview(watched as unknown as RecipeFormValues, items);
   const activeItems = items.filter((i) => i.active);
 
   const mutation = useMutation({
@@ -114,7 +115,7 @@ function RecipeFormDialog({ recipe, trigger }: { recipe?: RecipeWithCost; trigge
                 <FormItem><FormLabel>Recipe / dish name</FormLabel><FormControl><Input {...field} data-testid="input-recipe-name" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="servingsPerBatch" render={({ field }) => (
-                <FormItem><FormLabel>Servings per batch</FormLabel><FormControl><Input type="number" step="0.01" {...field} data-testid="input-recipe-servings" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Servings per batch</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-recipe-servings" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
 
@@ -141,7 +142,7 @@ function RecipeFormDialog({ recipe, trigger }: { recipe?: RecipeWithCost; trigge
                       </FormItem>
                     )} />
                     <FormField control={form.control} name={`ingredients.${idx}.quantityPerServing`} render={({ field }) => (
-                      <FormItem><FormControl><Input type="number" step="0.0001" placeholder="Qty/serving" {...field} data-testid={`input-ingredient-qty-${idx}`} /></FormControl><FormMessage /></FormItem>
+                      <FormItem><FormControl><Input type="number" step="0.0001" placeholder="Qty/serving" {...field} value={field.value as any} data-testid={`input-ingredient-qty-${idx}`} /></FormControl><FormMessage /></FormItem>
                     )} />
                     <FormField control={form.control} name={`ingredients.${idx}.unit`} render={({ field }) => (
                       <FormItem><FormControl><Input placeholder="Unit (opt.)" title="Unit override (optional) — leave blank to use the item's default unit" {...field} value={field.value ?? ""} data-testid={`input-ingredient-unit-${idx}`} /></FormControl><FormMessage /></FormItem>
@@ -156,10 +157,10 @@ function RecipeFormDialog({ recipe, trigger }: { recipe?: RecipeWithCost; trigge
 
             <div className="grid grid-cols-2 gap-4">
               <FormField control={form.control} name="laborCostPercent" render={({ field }) => (
-                <FormItem><FormLabel>Labor/other cost (% of ingredient cost)</FormLabel><FormControl><Input type="number" step="0.1" {...field} data-testid="input-recipe-other-cost" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Labor/other cost (% of ingredient cost)</FormLabel><FormControl><Input type="number" step="0.1" {...field} value={field.value as any} data-testid="input-recipe-other-cost" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="targetMarginPercent" render={({ field }) => (
-                <FormItem><FormLabel>Target margin (%)</FormLabel><FormControl><Input type="number" step="0.1" {...field} data-testid="input-recipe-margin" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Target margin (%)</FormLabel><FormControl><Input type="number" step="0.1" {...field} value={field.value as any} data-testid="input-recipe-margin" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
 

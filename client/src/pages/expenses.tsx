@@ -34,7 +34,7 @@ const expenseFormSchema = z.object({
 function ExpenseFormDialog({ expense, trigger }: { expense?: Expense; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof expenseFormSchema>>({
+  const form = useForm<z.input<typeof expenseFormSchema>, any, z.output<typeof expenseFormSchema>>({
     resolver: zodResolver(expenseFormSchema),
     defaultValues: expense
       ? { category: expense.category, description: expense.description, amount: expense.amount, date: expense.date, paidTo: expense.paidTo ?? "", notes: expense.notes ?? "" }
@@ -85,7 +85,7 @@ function ExpenseFormDialog({ expense, trigger }: { expense?: Expense; trigger: R
               <FormField control={form.control} name="amount" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Amount (KES)</FormLabel>
-                  <FormControl><Input type="number" {...field} data-testid="input-expense-amount" /></FormControl>
+                  <FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-expense-amount" /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />

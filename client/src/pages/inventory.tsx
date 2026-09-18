@@ -46,7 +46,7 @@ const storeFormSchema = z.object({
 function StoreFormDialog({ store, trigger }: { store?: Store; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof storeFormSchema>>({
+  const form = useForm<z.input<typeof storeFormSchema>, any, z.output<typeof storeFormSchema>>({
     resolver: zodResolver(storeFormSchema),
     defaultValues: store
       ? { name: store.name, location: store.location ?? "", description: store.description ?? "", active: store.active }
@@ -190,7 +190,7 @@ const itemFormSchema = z.object({
 function ItemFormDialog({ item, categories, units, trigger }: { item?: InventoryItem; categories: DefinitionListItem[]; units: DefinitionListItem[]; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof itemFormSchema>>({
+  const form = useForm<z.input<typeof itemFormSchema>, any, z.output<typeof itemFormSchema>>({
     resolver: zodResolver(itemFormSchema),
     defaultValues: item
       ? { code: item.code, name: item.name, category: item.category ?? "", unitOfMeasure: item.unitOfMeasure, reorderLevel: item.reorderLevel, lastUnitCost: item.lastUnitCost, glAssetAccountId: item.glAssetAccountId ?? "", active: item.active, notes: item.notes ?? "" }
@@ -483,7 +483,7 @@ const adjustmentFormSchema = z.object({
 function StockAdjustmentDialog({ items, stores }: { items: InventoryItem[]; stores: Store[] }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof adjustmentFormSchema>>({
+  const form = useForm<z.input<typeof adjustmentFormSchema>, any, z.output<typeof adjustmentFormSchema>>({
     resolver: zodResolver(adjustmentFormSchema),
     defaultValues: { itemId: items[0]?.id ?? 0, storeId: stores[0]?.id ?? 0, direction: "in", quantity: 0, notes: "" },
   });

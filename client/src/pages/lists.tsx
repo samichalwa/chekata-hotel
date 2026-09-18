@@ -36,7 +36,7 @@ const tableFormSchema = z.object({
 function TableFormDialog({ table, trigger }: { table?: TableEntity; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof tableFormSchema>>({
+  const form = useForm<z.input<typeof tableFormSchema>, any, z.output<typeof tableFormSchema>>({
     resolver: zodResolver(tableFormSchema),
     defaultValues: table
       ? { name: table.name, outlet: table.outlet, capacity: table.capacity ?? undefined, active: table.active }
@@ -90,7 +90,7 @@ function TableFormDialog({ table, trigger }: { table?: TableEntity; trigger: Rea
               <FormField control={form.control} name="capacity" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Seats (optional)</FormLabel>
-                  <FormControl><Input type="number" min={0} {...field} value={field.value ?? ""} data-testid="input-table-capacity" /></FormControl>
+                  <FormControl><Input type="number" min={0} {...field} value={field.value as any} data-testid="input-table-capacity" /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />
@@ -207,7 +207,7 @@ const menuItemFormSchema = z.object({
 function MenuItemFormDialog({ item, trigger }: { item?: MenuItem; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof menuItemFormSchema>>({
+  const form = useForm<z.input<typeof menuItemFormSchema>, any, z.output<typeof menuItemFormSchema>>({
     resolver: zodResolver(menuItemFormSchema),
     defaultValues: item ? { name: item.name, category: item.category, price: item.price, active: item.active } : { name: "", category: "bar", price: 0, active: 1 },
   });
@@ -257,7 +257,7 @@ function MenuItemFormDialog({ item, trigger }: { item?: MenuItem; trigger: React
               <FormField control={form.control} name="price" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Price (KES)</FormLabel>
-                  <FormControl><Input type="number" {...field} data-testid="input-menu-item-price" /></FormControl>
+                  <FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-menu-item-price" /></FormControl>
                   <FormMessage />
                 </FormItem>
               )} />

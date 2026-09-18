@@ -64,7 +64,7 @@ const supplierFormSchema = z.object({
 function SupplierFormDialog({ supplier, trigger }: { supplier?: Supplier; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof supplierFormSchema>>({
+  const form = useForm<z.input<typeof supplierFormSchema>, any, z.output<typeof supplierFormSchema>>({
     resolver: zodResolver(supplierFormSchema),
     defaultValues: supplier
       ? { name: supplier.name, contactPerson: supplier.contactPerson ?? "", phone: supplier.phone ?? "", email: supplier.email ?? "", paymentTerms: supplier.paymentTerms ?? "", active: supplier.active, notes: supplier.notes ?? "" }

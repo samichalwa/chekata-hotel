@@ -37,7 +37,7 @@ const accountFormSchema = z.object({
 function AccountFormDialog({ account, trigger }: { account?: ChartOfAccount; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof accountFormSchema>>({
+  const form = useForm<z.input<typeof accountFormSchema>, any, z.output<typeof accountFormSchema>>({
     resolver: zodResolver(accountFormSchema),
     defaultValues: account
       ? { code: account.code, name: account.name, type: account.type, description: account.description ?? "", active: account.active }
@@ -192,7 +192,7 @@ function PeriodFormDialog({ period, trigger }: { period?: AccountingPeriod; trig
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
   const today = todayISO();
-  const form = useForm<z.infer<typeof periodFormSchema>>({
+  const form = useForm<z.input<typeof periodFormSchema>, any, z.output<typeof periodFormSchema>>({
     resolver: zodResolver(periodFormSchema),
     defaultValues: period
       ? { name: period.name, financialYear: period.financialYear, startDate: period.startDate, endDate: period.endDate, status: period.status }
@@ -509,7 +509,7 @@ const bankAccountFormSchema = z.object({
 function BankAccountFormDialog({ account, accounts, trigger }: { account?: BankAccount; accounts: ChartOfAccount[]; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof bankAccountFormSchema>>({
+  const form = useForm<z.input<typeof bankAccountFormSchema>, any, z.output<typeof bankAccountFormSchema>>({
     resolver: zodResolver(bankAccountFormSchema),
     defaultValues: account
       ? { name: account.name, bankName: account.bankName ?? "", accountNumber: account.accountNumber ?? "", glAccountId: account.glAccountId, openingBalance: account.openingBalance, active: account.active, notes: account.notes ?? "" }
@@ -560,7 +560,7 @@ function BankAccountFormDialog({ account, accounts, trigger }: { account?: BankA
               </FormItem>
             )} />
             <FormField control={form.control} name="openingBalance" render={({ field }) => (
-              <FormItem><FormLabel>Opening balance (KES)</FormLabel><FormControl><Input type="number" {...field} data-testid="input-bank-opening-balance" /></FormControl><FormMessage /></FormItem>
+              <FormItem><FormLabel>Opening balance (KES)</FormLabel><FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-bank-opening-balance" /></FormControl><FormMessage /></FormItem>
             )} />
             <FormField control={form.control} name="notes" render={({ field }) => (
               <FormItem><FormLabel>Notes (optional)</FormLabel><FormControl><Textarea {...field} value={field.value ?? ""} data-testid="input-bank-notes" /></FormControl><FormMessage /></FormItem>
@@ -650,7 +650,7 @@ const PAYMENT_METHODS = ["cash", "mpesa", "card", "bank_transfer", "cheque"];
 function VoucherFormDialog({ accounts, bankAccounts, trigger }: { accounts: ChartOfAccount[]; bankAccounts: BankAccount[]; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const form = useForm<z.infer<typeof voucherFormSchema>>({
+  const form = useForm<z.input<typeof voucherFormSchema>, any, z.output<typeof voucherFormSchema>>({
     resolver: zodResolver(voucherFormSchema),
     defaultValues: { voucherDate: todayISO(), payeeName: "", amount: 0, paymentMethod: "cash", paymentReference: "", expenseAccountId: 0, bankAccountId: bankAccounts[0]?.id ?? 0, description: "" },
   });
@@ -680,7 +680,7 @@ function VoucherFormDialog({ accounts, bankAccounts, trigger }: { accounts: Char
             </div>
             <div className="grid grid-cols-2 gap-4">
               <FormField control={form.control} name="amount" render={({ field }) => (
-                <FormItem><FormLabel>Amount (KES)</FormLabel><FormControl><Input type="number" {...field} data-testid="input-pv-amount" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Amount (KES)</FormLabel><FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-pv-amount" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="paymentMethod" render={({ field }) => (
                 <FormItem>
