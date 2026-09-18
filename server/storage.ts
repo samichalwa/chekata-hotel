@@ -1052,6 +1052,7 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await ensureColumn("users", "can_close_maintenance_issues", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("users", "can_adjust_inventory", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("users", "can_confirm_booking_without_payment", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("users", "can_check_in_without_id", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("users", "can_access_live", "INTEGER NOT NULL DEFAULT 1");
   await ensureColumn("users", "can_access_test", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("settings", "sms_provider", "TEXT NOT NULL DEFAULT ''");
@@ -1165,6 +1166,9 @@ CREATE TABLE IF NOT EXISTS water_sales (
   await ensureColumn("accommodation_bookings", "overridden_by", "TEXT");
   await ensureColumn("accommodation_bookings", "overridden_at", "BIGINT");
   await ensureColumn("accommodation_bookings", "override_reason", "TEXT");
+  await ensureColumn("accommodation_bookings", "id_overridden_by", "TEXT");
+  await ensureColumn("accommodation_bookings", "id_overridden_at", "BIGINT");
+  await ensureColumn("accommodation_bookings", "id_override_reason", "TEXT");
   await ensureColumn("facility_bookings", "overridden_by", "TEXT");
   await ensureColumn("facility_bookings", "overridden_at", "BIGINT");
   await ensureColumn("facility_bookings", "override_reason", "TEXT");

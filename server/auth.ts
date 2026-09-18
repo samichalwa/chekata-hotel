@@ -73,6 +73,7 @@ export function toSafeUser(user: {
   canCloseMaintenanceIssues?: number;
   canAdjustInventory?: number;
   canConfirmBookingWithoutPayment?: number;
+  canCheckInWithoutId?: number;
   canAccessLive?: number;
   canAccessTest?: number;
   active: number;
@@ -91,6 +92,7 @@ export function toSafeUser(user: {
     canCloseMaintenanceIssues: user.canCloseMaintenanceIssues ?? 0,
     canAdjustInventory: user.canAdjustInventory ?? 0,
     canConfirmBookingWithoutPayment: user.canConfirmBookingWithoutPayment ?? 0,
+    canCheckInWithoutId: user.canCheckInWithoutId ?? 0,
     canAccessLive: user.canAccessLive ?? 1,
     canAccessTest: user.canAccessTest ?? 0,
     active: user.active,
@@ -257,6 +259,16 @@ export function requireCanConfirmBookingWithoutPayment(req: Request, res: Respon
   if (!user) return res.status(401).json({ error: "Not signed in" });
   if (user.isAdmin || user.canConfirmBookingWithoutPayment) return next();
   return res.status(403).json({ error: "You don't have rights to confirm a booking without payment" });
+}
+
+// Requires the signed-in user to be an administrator OR to hold the dedicated
+// "check in without ID" right — used to gate the Director's-discretion
+// override that checks in a guest before any ID document has been recorded.
+export function requireCanCheckInWithoutId(req: Request, res: Response, next: NextFunction) {
+  const user = (req as any).user;
+  if (!user) return res.status(401).json({ error: "Not signed in" });
+  if (user.isAdmin || user.canCheckInWithoutId) return next();
+  return res.status(403).json({ error: "You don't have rights to check in a guest without an ID document" });
 }
 
 // Settings is restricted to the literal "admin" account only, per governance

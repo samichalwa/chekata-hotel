@@ -42,6 +42,14 @@ export const accommodationBookings = pgTable("accommodation_bookings", {
   overriddenBy: text("overridden_by"),
   overriddenAt: bigint("overridden_at", { mode: "number" }),
   overrideReason: text("override_reason"),
+  // ---- ID-required-for-check-in override (additive-only) ----
+  // A booking can only move to "checked_in" once at least one guest ID
+  // document is on file for it, unless overridden by someone with
+  // canCheckInWithoutId (Director's discretion). Separate audit trail from
+  // the payment-gate override above so both can be recorded independently.
+  idOverriddenBy: text("id_overridden_by"),
+  idOverriddenAt: bigint("id_overridden_at", { mode: "number" }),
+  idOverrideReason: text("id_override_reason"),
 });
 
 export const insertAccommodationBookingSchema = createInsertSchema(accommodationBookings).omit({ id: true });
@@ -883,6 +891,7 @@ export const users = pgTable("users", {
   canCloseMaintenanceIssues: integer("can_close_maintenance_issues").notNull().default(0), // Maintenance module: close a reported issue
   canAdjustInventory: integer("can_adjust_inventory").notNull().default(0), // Inventory/Purchasing/Internal Requisitions: cancel PR/PO/IR and make manual stock adjustments
   canConfirmBookingWithoutPayment: integer("can_confirm_booking_without_payment").notNull().default(0), // Accommodation/Facilities: override — confirm a booking before payment is received (e.g. Director's discretion)
+  canCheckInWithoutId: integer("can_check_in_without_id").notNull().default(0), // Accommodation: override — check in a guest before a guest ID document has been recorded
   canAccessLive: integer("can_access_live").notNull().default(1), // Environment access: log in to the Live (production) environment
   canAccessTest: integer("can_access_test").notNull().default(0), // Environment access: log in to the Test environment. Admins always bypass both checks.
   active: integer("active").notNull().default(1),

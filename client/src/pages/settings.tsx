@@ -562,6 +562,7 @@ const userFormSchema = z.object({
   canCloseMaintenanceIssues: z.boolean(),
   canAdjustInventory: z.boolean(),
   canConfirmBookingWithoutPayment: z.boolean(),
+  canCheckInWithoutId: z.boolean(),
   canAccessLive: z.boolean(),
   canAccessTest: z.boolean(),
   staffId: z.number().nullable().optional(),
@@ -590,10 +591,11 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
           canManageTablesList: !!user.canManageTablesList, canManageMenuItemsList: !!user.canManageMenuItemsList,
           canCloseMaintenanceIssues: !!user.canCloseMaintenanceIssues, canAdjustInventory: !!user.canAdjustInventory,
           canConfirmBookingWithoutPayment: !!user.canConfirmBookingWithoutPayment,
+          canCheckInWithoutId: !!user.canCheckInWithoutId,
           canAccessLive: user.canAccessLive === undefined ? true : !!user.canAccessLive, canAccessTest: !!user.canAccessTest,
           staffId: user.staffId ?? null,
         }
-      : { fullName: "", username: "", password: "", isAdmin: false, active: true, permissions: [], canEditMovieBookings: false, canManageTablesList: false, canManageMenuItemsList: false, canCloseMaintenanceIssues: false, canAdjustInventory: false, canConfirmBookingWithoutPayment: false, canAccessLive: true, canAccessTest: false, staffId: null },
+      : { fullName: "", username: "", password: "", isAdmin: false, active: true, permissions: [], canEditMovieBookings: false, canManageTablesList: false, canManageMenuItemsList: false, canCloseMaintenanceIssues: false, canAdjustInventory: false, canConfirmBookingWithoutPayment: false, canCheckInWithoutId: false, canAccessLive: true, canAccessTest: false, staffId: null },
   });
 
   const { data: staffList = [] } = useQuery<Staff[]>({ queryKey: ["/api/staff"] });
@@ -607,6 +609,7 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
   const hasPurchasingAccess = isAdminWatch || (permissionsWatch as string[]).includes("purchasing");
   const hasInternalRequisitionsAccess = isAdminWatch || (permissionsWatch as string[]).includes("internal-requisitions");
   const hasBookingOverrideAccess = isAdminWatch || (permissionsWatch as string[]).includes("accommodation") || (permissionsWatch as string[]).includes("facilities");
+  const hasCheckInOverrideAccess = isAdminWatch || (permissionsWatch as string[]).includes("accommodation");
 
   const mutation = useMutation({
     mutationFn: async (values: UserFormValues) => {
@@ -793,6 +796,19 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
                   </div>
                   <FormControl>
                     <Switch checked={isAdminWatch || field.value} disabled={isAdminWatch} onCheckedChange={field.onChange} data-testid="switch-user-can-confirm-booking-without-payment" />
+                  </FormControl>
+                </FormItem>
+              )} />
+            )}
+            {hasCheckInOverrideAccess && (
+              <FormField control={form.control} name="canCheckInWithoutId" render={({ field }) => (
+                <FormItem className="flex items-center justify-between rounded-md border border-border p-3">
+                  <div>
+                    <FormLabel className="mb-0">Can check in without ID</FormLabel>
+                    <FormDescription>Director's-discretion override: allows checking in an accommodation guest before any guest ID document has been recorded. Admins always have this right.</FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch checked={isAdminWatch || field.value} disabled={isAdminWatch} onCheckedChange={field.onChange} data-testid="switch-user-can-check-in-without-id" />
                   </FormControl>
                 </FormItem>
               )} />

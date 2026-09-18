@@ -32,9 +32,41 @@ interface ConfirmOverrideDialogProps {
   invalidateKeys: string[][];
   recipientName: string;
   trigger: React.ReactNode;
+  /** Dialog title. Defaults to "Confirm without payment". */
+  title?: string;
+  /** Description shown above the reason field. `{recipientName}` is interpolated in. */
+  description?: string;
+  /** Placeholder text for the reason textarea. */
+  placeholder?: string;
+  /** Label on the submit button. */
+  actionLabel?: string;
+  /** Label on the submit button while the request is pending. */
+  pendingLabel?: string;
+  /** Toast title shown on success. */
+  successTitle?: string;
+  /** Toast description shown on success. */
+  successDescription?: string;
+  /** Toast title shown on failure. */
+  errorTitle?: string;
+  /** Extra side effect to run after the override succeeds (e.g. updating a related record). Receives the server response. */
+  onOverrideSuccess?: (result: any) => void;
 }
 
-export function ConfirmOverrideDialog({ endpoint, invalidateKeys, recipientName, trigger }: ConfirmOverrideDialogProps) {
+export function ConfirmOverrideDialog({
+  endpoint,
+  invalidateKeys,
+  recipientName,
+  trigger,
+  title = "Confirm without payment",
+  description,
+  placeholder = "e.g. Repeat corporate client, payment to follow on invoice terms",
+  actionLabel = "Confirm without payment",
+  pendingLabel = "Confirming...",
+  successTitle = "Booking confirmed without payment",
+  successDescription = "This override has been recorded against your name.",
+  errorTitle = "Could not confirm booking",
+  onOverrideSuccess,
+}: ConfirmOverrideDialogProps) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const { toast } = useToast();
@@ -44,13 +76,14 @@ export function ConfirmOverrideDialog({ endpoint, invalidateKeys, recipientName,
       const res = await apiRequest("POST", endpoint, { reason });
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       invalidateKeys.forEach((key) => queryClient.invalidateQueries({ queryKey: key }));
-      toast({ title: "Booking confirmed without payment", description: "This override has been recorded against your name." });
+      toast({ title: successTitle, description: successDescription });
       setOpen(false);
       setReason("");
+      onOverrideSuccess?.(result);
     },
-    onError: (err: Error) => toast({ title: "Could not confirm booking", description: extractErrorMessage(err.message), variant: "destructive" }),
+    onError: (err: Error) => toast({ title: errorTitle, description: extractErrorMessage(err.message), variant: "destructive" }),
   });
 
   return (
@@ -58,9 +91,9 @@ export function ConfirmOverrideDialog({ endpoint, invalidateKeys, recipientName,
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Confirm without payment</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            Director's-discretion override: confirms {recipientName}'s booking even though no payment has been recorded yet. This action and your reason are logged against the booking.
+            {description ?? `Director's-discretion override: confirms ${recipientName}'s booking even though no payment has been recorded yet. This action and your reason are logged against the booking.`}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
@@ -69,7 +102,7 @@ export function ConfirmOverrideDialog({ endpoint, invalidateKeys, recipientName,
             id="override-reason"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="e.g. Repeat corporate client, payment to follow on invoice terms"
+            placeholder={placeholder}
             data-testid="input-override-reason"
           />
         </div>
@@ -80,7 +113,7 @@ export function ConfirmOverrideDialog({ endpoint, invalidateKeys, recipientName,
             disabled={mutation.isPending || !reason.trim()}
             data-testid="button-confirm-override"
           >
-            <ShieldCheck className="h-4 w-4 mr-1.5" /> {mutation.isPending ? "Confirming..." : "Confirm without payment"}
+            <ShieldCheck className="h-4 w-4 mr-1.5" /> {mutation.isPending ? pendingLabel : actionLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

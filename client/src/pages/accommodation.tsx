@@ -585,6 +585,7 @@ export default function Accommodation() {
       queryClient.invalidateQueries({ queryKey: ["/api/accommodation-bookings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/rooms"] });
     },
+    onError: (err: Error) => toast({ title: "Could not update booking status", description: extractErrorMessage(err.message), variant: "destructive" }),
   });
 
   const occupied = rooms.filter((r) => r.status === "occupied").length;
@@ -677,6 +678,26 @@ export default function Accommodation() {
                                 <Button size="icon" variant="ghost" title="Check in" onClick={() => setBookingStatus.mutate({ id: b.id, status: "checked_in", roomId: b.roomId })} data-testid={`button-checkin-${b.id}`}>
                                   <LogIn className="h-4 w-4" />
                                 </Button>
+                              )}
+                              {b.status === "confirmed" && (
+                                <ConfirmOverrideDialog
+                                  endpoint={`/api/accommodation-bookings/${b.id}/checkin-override`}
+                                  invalidateKeys={[["/api/accommodation-bookings"]]}
+                                  recipientName={b.guestName}
+                                  title="Check in without ID"
+                                  description={`Director's-discretion override: checks in ${b.guestName} even though no guest ID document has been recorded yet. This action and your reason are logged against the booking.`}
+                                  placeholder="e.g. Repeat corporate guest, ID on file from a previous stay"
+                                  actionLabel="Check in without ID"
+                                  pendingLabel="Checking in..."
+                                  successTitle="Guest checked in without ID"
+                                  errorTitle="Could not check in"
+                                  onOverrideSuccess={() => apiRequest("PATCH", `/api/rooms/${b.roomId}`, { status: "occupied" }).then(() => queryClient.invalidateQueries({ queryKey: ["/api/rooms"] }))}
+                                  trigger={
+                                    <Button size="icon" variant="ghost" title="Check in without ID (Director override)" data-testid={`button-checkin-override-${b.id}`}>
+                                      <ShieldCheck className="h-4 w-4" />
+                                    </Button>
+                                  }
+                                />
                               )}
                               {b.status === "checked_in" && (
                                 <Button size="icon" variant="ghost" title="Check out" onClick={() => setBookingStatus.mutate({ id: b.id, status: "checked_out", roomId: b.roomId })} data-testid={`button-checkout-${b.id}`}>

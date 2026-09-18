@@ -48,7 +48,7 @@ import { parseAttendanceWorkbook } from "./attendance-import";
 import {
   requireAuth, requireModule, requireAdmin, requireCanEditMovieBookings,
   requireAnyModule, requireCanManageTablesList, requireCanManageMenuItemsList, requireCanCloseMaintenanceIssues,
-  requireAdminUsername, requireTablePermission, requireCanAdjustInventory, requireCanConfirmBookingWithoutPayment,
+  requireAdminUsername, requireTablePermission, requireCanAdjustInventory, requireCanConfirmBookingWithoutPayment, requireCanCheckInWithoutId,
   hashPassword, verifyPassword, toSafeUser, parsePermissions, resolveUserIdFromHeaderToken,
 } from "./auth";
 import { isTestDbConfigured } from "./storage";
@@ -324,10 +324,10 @@ export async function registerRoutes(
   });
   app.post("/api/users", requireAdmin, async (req, res) => {
     try {
-      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canConfirmBookingWithoutPayment, canAccessLive, canAccessTest, staffId } = req.body as {
+      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canConfirmBookingWithoutPayment, canCheckInWithoutId, canAccessLive, canAccessTest, staffId } = req.body as {
         username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean;
         canEditMovieBookings?: boolean; canManageTablesList?: boolean; canManageMenuItemsList?: boolean; canCloseMaintenanceIssues?: boolean;
-        canAdjustInventory?: boolean; canConfirmBookingWithoutPayment?: boolean; canAccessLive?: boolean; canAccessTest?: boolean; staffId?: number | null;
+        canAdjustInventory?: boolean; canConfirmBookingWithoutPayment?: boolean; canCheckInWithoutId?: boolean; canAccessLive?: boolean; canAccessTest?: boolean; staffId?: number | null;
       };
       if (!username || !password || !fullName) return res.status(400).json({ error: "Username, password and full name are required." });
       if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
@@ -351,6 +351,7 @@ export async function registerRoutes(
         canCloseMaintenanceIssues: canCloseMaintenanceIssues ? 1 : 0,
         canAdjustInventory: canAdjustInventory ? 1 : 0,
         canConfirmBookingWithoutPayment: canConfirmBookingWithoutPayment ? 1 : 0,
+        canCheckInWithoutId: canCheckInWithoutId ? 1 : 0,
         canAccessLive: canAccessLive === false ? 0 : 1,
         canAccessTest: canAccessTest ? 1 : 0,
         active: active === false ? 0 : 1,
@@ -368,10 +369,10 @@ export async function registerRoutes(
       const id = Number(req.params.id);
       const target = await storage.getUser(id);
       if (!target) return res.status(404).json({ error: "User not found" });
-      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canConfirmBookingWithoutPayment, canAccessLive, canAccessTest, staffId } = req.body as {
+      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canConfirmBookingWithoutPayment, canCheckInWithoutId, canAccessLive, canAccessTest, staffId } = req.body as {
         username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean;
         canEditMovieBookings?: boolean; canManageTablesList?: boolean; canManageMenuItemsList?: boolean; canCloseMaintenanceIssues?: boolean;
-        canAdjustInventory?: boolean; canConfirmBookingWithoutPayment?: boolean; canAccessLive?: boolean; canAccessTest?: boolean; staffId?: number | null;
+        canAdjustInventory?: boolean; canConfirmBookingWithoutPayment?: boolean; canCheckInWithoutId?: boolean; canAccessLive?: boolean; canAccessTest?: boolean; staffId?: number | null;
       };
       const currentUserId = (req as any).user.id;
       if (currentUserId === id && isAdmin === false) {
@@ -396,6 +397,7 @@ export async function registerRoutes(
       if (typeof canCloseMaintenanceIssues === "boolean") patch.canCloseMaintenanceIssues = canCloseMaintenanceIssues ? 1 : 0;
       if (typeof canAdjustInventory === "boolean") patch.canAdjustInventory = canAdjustInventory ? 1 : 0;
       if (typeof canConfirmBookingWithoutPayment === "boolean") patch.canConfirmBookingWithoutPayment = canConfirmBookingWithoutPayment ? 1 : 0;
+      if (typeof canCheckInWithoutId === "boolean") patch.canCheckInWithoutId = canCheckInWithoutId ? 1 : 0;
       if (typeof canAccessLive === "boolean") patch.canAccessLive = canAccessLive ? 1 : 0;
       if (typeof canAccessTest === "boolean") patch.canAccessTest = canAccessTest ? 1 : 0;
       if (staffId !== undefined) {
@@ -530,6 +532,19 @@ export async function registerRoutes(
           return res.status(403).json({ error: "This booking can only be confirmed once a payment is recorded, or via the director's no-payment override." });
         }
       }
+      // ID-required-for-check-in: block a direct attempt to move into
+      // "checked_in" unless at least one guest ID document is on file, or the
+      // requester holds the override right. Use the dedicated
+      // /checkin-override endpoint for the no-ID exception.
+      if (data.status === "checked_in" && before.status !== "checked_in") {
+        const currentUser = (req as any).user;
+        if (!(currentUser?.isAdmin || currentUser?.canCheckInWithoutId)) {
+          const idDocs = await storage.listGuestIdentityDocuments(id);
+          if (idDocs.length === 0) {
+            return res.status(403).json({ error: "At least one guest ID document must be recorded before check-in, or via the director's no-ID override." });
+          }
+        }
+      }
       let updated = await storage.updateAccommodationBooking(id, data);
       if (!updated) return res.status(404).json({ error: "Booking not found" });
       let docResult: any = null;
@@ -583,6 +598,28 @@ export async function registerRoutes(
         overriddenBy: currentUser?.fullName ?? currentUser?.username ?? "system",
         overriddenAt: Date.now(),
         overrideReason: reason,
+      });
+      res.json(updated);
+    } catch (err) { handleZodError(res, err); }
+  });
+  // Director's-discretion override: check in a guest with no ID document on
+  // file yet. Gated by canCheckInWithoutId (or isAdmin), separate from
+  // general "accommodation" module access.
+  app.post("/api/accommodation-bookings/:id/checkin-override", requireModule("accommodation"), requireCanCheckInWithoutId, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const before = await storage.getAccommodationBooking(id);
+      if (!before) return res.status(404).json({ error: "Booking not found" });
+      if (before.status !== "confirmed") {
+        return res.status(400).json({ error: "Only a confirmed booking can be checked in by override." });
+      }
+      const { reason } = z.object({ reason: z.string().min(1, "A reason is required for this override") }).parse(req.body);
+      const currentUser = (req as any).user;
+      const updated = await storage.updateAccommodationBooking(id, {
+        status: "checked_in",
+        idOverriddenBy: currentUser?.fullName ?? currentUser?.username ?? "system",
+        idOverriddenAt: Date.now(),
+        idOverrideReason: reason,
       });
       res.json(updated);
     } catch (err) { handleZodError(res, err); }
