@@ -37,6 +37,7 @@ import WaterSalesPage from "@/pages/water-sales";
 import Inventory from "@/pages/inventory";
 import Purchasing from "@/pages/purchasing";
 import InternalRequisitions from "@/pages/internal-requisitions";
+import TemporaryLaborRequisitions from "@/pages/temporary-labor-requisitions";
 import LoginPage from "@/pages/login";
 import SetupPage from "@/pages/setup";
 import ResetPasswordPage from "@/pages/reset-password";
@@ -88,6 +89,7 @@ function AppRouter() {
       <Route path="/inventory" component={() => <Guarded moduleKey="inventory" component={Inventory} />} />
       <Route path="/purchasing" component={() => <Guarded moduleKey="purchasing" component={Purchasing} />} />
       <Route path="/internal-requisitions" component={() => <Guarded moduleKey="internal-requisitions" component={InternalRequisitions} />} />
+      <Route path="/temporary-labor-requisitions" component={() => <Guarded moduleKey="hr" component={TemporaryLaborRequisitions} />} />
       <Route path="/budgeting" component={() => <Guarded moduleKey="budgeting" component={Budgeting} />} />
       <Route path="/assets" component={() => <Guarded moduleKey="assets" component={AssetsPage} />} />
       <Route path="/water-sales" component={() => <Guarded moduleKey="water-sales" component={WaterSalesPage} />} />

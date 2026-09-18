@@ -76,6 +76,7 @@ export function toSafeUser(user: {
   canAccessTest?: number;
   active: number;
   createdAt: number;
+  staffId?: number | null;
 }): SafeUser {
   return {
     id: user.id,
@@ -92,6 +93,7 @@ export function toSafeUser(user: {
     canAccessTest: user.canAccessTest ?? 0,
     active: user.active,
     createdAt: user.createdAt,
+    staffId: user.staffId ?? null,
   };
 }
 

@@ -29,6 +29,7 @@ import {
   PiggyBank,
   Boxes,
   Droplets,
+  UserCog,
 } from "lucide-react";
 import {
   Sidebar,
@@ -73,6 +74,7 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Inventory", url: "/inventory", icon: Package, key: "inventory" },
   { title: "Purchasing", url: "/purchasing", icon: ShoppingCart, key: "purchasing" },
   { title: "Internal Requisitions", url: "/internal-requisitions", icon: ClipboardCheck, key: "internal-requisitions" },
+  { title: "Temporary Labor Requisitions", url: "/temporary-labor-requisitions", icon: UserCog, key: "hr" },
   { title: "System Administration", url: "/system-admin", icon: ShieldCheck, key: "system-admin" },
   { title: "Settings", url: "/settings", icon: SettingsIcon, key: "settings" },
 ];

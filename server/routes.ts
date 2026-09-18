@@ -30,6 +30,7 @@ import {
   insertStatutoryRateTableSchema, insertPayeBandSchema,
   insertBudgetLineSchema, insertAssetCategorySchema, insertAssetSchema, DEPRECIATION_METHODS, ASSET_STATUSES,
   insertWaterBucketPriceSchema, insertWaterSaleSchema, WATER_SALE_TYPES,
+  insertTemporaryLaborRequisitionSchema, insertTemporaryLaborRequisitionLineSchema, TLR_DURATION_UNITS,
 } from "@shared/schema";
 import { issueDocument, issueCreditNote } from "./documents";
 import { buildDocumentPdf, buildMaintenanceReportPdf, buildPayslipPdf } from "./pdf";
@@ -321,15 +322,18 @@ export async function registerRoutes(
   });
   app.post("/api/users", requireAdmin, async (req, res) => {
     try {
-      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canAccessLive, canAccessTest } = req.body as {
+      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canAccessLive, canAccessTest, staffId } = req.body as {
         username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean;
         canEditMovieBookings?: boolean; canManageTablesList?: boolean; canManageMenuItemsList?: boolean; canCloseMaintenanceIssues?: boolean;
-        canAdjustInventory?: boolean; canAccessLive?: boolean; canAccessTest?: boolean;
+        canAdjustInventory?: boolean; canAccessLive?: boolean; canAccessTest?: boolean; staffId?: number | null;
       };
       if (!username || !password || !fullName) return res.status(400).json({ error: "Username, password and full name are required." });
       if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
       if (!isAdmin && !STAFF_EMAIL_REGEX.test(username.trim())) {
         return res.status(400).json({ error: "Staff accounts must use a @thechekata.com email address as their username." });
+      }
+      if (staffId != null && !(await storage.getStaff(Number(staffId)))) {
+        return res.status(400).json({ error: "The selected staff record does not exist." });
       }
       const passwordHash = await hashPassword(password);
       const validPerms = Array.isArray(permissions) ? permissions.filter((p) => (MODULE_KEYS as readonly string[]).includes(p)) : [];
@@ -347,8 +351,9 @@ export async function registerRoutes(
         canAccessLive: canAccessLive === false ? 0 : 1,
         canAccessTest: canAccessTest ? 1 : 0,
         active: active === false ? 0 : 1,
+        staffId: staffId != null ? Number(staffId) : null,
         createdAt: Date.now(),
-      });
+      } as any);
       res.status(201).json(toSafeUser(user));
     } catch (err: any) {
       if (/unique/i.test(String(err?.message))) return res.status(400).json({ error: "That username is already taken." });
@@ -360,10 +365,10 @@ export async function registerRoutes(
       const id = Number(req.params.id);
       const target = await storage.getUser(id);
       if (!target) return res.status(404).json({ error: "User not found" });
-      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canAccessLive, canAccessTest } = req.body as {
+      const { username, password, fullName, isAdmin, permissions, active, canEditMovieBookings, canManageTablesList, canManageMenuItemsList, canCloseMaintenanceIssues, canAdjustInventory, canAccessLive, canAccessTest, staffId } = req.body as {
         username?: string; password?: string; fullName?: string; isAdmin?: boolean; permissions?: ModuleKey[]; active?: boolean;
         canEditMovieBookings?: boolean; canManageTablesList?: boolean; canManageMenuItemsList?: boolean; canCloseMaintenanceIssues?: boolean;
-        canAdjustInventory?: boolean; canAccessLive?: boolean; canAccessTest?: boolean;
+        canAdjustInventory?: boolean; canAccessLive?: boolean; canAccessTest?: boolean; staffId?: number | null;
       };
       const currentUserId = (req as any).user.id;
       if (currentUserId === id && isAdmin === false) {
@@ -389,6 +394,12 @@ export async function registerRoutes(
       if (typeof canAdjustInventory === "boolean") patch.canAdjustInventory = canAdjustInventory ? 1 : 0;
       if (typeof canAccessLive === "boolean") patch.canAccessLive = canAccessLive ? 1 : 0;
       if (typeof canAccessTest === "boolean") patch.canAccessTest = canAccessTest ? 1 : 0;
+      if (staffId !== undefined) {
+        if (staffId != null && !(await storage.getStaff(Number(staffId)))) {
+          return res.status(400).json({ error: "The selected staff record does not exist." });
+        }
+        patch.staffId = staffId != null ? Number(staffId) : null;
+      }
       if (password) {
         if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
         patch.passwordHash = await hashPassword(password);
@@ -2012,6 +2023,102 @@ export async function registerRoutes(
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to cancel internal requisition" }); }
   });
 
+  // ================= Phase 7: Temporary Labor Requisitions =================
+  app.get("/api/temporary-labor-requisitions", requireModule("hr"), async (_req, res) => {
+    res.json(await storage.listTemporaryLaborRequisitions());
+  });
+  app.get("/api/temporary-labor-requisitions/:id/lines", requireModule("hr"), async (req, res) => {
+    res.json(await storage.getTemporaryLaborRequisitionLines(Number(req.params.id)));
+  });
+  app.post("/api/temporary-labor-requisitions", requireModule("hr"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { lines, ...body } = req.body as { lines: any[] } & Record<string, any>;
+      if (!Array.isArray(lines) || lines.length === 0) return res.status(400).json({ error: "At least one role line is required" });
+      for (const l of lines) {
+        if (l.durationUnit && !(TLR_DURATION_UNITS as readonly string[]).includes(l.durationUnit)) return res.status(400).json({ error: "Invalid duration unit" });
+      }
+      const data = insertTemporaryLaborRequisitionSchema.omit({ tlrNumber: true, requestedBy: true, createdAt: true, status: true, approvalRuleId: true, reviewedBy: true, reviewedAt: true, approvedBy: true, approvedAt: true, rejectedReason: true, cancelReason: true }).parse(body);
+      const parsedLines = lines.map((l) => insertTemporaryLaborRequisitionLineSchema.omit({ requisitionId: true }).parse(l));
+      const created = await storage.createTemporaryLaborRequisition(
+        { ...data, requestedBy: user.fullName ?? user.username, createdAt: Date.now(), status: "draft" } as any,
+        parsedLines as any,
+      );
+      res.status(201).json(created);
+    } catch (err) { handleZodError(res, err); }
+  });
+  app.patch("/api/temporary-labor-requisitions/:id", requireModule("hr"), async (req, res) => {
+    try {
+      const { lines, ...body } = req.body as { lines?: any[] } & Record<string, any>;
+      const data = insertTemporaryLaborRequisitionSchema.partial().parse(body);
+      const parsedLines = Array.isArray(lines) ? lines.map((l) => insertTemporaryLaborRequisitionLineSchema.omit({ requisitionId: true }).parse(l)) : undefined;
+      const updated = await storage.updateTemporaryLaborRequisition(Number(req.params.id), data, parsedLines as any);
+      if (!updated) return res.status(404).json({ error: "Temporary labor requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to update temporary labor requisition" }); }
+  });
+  app.post("/api/temporary-labor-requisitions/:id/submit", requireModule("hr"), async (req, res) => {
+    try {
+      const updated = await storage.submitTemporaryLaborRequisition(Number(req.params.id));
+      if (!updated) return res.status(404).json({ error: "Temporary labor requisition not found" });
+      res.json(updated);
+      try {
+        const settings = await storage.getSettings();
+        await notifyApproversOfSubmission({ storage, settings, origin: buildOriginFromRequest(req) }, {
+          moduleKey: "hr", docType: "Temporary Labor Requisition", docNumber: updated.tlrNumber,
+          requestedBy: updated.requestedBy, purpose: updated.purpose, linkPath: "/temporary-labor-requisitions",
+        });
+      } catch (notifyErr) { console.error("Failed to send TLR submission notification:", notifyErr); }
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to submit temporary labor requisition" }); }
+  });
+  app.post("/api/temporary-labor-requisitions/:id/review", requireModule("hr"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const updated = await storage.reviewTemporaryLaborRequisition(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, user.fullName ?? user.username);
+      if (!updated) return res.status(404).json({ error: "Temporary labor requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to review temporary labor requisition" }); }
+  });
+  app.post("/api/temporary-labor-requisitions/:id/approve", requireModule("hr"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const result = await storage.approveTemporaryLaborRequisition(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, user.fullName ?? user.username);
+      res.json(result.requisition);
+      try {
+        const settings = await storage.getSettings();
+        await notifyRequesterOfDecision({ storage, settings, origin: buildOriginFromRequest(req) }, {
+          docType: "Temporary Labor Requisition", docNumber: result.requisition.tlrNumber, requestedBy: result.requisition.requestedBy,
+          decision: "approved", decidedBy: user.fullName ?? user.username, linkPath: "/temporary-labor-requisitions",
+        });
+      } catch (notifyErr) { console.error("Failed to send TLR approval notification:", notifyErr); }
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to approve temporary labor requisition" }); }
+  });
+  app.post("/api/temporary-labor-requisitions/:id/reject", requireModule("hr"), async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { reason } = req.body as { reason?: string };
+      if (!reason) return res.status(400).json({ error: "A rejection reason is required" });
+      const updated = await storage.rejectTemporaryLaborRequisition(Number(req.params.id), { id: user.id, isAdmin: user.isAdmin }, reason);
+      if (!updated) return res.status(404).json({ error: "Temporary labor requisition not found" });
+      res.json(updated);
+      try {
+        const settings = await storage.getSettings();
+        await notifyRequesterOfDecision({ storage, settings, origin: buildOriginFromRequest(req) }, {
+          docType: "Temporary Labor Requisition", docNumber: updated.tlrNumber, requestedBy: updated.requestedBy,
+          decision: "rejected", decidedBy: user.fullName ?? user.username, reason, linkPath: "/temporary-labor-requisitions",
+        });
+      } catch (notifyErr) { console.error("Failed to send TLR rejection notification:", notifyErr); }
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to reject temporary labor requisition" }); }
+  });
+  app.post("/api/temporary-labor-requisitions/:id/cancel", requireModule("hr"), async (req, res) => {
+    try {
+      const { reason } = req.body as { reason?: string };
+      if (!reason) return res.status(400).json({ error: "A cancellation reason is required" });
+      const updated = await storage.cancelTemporaryLaborRequisition(Number(req.params.id), reason);
+      if (!updated) return res.status(404).json({ error: "Temporary labor requisition not found" });
+      res.json(updated);
+    } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to cancel temporary labor requisition" }); }
+  });
 
   // ================= Phase 3: Accommodation guest ID capture =================
   app.get("/api/accommodation-bookings/:bookingId/identity-documents", requireModule("accommodation"), async (req, res) => {

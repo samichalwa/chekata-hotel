@@ -276,6 +276,11 @@ export const staff = pgTable("staff", {
   bankAccountNumber: text("bank_account_number"),
   bankBranch: text("bank_branch"),
   email: text("email"),
+  // ---- Phase 7 addition (additive-only) ----
+  // Set when this staff record was auto-created as a placeholder slot from an
+  // approved Temporary Labor Requisition line — lets HR trace which requisition
+  // authorized the hire and fill in the real name/rate. Null for normal hires.
+  temporaryLaborRequisitionLineId: integer("temporary_labor_requisition_line_id"),
 });
 
 export const insertStaffSchema = createInsertSchema(staff).omit({ id: true });
@@ -521,6 +526,7 @@ export const MODULE_KEYS = [
   "budgeting",
   "assets",
   "water-sales",
+  "hr",
 ] as const;
 export type ModuleKey = typeof MODULE_KEYS[number];
 
@@ -550,6 +556,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   budgeting: "Budgeting",
   assets: "Assets",
   "water-sales": "Water Sales",
+  hr: "HR: Temporary Labor Requisitions",
 };
 
 // Cosmetic grouping used both by the Settings > Users module-access checkboxes
@@ -561,7 +568,7 @@ export const MODULE_CATEGORY_GROUPS: { label: string; keys: ModuleKey[] }[] = [
   { label: "Operations", keys: ["dashboard", "accommodation", "maintenance"] },
   { label: "Facilities", keys: ["facilities", "movie-room", "bar-restaurant", "fnb-costing", "water-sales"] },
   { label: "Finance & Accounting", keys: ["finance", "budgeting", "documents", "expenses"] },
-  { label: "HR", keys: ["staff", "attendance", "leave", "payroll"] },
+  { label: "HR", keys: ["staff", "attendance", "leave", "payroll", "hr"] },
   { label: "Supply", keys: ["purchasing", "internal-requisitions", "inventory", "assets"] },
   { label: "Administration", keys: ["lists", "reports", "tenants", "system-admin"] },
 ];
@@ -587,7 +594,7 @@ export const PERMISSION_TABLE_LABELS: Record<PermissionTableKey, string> = {
 };
 
 // Document types the Approval Matrix can route. Grows in later phases
-export const APPROVAL_DOCUMENT_TYPES = ["payment_voucher", "purchase_requisition", "purchase_order", "internal_requisition", "leave_request"] as const;
+export const APPROVAL_DOCUMENT_TYPES = ["payment_voucher", "purchase_requisition", "purchase_order", "internal_requisition", "leave_request", "temporary_labor_requisition"] as const;
 export type ApprovalDocumentType = typeof APPROVAL_DOCUMENT_TYPES[number];
 export const APPROVAL_DOCUMENT_TYPE_LABELS: Record<ApprovalDocumentType, string> = {
   payment_voucher: "Payment Voucher",
@@ -595,6 +602,7 @@ export const APPROVAL_DOCUMENT_TYPE_LABELS: Record<ApprovalDocumentType, string>
   purchase_order: "Purchase Order",
   internal_requisition: "Internal Requisition",
   leave_request: "Leave Request",
+  temporary_labor_requisition: "Temporary Labor Requisition",
 };
 // Document types that route by KES amount band (minAmount/maxAmount on the
 // rule). internal_requisition is the one exception — it has no monetary
@@ -604,6 +612,9 @@ export const APPROVAL_DOCUMENT_TYPE_LABELS: Record<ApprovalDocumentType, string>
 // number of days requested rather than KES — admins can leave a single
 // unbounded (0..∞) rule for a flat, non-banded leave approval chain.
 export const APPROVAL_CATEGORY_ROUTED_TYPES: ApprovalDocumentType[] = ["internal_requisition"];
+// Document types whose amount band is worker-days/hours (headcount × duration)
+// rather than KES or a raw day count.
+export const APPROVAL_WORKER_DAYS_BANDED_TYPES: ApprovalDocumentType[] = ["temporary_labor_requisition"];
 
 // ---------- Finance: Chart of Accounts ----------
 export const ACCOUNT_TYPES = ["asset", "liability", "equity", "income", "expense"] as const;
@@ -774,8 +785,11 @@ export const approvalMatrixRules = pgTable("approval_matrix_rules", {
   name: text("name").notNull(), // admin-friendly label, e.g. "Payments up to 50,000"
   minAmount: doublePrecision("min_amount").notNull().default(0),
   maxAmount: doublePrecision("max_amount"), // null = unbounded — doublePrecision (not real) since approval bands for large capex/procurement can exceed float32's ~8.3M safe range
-  reviewerUserId: integer("reviewer_user_id"), // optional middle step
-  approverUserId: integer("approver_user_id").notNull(), // final approver; may also act as final if no reviewer set
+  reviewerUserId: integer("reviewer_user_id"), // optional middle step; ignored if reviewerPosition is set
+  // Nullable — a rule may instead authorize by position (approverPosition) rather
+  // than a fixed person. Exactly one of approverUserId/approverPosition should be
+  // set; enforced by insertApprovalMatrixRuleSchema's refinement below.
+  approverUserId: integer("approver_user_id"),
   // Only used for documentType values in APPROVAL_CATEGORY_ROUTED_TYPES (currently
   // internal_requisition). Free-text, matched case-insensitively against
   // inventoryItems.category. Null = a catch-all/wildcard rule for that document
@@ -783,8 +797,18 @@ export const approvalMatrixRules = pgTable("approval_matrix_rules", {
   // amount-banded document types, which use minAmount/maxAmount instead.
   itemCategory: text("item_category"),
   active: integer("active").notNull().default(1),
+  // ---- Phase 7 additions (additive-only) ----
+  // Dynamic, position-based routing: free text matched case-insensitively against
+  // staff.role (via the acting user's users.staffId link) instead of a fixed user id.
+  // When set, reviewerUserId/approverUserId for that stage are ignored. Any active
+  // user whose linked staff record's role matches qualifies — admins always bypass.
+  reviewerPosition: text("reviewer_position"),
+  approverPosition: text("approver_position"),
 });
-export const insertApprovalMatrixRuleSchema = createInsertSchema(approvalMatrixRules).omit({ id: true });
+export const insertApprovalMatrixRuleSchema = createInsertSchema(approvalMatrixRules).omit({ id: true }).refine(
+  (v) => v.approverUserId != null || (v.approverPosition != null && v.approverPosition.trim() !== ""),
+  { message: "Set either a final approver or an approver position", path: ["approverUserId"] },
+);
 export type InsertApprovalMatrixRule = z.infer<typeof insertApprovalMatrixRuleSchema>;
 export type ApprovalMatrixRule = typeof approvalMatrixRules.$inferSelect;
 
@@ -847,6 +871,11 @@ export const users = pgTable("users", {
   canAccessTest: integer("can_access_test").notNull().default(0), // Environment access: log in to the Test environment. Admins always bypass both checks.
   active: integer("active").notNull().default(1),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  // ---- Phase 7 addition (additive-only) ----
+  // Optional link to this login account's HR staff record — used to resolve
+  // position-based Approval Matrix rules (e.g. "only the Director may approve"),
+  // which match against staff.role rather than a fixed user id.
+  staffId: integer("staff_id"),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
@@ -1119,6 +1148,52 @@ export const internalRequisitionLines = pgTable("internal_requisition_lines", {
 export const insertInternalRequisitionLineSchema = createInsertSchema(internalRequisitionLines).omit({ id: true });
 export type InsertInternalRequisitionLine = z.infer<typeof insertInternalRequisitionLineSchema>;
 export type InternalRequisitionLine = typeof internalRequisitionLines.$inferSelect;
+
+// ---------- Temporary Labor Requisitions (Phase 7) ----------
+// Authorizes hiring temporary workers, per role, before they exist as staff
+// records. Goes through the same configurable Approval Matrix as PR/PO/IR/Leave.
+// Only users with the "hr" module may create one; the final approver is
+// resolved dynamically by position (staff.role), not a fixed user — see
+// approvalMatrixRules.approverPosition and assertApprovalActor in storage.ts.
+// Approving a TLR auto-creates blank placeholder staff records (one per
+// headcount unit per line) for HR to fill in with real names/rates.
+export const TLR_DURATION_UNITS = ["days", "hours"] as const;
+export type TlrDurationUnit = typeof TLR_DURATION_UNITS[number];
+export const TLR_STATUSES = ["draft", "pending_review", "pending_approval", "approved", "rejected", "cancelled"] as const;
+export type TlrStatus = typeof TLR_STATUSES[number];
+
+export const temporaryLaborRequisitions = pgTable("temporary_labor_requisitions", {
+  id: serial("id").primaryKey(),
+  tlrNumber: text("tlr_number").notNull().unique(),
+  requestedBy: text("requested_by").notNull(),
+  purpose: text("purpose").notNull(),
+  status: text("status").notNull().default("draft"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  approvalRuleId: integer("approval_rule_id"),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: bigint("reviewed_at", { mode: "number" }),
+  approvedBy: text("approved_by"),
+  approvedAt: bigint("approved_at", { mode: "number" }),
+  rejectedReason: text("rejected_reason"),
+  cancelReason: text("cancel_reason"),
+});
+export const insertTemporaryLaborRequisitionSchema = createInsertSchema(temporaryLaborRequisitions).omit({ id: true });
+export type InsertTemporaryLaborRequisition = z.infer<typeof insertTemporaryLaborRequisitionSchema>;
+export type TemporaryLaborRequisition = typeof temporaryLaborRequisitions.$inferSelect;
+
+export const temporaryLaborRequisitionLines = pgTable("temporary_labor_requisition_lines", {
+  id: serial("id").primaryKey(),
+  requisitionId: integer("requisition_id").notNull(),
+  role: text("role").notNull(), // free text, e.g. "Waiter", "Mason" — not linked to job-role master data
+  headcount: integer("headcount").notNull(),
+  durationValue: real("duration_value").notNull(),
+  durationUnit: text("duration_unit").notNull().default("days"), // days | hours
+  dateNeeded: text("date_needed"), // YYYY-MM-DD, when this role is needed from
+  notes: text("notes"),
+});
+export const insertTemporaryLaborRequisitionLineSchema = createInsertSchema(temporaryLaborRequisitionLines).omit({ id: true });
+export type InsertTemporaryLaborRequisitionLine = z.infer<typeof insertTemporaryLaborRequisitionLineSchema>;
+export type TemporaryLaborRequisitionLine = typeof temporaryLaborRequisitionLines.$inferSelect;
 
 export const loanReturns = pgTable("loan_returns", {
   id: serial("id").primaryKey(),

@@ -15,6 +15,7 @@ import {
   statutoryRateTables, payeBands, payrollRuns, payrollLines,
   budgetLines, assetCategories, assets, assetDepreciationSchedules,
   waterBucketPrices, waterSales,
+  temporaryLaborRequisitions, temporaryLaborRequisitionLines,
 } from '@shared/schema';
 import type {
   Room, InsertRoom,
@@ -82,6 +83,8 @@ import type {
   AssetDepreciationSchedule, InsertAssetDepreciationSchedule,
   WaterBucketPrice, InsertWaterBucketPrice,
   WaterSale, InsertWaterSale,
+  TemporaryLaborRequisition, InsertTemporaryLaborRequisition,
+  TemporaryLaborRequisitionLine, InsertTemporaryLaborRequisitionLine,
 } from '@shared/schema';
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -690,6 +693,31 @@ CREATE TABLE IF NOT EXISTS loan_returns (
   condition TEXT,
   notes TEXT
 );
+CREATE TABLE IF NOT EXISTS temporary_labor_requisitions (
+  id SERIAL PRIMARY KEY,
+  tlr_number TEXT NOT NULL UNIQUE,
+  requested_by TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_at BIGINT NOT NULL,
+  approval_rule_id INTEGER,
+  reviewed_by TEXT,
+  reviewed_at BIGINT,
+  approved_by TEXT,
+  approved_at BIGINT,
+  rejected_reason TEXT,
+  cancel_reason TEXT
+);
+CREATE TABLE IF NOT EXISTS temporary_labor_requisition_lines (
+  id SERIAL PRIMARY KEY,
+  requisition_id INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  headcount INTEGER NOT NULL,
+  duration_value REAL NOT NULL,
+  duration_unit TEXT NOT NULL DEFAULT 'days',
+  date_needed TEXT,
+  notes TEXT
+);
 CREATE TABLE IF NOT EXISTS guest_identity_documents (
   id SERIAL PRIMARY KEY,
   booking_id INTEGER NOT NULL,
@@ -1078,6 +1106,16 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await ensureColumn("payment_vouchers", "approval_rule_id", "INTEGER");
   await ensureColumn("payment_vouchers", "reviewed_at", "BIGINT");
   await ensureColumn("payment_vouchers", "approved_at", "BIGINT");
+
+  // ---- Phase 7 (Sept 2026): Temporary Labor Requisitions + position-based approval routing ----
+  await ensureColumn("users", "staff_id", "INTEGER");
+  await ensureColumn("staff", "temporary_labor_requisition_line_id", "INTEGER");
+  await ensureColumn("approval_matrix_rules", "reviewer_position", "TEXT");
+  await ensureColumn("approval_matrix_rules", "approver_position", "TEXT");
+  // Position-based rules have no fixed approver_user_id — relax the original NOT NULL
+  // constraint (idempotent: dropping an already-dropped NOT NULL is a no-op, no error).
+  await sql.unsafe(`ALTER TABLE approval_matrix_rules ALTER COLUMN approver_user_id DROP NOT NULL`);
+  await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('temporary_labor_requisition', 'TLR', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
 
   // ---- Water Sales (Sept 2026) ----
   // NOTE: postgres.js sends each tagged-template query as a single prepared statement,
@@ -1775,6 +1813,16 @@ export interface IStorage {
   issueInternalRequisition(id: number, issuedBy: string): Promise<InternalRequisition | undefined>;
   returnLoanItem(lineId: number, data: { quantityReturned: number; returnedBy: string; condition?: string; notes?: string }): Promise<LoanReturn>;
   cancelInternalRequisition(id: number, reason: string): Promise<InternalRequisition | undefined>;
+  listTemporaryLaborRequisitions(): Promise<TemporaryLaborRequisition[]>;
+  getTemporaryLaborRequisition(id: number): Promise<TemporaryLaborRequisition | undefined>;
+  getTemporaryLaborRequisitionLines(requisitionId: number): Promise<TemporaryLaborRequisitionLine[]>;
+  createTemporaryLaborRequisition(data: Omit<InsertTemporaryLaborRequisition, "tlrNumber">, lines: Omit<InsertTemporaryLaborRequisitionLine, "requisitionId">[]): Promise<TemporaryLaborRequisition>;
+  updateTemporaryLaborRequisition(id: number, data: Partial<InsertTemporaryLaborRequisition>, lines?: Omit<InsertTemporaryLaborRequisitionLine, "requisitionId">[]): Promise<TemporaryLaborRequisition | undefined>;
+  submitTemporaryLaborRequisition(id: number): Promise<TemporaryLaborRequisition | undefined>;
+  reviewTemporaryLaborRequisition(id: number, actor: ApprovalActor, reviewedBy: string): Promise<TemporaryLaborRequisition | undefined>;
+  approveTemporaryLaborRequisition(id: number, actor: ApprovalActor, approvedBy: string): Promise<{ requisition: TemporaryLaborRequisition; placeholderStaff: Staff[] }>;
+  rejectTemporaryLaborRequisition(id: number, actor: ApprovalActor, reason: string): Promise<TemporaryLaborRequisition | undefined>;
+  cancelTemporaryLaborRequisition(id: number, reason: string): Promise<TemporaryLaborRequisition | undefined>;
 
   // ================= Phase 3: Accommodation ID capture =================
   listGuestIdentityDocuments(bookingId: number): Promise<GuestIdentityDocument[]>;
@@ -2089,7 +2137,7 @@ export class DatabaseStorage implements IStorage {
     if (!current) return undefined;
     if (current.status !== "pending_review") throw new Error(`Cannot review a leave request that is ${current.status.replace("_", " ")}`);
     const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
-    this.assertApprovalActor(rule, "review", actor);
+    await this.assertApprovalActor(rule, "review", actor);
     return (await db.update(leaveRequests).set({ status: "pending_approval", reviewedBy, reviewedAt: Date.now() }).where(eq(leaveRequests.id, id)).returning())[0];
   }
   async decideLeaveRequest(id: number, actor: ApprovalActor, status: "approved" | "rejected", decidedBy: string, reason?: string) {
@@ -2103,7 +2151,7 @@ export class DatabaseStorage implements IStorage {
       }
     }
     const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
-    this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
+    await this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
     const updated = (await db.update(leaveRequests).set(
       status === "approved"
         ? { status, approvedBy: decidedBy, approvedAt: Date.now() }
@@ -2730,10 +2778,25 @@ export class DatabaseStorage implements IStorage {
   }
   // Shared identity guard for the review/approve steps of any approval-matrix-routed
   // document. Admins always pass. Otherwise the acting user's id must match the
-  // rule's reviewerUserId (stage "review") or approverUserId (stage "approve").
-  private assertApprovalActor(rule: ApprovalMatrixRule | undefined, stage: "review" | "approve", actor: { id: number; isAdmin: number }) {
+  // rule's reviewerUserId (stage "review") or approverUserId (stage "approve") —
+  // OR, for position-routed rules (reviewerPosition/approverPosition set), the
+  // acting user's linked staff record's role must match that position, case-
+  // insensitively (e.g. "only the Director may approve", independent of who
+  // currently holds that title).
+  private async assertApprovalActor(rule: ApprovalMatrixRule | undefined, stage: "review" | "approve", actor: { id: number; isAdmin: number }) {
     if (actor.isAdmin) return;
     if (!rule) throw new Error("No approval rule is linked to this request — an administrator must reconfigure the Approval Matrix");
+    const requiredPosition = stage === "review" ? rule.reviewerPosition : rule.approverPosition;
+    if (requiredPosition && requiredPosition.trim()) {
+      const [actingUser] = await db.select().from(users).where(eq(users.id, actor.id));
+      const staffId = actingUser?.staffId;
+      const actingStaff = staffId != null ? (await db.select().from(staff).where(eq(staff.id, staffId)))[0] : undefined;
+      const actualRole = (actingStaff?.role ?? "").trim().toLowerCase();
+      if (!actingStaff || actualRole !== requiredPosition.trim().toLowerCase()) {
+        throw new Error(`Only a staff member in the "${requiredPosition}" position may ${stage} this request`);
+      }
+      return;
+    }
     const requiredUserId = stage === "review" ? rule.reviewerUserId : rule.approverUserId;
     if (requiredUserId != null && actor.id !== requiredUserId) {
       throw new Error(`You are not the designated ${stage === "review" ? "reviewer" : "approver"} for this request`);
@@ -3035,7 +3098,7 @@ export class DatabaseStorage implements IStorage {
     if (!current) return undefined;
     if (current.status !== "pending_review") throw new Error(`Cannot review a purchase requisition that is ${current.status.replace("_", " ")}`);
     const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
-    this.assertApprovalActor(rule, "review", actor);
+    await this.assertApprovalActor(rule, "review", actor);
     return (await db.update(purchaseRequisitions).set({ status: "pending_approval", reviewedBy, reviewedAt: Date.now() }).where(eq(purchaseRequisitions.id, id)).returning())[0];
   }
   async approvePurchaseRequisition(id: number, actor: ApprovalActor, approvedBy: string, poDetails: { supplierId: number; payableAccountId: number; expenseAccountId?: number | null }) {
@@ -3045,7 +3108,7 @@ export class DatabaseStorage implements IStorage {
       throw new Error(`Cannot approve a purchase requisition that is ${current.status.replace("_", " ")}`);
     }
     const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
-    this.assertApprovalActor(rule, "approve", actor);
+    await this.assertApprovalActor(rule, "approve", actor);
     const lines = await this.getPurchaseRequisitionLines(id);
     if (lines.length === 0) throw new Error("Cannot approve a purchase requisition with no lines");
     if (current.type === "direct" && !poDetails.expenseAccountId) {
@@ -3093,7 +3156,7 @@ export class DatabaseStorage implements IStorage {
       throw new Error(`Cannot reject a purchase requisition that is ${current.status.replace("_", " ")}`);
     }
     const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
-    this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
+    await this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
     return (await db.update(purchaseRequisitions).set({ status: "rejected", rejectedReason: reason }).where(eq(purchaseRequisitions.id, id)).returning())[0];
   }
   async cancelPurchaseRequisition(id: number, reason: string) {
@@ -3159,7 +3222,7 @@ export class DatabaseStorage implements IStorage {
     if (!current) return undefined;
     if (current.status !== "pending_review") throw new Error(`Cannot review a purchase order that is ${current.status.replace("_", " ")}`);
     const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
-    this.assertApprovalActor(rule, "review", actor);
+    await this.assertApprovalActor(rule, "review", actor);
     return (await db.update(purchaseOrders).set({ status: "pending_approval", reviewedBy, reviewedAt: Date.now() }).where(eq(purchaseOrders.id, id)).returning())[0];
   }
   async approvePurchaseOrder(id: number, actor: ApprovalActor, approvedBy: string) {
@@ -3169,7 +3232,7 @@ export class DatabaseStorage implements IStorage {
       throw new Error(`Cannot approve a purchase order that is ${current.status.replace("_", " ")}`);
     }
     const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
-    this.assertApprovalActor(rule, "approve", actor);
+    await this.assertApprovalActor(rule, "approve", actor);
     return (await db.update(purchaseOrders).set({ status: "approved", approvedBy, approvedAt: Date.now() }).where(eq(purchaseOrders.id, id)).returning())[0];
   }
   async rejectPurchaseOrder(id: number, actor: ApprovalActor, reason: string) {
@@ -3179,7 +3242,7 @@ export class DatabaseStorage implements IStorage {
       throw new Error(`Cannot reject a purchase order that is ${current.status.replace("_", " ")}`);
     }
     const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
-    this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
+    await this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
     return (await db.update(purchaseOrders).set({ status: "rejected", rejectedReason: reason }).where(eq(purchaseOrders.id, id)).returning())[0];
   }
   async cancelPurchaseOrder(id: number, reason: string) {
@@ -3370,7 +3433,7 @@ export class DatabaseStorage implements IStorage {
     if (!current) return undefined;
     if (current.status !== "pending_review") throw new Error(`Cannot review an internal requisition that is ${current.status.replace("_", " ")}`);
     const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
-    this.assertApprovalActor(rule, "review", actor);
+    await this.assertApprovalActor(rule, "review", actor);
     return (await db.update(internalRequisitions).set({ status: "pending_approval", reviewedBy, reviewedAt: Date.now() }).where(eq(internalRequisitions.id, id)).returning())[0];
   }
   async approveInternalRequisition(id: number, actor: ApprovalActor, approvedBy: string) {
@@ -3380,7 +3443,7 @@ export class DatabaseStorage implements IStorage {
       throw new Error(`Cannot approve an internal requisition that is ${current.status.replace("_", " ")}`);
     }
     const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
-    this.assertApprovalActor(rule, "approve", actor);
+    await this.assertApprovalActor(rule, "approve", actor);
     return (await db.update(internalRequisitions).set({ status: "approved", approvedBy, approvedAt: Date.now() }).where(eq(internalRequisitions.id, id)).returning())[0];
   }
   async rejectInternalRequisition(id: number, actor: ApprovalActor, reason: string) {
@@ -3390,7 +3453,7 @@ export class DatabaseStorage implements IStorage {
       throw new Error(`Cannot reject an internal requisition that is ${current.status.replace("_", " ")}`);
     }
     const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
-    this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
+    await this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
     return (await db.update(internalRequisitions).set({ status: "rejected", rejectedReason: reason }).where(eq(internalRequisitions.id, id)).returning())[0];
   }
   async issueInternalRequisition(id: number, issuedBy: string) {
@@ -3487,6 +3550,135 @@ export class DatabaseStorage implements IStorage {
     if (current.status === "issued") throw new Error("Cannot cancel an internal requisition that has already been issued");
     if (current.status === "cancelled") throw new Error("This internal requisition is already cancelled");
     return (await db.update(internalRequisitions).set({ status: "cancelled", cancelReason: reason }).where(eq(internalRequisitions.id, id)).returning())[0];
+  }
+
+  // ================= Phase 7: Temporary Labor Requisitions =================
+  // Authorizes hiring temporary workers, per role, ahead of time. Requester must
+  // hold the "hr" module (enforced in routes.ts via requireModule). Routed through
+  // the same Approval Matrix as PR/PO/IR/Leave, banded on total worker-days/hours
+  // (headcount × duration summed across all lines, hours normalized to a day-
+  // equivalent count is NOT performed — days and hours are summed as raw units per
+  // the confirmed "total worker-days/hours" metric). The final approver is almost
+  // always resolved dynamically by position (e.g. "Director") rather than a fixed
+  // user — see assertApprovalActor. Approving auto-creates blank placeholder staff
+  // records, one per headcount unit per line, for HR to fill in with real names.
+  async listTemporaryLaborRequisitions() {
+    return db.select().from(temporaryLaborRequisitions).orderBy(desc(temporaryLaborRequisitions.id));
+  }
+  async getTemporaryLaborRequisition(id: number) {
+    return (await db.select().from(temporaryLaborRequisitions).where(eq(temporaryLaborRequisitions.id, id)))[0];
+  }
+  async getTemporaryLaborRequisitionLines(requisitionId: number) {
+    return db.select().from(temporaryLaborRequisitionLines).where(eq(temporaryLaborRequisitionLines.requisitionId, requisitionId));
+  }
+  async createTemporaryLaborRequisition(data: Omit<InsertTemporaryLaborRequisition, "tlrNumber">, lines: Omit<InsertTemporaryLaborRequisitionLine, "requisitionId">[]) {
+    if (!lines || lines.length === 0) throw new Error("A temporary labor requisition needs at least one role line");
+    for (const line of lines) {
+      if (!line.role || !line.role.trim()) throw new Error("Every line needs a role");
+      if (!line.headcount || line.headcount < 1) throw new Error(`"${line.role}" needs a headcount of at least 1`);
+      if (!line.durationValue || line.durationValue <= 0) throw new Error(`"${line.role}" needs a duration greater than 0`);
+    }
+    const tlrNumber = await this.getNextSequenceNumber("temporary_labor_requisition");
+    return db.transaction(async (tx) => {
+      const [created] = await tx.insert(temporaryLaborRequisitions).values({ ...data, tlrNumber, status: "draft" } as InsertTemporaryLaborRequisition).returning();
+      for (const line of lines) {
+        await tx.insert(temporaryLaborRequisitionLines).values({ ...line, requisitionId: created.id });
+      }
+      return created;
+    });
+  }
+  async updateTemporaryLaborRequisition(id: number, data: Partial<InsertTemporaryLaborRequisition>, lines?: Omit<InsertTemporaryLaborRequisitionLine, "requisitionId">[]) {
+    const current = await this.getTemporaryLaborRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "draft") throw new Error(`Cannot edit a temporary labor requisition that is ${current.status.replace("_", " ")}`);
+    return db.transaction(async (tx) => {
+      const [updated] = await tx.update(temporaryLaborRequisitions).set(data).where(eq(temporaryLaborRequisitions.id, id)).returning();
+      if (lines) {
+        await tx.delete(temporaryLaborRequisitionLines).where(eq(temporaryLaborRequisitionLines.requisitionId, id));
+        for (const line of lines) {
+          await tx.insert(temporaryLaborRequisitionLines).values({ ...line, requisitionId: id });
+        }
+      }
+      return updated;
+    });
+  }
+  async submitTemporaryLaborRequisition(id: number) {
+    const current = await this.getTemporaryLaborRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "draft") throw new Error(`Only a draft temporary labor requisition can be submitted (this one is ${current.status.replace("_", " ")})`);
+    const lines = await this.getTemporaryLaborRequisitionLines(id);
+    if (lines.length === 0) throw new Error("Cannot submit a temporary labor requisition with no lines");
+    const workerUnits = lines.reduce((s, l) => s + l.headcount * l.durationValue, 0);
+    const rule = await this.resolveApprovalRuleByAmount("temporary_labor_requisition", workerUnits);
+    if (!rule) throw new Error("No approval rule is configured for this many worker-days/hours — ask an administrator to add one in the Approval Matrix before submitting");
+    const hasReviewStage = rule.reviewerUserId != null || !!(rule.reviewerPosition && rule.reviewerPosition.trim());
+    const nextStatus = hasReviewStage ? "pending_review" : "pending_approval";
+    return (await db.update(temporaryLaborRequisitions).set({ status: nextStatus, approvalRuleId: rule.id }).where(eq(temporaryLaborRequisitions.id, id)).returning())[0];
+  }
+  async reviewTemporaryLaborRequisition(id: number, actor: ApprovalActor, reviewedBy: string) {
+    const current = await this.getTemporaryLaborRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "pending_review") throw new Error(`Cannot review a temporary labor requisition that is ${current.status.replace("_", " ")}`);
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    await this.assertApprovalActor(rule, "review", actor);
+    return (await db.update(temporaryLaborRequisitions).set({ status: "pending_approval", reviewedBy, reviewedAt: Date.now() }).where(eq(temporaryLaborRequisitions.id, id)).returning())[0];
+  }
+  // Approving creates one blank placeholder staff record per headcount unit per
+  // line (e.g. headcount 3 on "Waiter" → "Waiter #1", "Waiter #2", "Waiter #3"),
+  // tagged with employmentType "temporary" and the day/hour rate field matching
+  // the line's duration unit left blank for HR to fill in alongside the real name.
+  async approveTemporaryLaborRequisition(id: number, actor: ApprovalActor, approvedBy: string) {
+    const current = await this.getTemporaryLaborRequisition(id);
+    if (!current) throw new Error("Temporary labor requisition not found");
+    if (current.status !== "pending_approval") {
+      throw new Error(`Cannot approve a temporary labor requisition that is ${current.status.replace("_", " ")}`);
+    }
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    await this.assertApprovalActor(rule, "approve", actor);
+    const lines = await this.getTemporaryLaborRequisitionLines(id);
+    if (lines.length === 0) throw new Error("Cannot approve a temporary labor requisition with no lines");
+    return db.transaction(async (tx) => {
+      const [updated] = await tx.update(temporaryLaborRequisitions).set({
+        status: "approved", approvedBy, approvedAt: Date.now(),
+      }).where(eq(temporaryLaborRequisitions.id, id)).returning();
+      const createdStaff: Staff[] = [];
+      for (const line of lines) {
+        for (let n = 1; n <= line.headcount; n++) {
+          const [placeholder] = await tx.insert(staff).values({
+            name: `${line.role} #${n}`,
+            role: line.role,
+            department: "other",
+            salary: 0,
+            employmentType: "temporary",
+            dayRate: line.durationUnit === "days" ? 0 : null,
+            hourRate: line.durationUnit === "hours" ? 0 : null,
+            status: "active",
+            hireDate: line.dateNeeded ?? null,
+            notes: `Auto-created placeholder from Temporary Labor Requisition ${current.tlrNumber} — fill in real name, ID and rate.`,
+            temporaryLaborRequisitionLineId: line.id,
+          } as InsertStaff).returning();
+          createdStaff.push(placeholder);
+        }
+      }
+      return { requisition: updated, placeholderStaff: createdStaff };
+    });
+  }
+  async rejectTemporaryLaborRequisition(id: number, actor: ApprovalActor, reason: string) {
+    const current = await this.getTemporaryLaborRequisition(id);
+    if (!current) return undefined;
+    if (current.status !== "pending_approval" && current.status !== "pending_review") {
+      throw new Error(`Cannot reject a temporary labor requisition that is ${current.status.replace("_", " ")}`);
+    }
+    const rule = current.approvalRuleId ? await this.getApprovalMatrixRule(current.approvalRuleId) : undefined;
+    await this.assertApprovalActor(rule, current.status === "pending_review" ? "review" : "approve", actor);
+    return (await db.update(temporaryLaborRequisitions).set({ status: "rejected", rejectedReason: reason }).where(eq(temporaryLaborRequisitions.id, id)).returning())[0];
+  }
+  async cancelTemporaryLaborRequisition(id: number, reason: string) {
+    const current = await this.getTemporaryLaborRequisition(id);
+    if (!current) return undefined;
+    if (current.status === "approved") throw new Error("Cannot cancel a temporary labor requisition that has already been approved — the placeholder staff slots it created must be handled on the Staff page instead");
+    if (current.status === "cancelled") throw new Error("This temporary labor requisition is already cancelled");
+    return (await db.update(temporaryLaborRequisitions).set({ status: "cancelled", cancelReason: reason }).where(eq(temporaryLaborRequisitions.id, id)).returning())[0];
   }
 
   // ================= Phase 3: Accommodation ID capture =================

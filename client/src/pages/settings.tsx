@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
-import type { Settings, Tax, SafeUser, ModuleKey } from "@shared/schema";
+import type { Settings, Tax, SafeUser, ModuleKey, Staff } from "@shared/schema";
 import { MODULE_KEYS, MODULE_LABELS, MODULE_CATEGORY_GROUPS } from "@shared/schema";
 
 const settingsFormSchema = z.object({
@@ -561,6 +561,7 @@ const userFormSchema = z.object({
   canAdjustInventory: z.boolean(),
   canAccessLive: z.boolean(),
   canAccessTest: z.boolean(),
+  staffId: z.number().nullable().optional(),
 }).refine((v) => v.isAdmin || STAFF_EMAIL_REGEX.test(v.username), {
   message: "Staff accounts must use a @thechekata.com email address",
   path: ["username"],
@@ -585,9 +586,12 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
           canManageTablesList: !!user.canManageTablesList, canManageMenuItemsList: !!user.canManageMenuItemsList,
           canCloseMaintenanceIssues: !!user.canCloseMaintenanceIssues, canAdjustInventory: !!user.canAdjustInventory,
           canAccessLive: user.canAccessLive === undefined ? true : !!user.canAccessLive, canAccessTest: !!user.canAccessTest,
+          staffId: user.staffId ?? null,
         }
-      : { fullName: "", username: "", password: "", isAdmin: false, active: true, permissions: [], canEditMovieBookings: false, canManageTablesList: false, canManageMenuItemsList: false, canCloseMaintenanceIssues: false, canAdjustInventory: false, canAccessLive: true, canAccessTest: false },
+      : { fullName: "", username: "", password: "", isAdmin: false, active: true, permissions: [], canEditMovieBookings: false, canManageTablesList: false, canManageMenuItemsList: false, canCloseMaintenanceIssues: false, canAdjustInventory: false, canAccessLive: true, canAccessTest: false, staffId: null },
   });
+
+  const { data: staffList = [] } = useQuery<Staff[]>({ queryKey: ["/api/staff"] });
 
   const isAdminWatch = form.watch("isAdmin");
   const permissionsWatch = form.watch("permissions");
@@ -688,6 +692,27 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
                 </FormItem>
               )} />
             )}
+            <FormField control={form.control} name="staffId" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Linked HR staff record</FormLabel>
+                <FormDescription>Links this login to an HR staff record so position-based approvals (e.g. "Director") can be resolved. Optional.</FormDescription>
+                <Select
+                  value={field.value != null ? String(field.value) : "none"}
+                  onValueChange={(v) => field.onChange(v === "none" ? null : Number(v))}
+                >
+                  <FormControl>
+                    <SelectTrigger data-testid="select-user-staff-link"><SelectValue placeholder="Not linked" /></SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value="none">Not linked</SelectItem>
+                    {staffList.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>{s.name} — {s.role}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )} />
             {hasMovieRoomAccess && (
               <FormField control={form.control} name="canEditMovieBookings" render={({ field }) => (
                 <FormItem className="flex items-center justify-between rounded-md border border-border p-3">
