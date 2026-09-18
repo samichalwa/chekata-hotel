@@ -42,7 +42,7 @@ import { sendSms } from "./sms";
 import { saveBase64Upload, UploadValidationError, UPLOADS_ROOT, TEST_UPLOADS_ROOT } from "./uploads";
 import { runTenantBillingCycle } from "./billing";
 import express from "express";
-import { buildReportsWorkbook, REPORT_SHEET_LABELS, type ReportSheetKey } from "./reports-excel";
+import { buildReportsWorkbook, buildFinanceReportsWorkbook, REPORT_SHEET_LABELS, type ReportSheetKey, type FinanceReportKey } from "./reports-excel";
 import { buildAttendanceTemplateWorkbook } from "./attendance-template";
 import { parseAttendanceWorkbook } from "./attendance-import";
 import {
@@ -1616,6 +1616,31 @@ export async function registerRoutes(
   app.get("/api/finance/reports/balance-sheet", requireModule("finance"), async (req, res) => {
     const asOf = typeof req.query.asOf === "string" && req.query.asOf ? req.query.asOf : undefined;
     res.json(await storage.getBalanceSheet(asOf));
+  });
+  app.get("/api/finance/reports/export", requireModule("finance"), async (req, res) => {
+    try {
+      const asOf = typeof req.query.asOf === "string" && req.query.asOf ? req.query.asOf : undefined;
+      const from = typeof req.query.from === "string" && req.query.from ? req.query.from : undefined;
+      const to = typeof req.query.to === "string" && req.query.to ? req.query.to : undefined;
+      const validSections: FinanceReportKey[] = ["trial-balance", "profit-loss", "balance-sheet", "general-ledger"];
+      const sectionsParam = typeof req.query.sections === "string" ? req.query.sections : "";
+      const sections = sectionsParam.split(",").map((s) => s.trim()).filter((s): s is FinanceReportKey => (validSections as string[]).includes(s));
+      if (sections.length === 0) {
+        return res.status(400).json({ error: "Select at least one report to export (sections=trial-balance,profit-loss,balance-sheet,general-ledger)." });
+      }
+
+      const workbook = await buildFinanceReportsWorkbook(storage, { sections, asOf, from, to });
+      const label = sections.length === validSections.length ? "Financial-Reports" : sections.map((s) => s.replace(/[^a-zA-Z0-9]+/g, "-")).join("_");
+      const dateLabel = asOf ? `_as-of_${asOf}` : from || to ? `_${from ?? "start"}_to_${to ?? "today"}` : "";
+      const filename = `Chekata-${label}${dateLabel}.xlsx`;
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Failed to generate financial report export" });
+    }
   });
 
   // ================= System Administration =================

@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Pencil, Trash2, Wallet, BookOpen, Landmark, Receipt, FileBarChart, Ban, CheckCircle2, CalendarRange, Lock, LockOpen } from "lucide-react";
+import { Plus, Pencil, Trash2, Wallet, BookOpen, Landmark, Receipt, FileBarChart, Ban, CheckCircle2, CalendarRange, Lock, LockOpen, Download } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,6 +15,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -807,6 +808,73 @@ function PaymentVouchersTab() {
 }
 
 // ================= Reports =================
+type FinanceReportKey = "trial-balance" | "profit-loss" | "balance-sheet" | "general-ledger";
+const FINANCE_REPORT_LABELS: Record<FinanceReportKey, string> = {
+  "trial-balance": "Trial Balance",
+  "profit-loss": "Profit & Loss",
+  "balance-sheet": "Balance Sheet",
+  "general-ledger": "General Ledger",
+};
+
+function FinanceExportPanel({ asOf, from, to }: { asOf: string; from: string; to: string }) {
+  const [selected, setSelected] = useState<Set<FinanceReportKey>>(
+    new Set<FinanceReportKey>(["trial-balance", "profit-loss", "balance-sheet", "general-ledger"])
+  );
+
+  const toggle = (key: FinanceReportKey) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const exportUrl = () => {
+    const params = new URLSearchParams();
+    params.set("sections", Array.from(selected).join(","));
+    if (selected.has("trial-balance") || selected.has("balance-sheet")) params.set("asOf", asOf);
+    if (selected.has("profit-loss") || selected.has("general-ledger")) { params.set("from", from); params.set("to", to); }
+    return `/api/finance/reports/export?${params.toString()}`;
+  };
+
+  const periodNote = () => {
+    const parts: string[] = [];
+    if (selected.has("trial-balance") || selected.has("balance-sheet")) parts.push(`as of ${asOf}`);
+    if (selected.has("profit-loss") || selected.has("general-ledger")) parts.push(`${from} to ${to}`);
+    return parts.length > 0 ? `Covers: ${parts.join(" \u00b7 ")}` : "Select at least one report to export.";
+  };
+
+  return (
+    <Card className="p-4 space-y-3" data-testid="card-finance-export">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h3 className="font-semibold">Export financial reports (.xlsx)</h3>
+          <p className="text-sm text-muted-foreground mt-0.5">Choose which statements to include \u2014 each uses the date shown on its card below.</p>
+        </div>
+        <Button size="sm" disabled={selected.size === 0} asChild={selected.size > 0} data-testid="button-export-finance-reports">
+          {selected.size > 0 ? (
+            <a href={exportUrl()}>
+              <Download className="h-3.5 w-3.5 mr-1.5" />
+              Export selected ({selected.size})
+            </a>
+          ) : (
+            <span><Download className="h-3.5 w-3.5 mr-1.5" />Export selected (0)</span>
+          )}
+        </Button>
+      </div>
+      <div className="flex flex-wrap gap-4">
+        {(Object.keys(FINANCE_REPORT_LABELS) as FinanceReportKey[]).map((key) => (
+          <label key={key} className="flex items-center gap-2 text-sm cursor-pointer">
+            <Checkbox checked={selected.has(key)} onCheckedChange={() => toggle(key)} data-testid={`checkbox-export-${key}`} />
+            {FINANCE_REPORT_LABELS[key]}
+          </label>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">{periodNote()}</p>
+    </Card>
+  );
+}
+
 function ReportsTab() {
   const [asOf, setAsOf] = useState(todayISO());
   const [from, setFrom] = useState(todayISO().slice(0, 8) + "01");
@@ -817,6 +885,8 @@ function ReportsTab() {
 
   return (
     <div className="space-y-6">
+      <FinanceExportPanel asOf={asOf} from={from} to={to} />
+
       <Card className="p-4 space-y-4">
         <div className="flex items-center gap-3">
           <h3 className="font-semibold">Trial Balance</h3>

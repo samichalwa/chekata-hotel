@@ -745,6 +745,202 @@ async function buildAssetsSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelNa
   autosizeColumns(ws, [12, 24, 18, 16, 16, 16, 20, 18, 14, 18]);
 }
 
+async function buildTrialBalanceSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, asOf?: string) {
+  const ws = wb.addWorksheet("Trial Balance");
+  addTitleBlock(ws, hotelName, `Trial Balance${asOf ? ` (as of ${asOf})` : ""}`, undefined, undefined, "D");
+  ws.getCell("A2").value = asOf ? `As of ${asOf}` : "All posted entries to date";
+  const cols = ["Code", "Account", "Debit (KES)", "Credit (KES)"];
+  const header = ws.addRow(cols);
+  styleHeaderRow(header);
+
+  const rows = await storage.getTrialBalance(asOf);
+  let totalDebit = 0;
+  let totalCredit = 0;
+  rows.forEach((r: any) => {
+    const debit = r.balance > 0 ? r.balance : 0;
+    const credit = r.balance < 0 ? -r.balance : 0;
+    totalDebit += debit;
+    totalCredit += credit;
+    const row = ws.addRow([r.code, r.name, debit || "", credit || ""]);
+    [3, 4].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
+  });
+
+  if (rows.length === 0) {
+    ws.addRow(["No posted journal entries found.", "", "", ""]);
+  } else {
+    const totalsRow = ws.addRow(["", "Total", Math.round(totalDebit), Math.round(totalCredit)]);
+    [3, 4].forEach((c) => { totalsRow.getCell(c).numFmt = KES_FMT; totalsRow.getCell(c).alignment = { horizontal: "right" }; });
+    styleTotalsRow(totalsRow);
+  }
+
+  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: cols.length } };
+  ws.views = [{ state: "frozen", ySplit: 4 }];
+  autosizeColumns(ws, [12, 30, 18, 18]);
+}
+
+async function buildProfitAndLossSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, from?: string, to?: string) {
+  const ws = wb.addWorksheet("Profit & Loss");
+  addTitleBlock(ws, hotelName, "Profit & Loss", from, to, "C");
+  const pnl = await storage.getProfitAndLoss(from, to);
+
+  const incomeHeader = ws.addRow(["Income", "", "Amount (KES)"]);
+  styleHeaderRow(incomeHeader);
+  pnl.income.forEach((l: any) => {
+    const row = ws.addRow([l.code ?? "", l.name, l.amount]);
+    row.getCell(3).numFmt = KES_FMT; row.getCell(3).alignment = { horizontal: "right" };
+  });
+  const totalIncomeRow = ws.addRow(["", "Total income", pnl.totalIncome]);
+  totalIncomeRow.getCell(3).numFmt = KES_FMT; totalIncomeRow.getCell(3).alignment = { horizontal: "right" };
+  styleTotalsRow(totalIncomeRow);
+
+  ws.addRow([]);
+  const expenseHeader = ws.addRow(["Expenses", "", "Amount (KES)"]);
+  styleHeaderRow(expenseHeader);
+  pnl.expense.forEach((l: any) => {
+    const row = ws.addRow([l.code ?? "", l.name, l.amount]);
+    row.getCell(3).numFmt = KES_FMT; row.getCell(3).alignment = { horizontal: "right" };
+  });
+  const totalExpenseRow = ws.addRow(["", "Total expenses", pnl.totalExpense]);
+  totalExpenseRow.getCell(3).numFmt = KES_FMT; totalExpenseRow.getCell(3).alignment = { horizontal: "right" };
+  styleTotalsRow(totalExpenseRow);
+
+  ws.addRow([]);
+  const netRow = ws.addRow(["", "Net profit", pnl.netProfit]);
+  netRow.getCell(3).numFmt = KES_FMT; netRow.getCell(3).alignment = { horizontal: "right" };
+  netRow.eachCell((c) => { c.font = { bold: true, size: 12 }; });
+  styleTotalsRow(netRow);
+
+  autosizeColumns(ws, [10, 30, 20]);
+}
+
+async function buildBalanceSheetSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, asOf?: string) {
+  const ws = wb.addWorksheet("Balance Sheet");
+  addTitleBlock(ws, hotelName, `Balance Sheet${asOf ? ` (as of ${asOf})` : ""}`, undefined, undefined, "C");
+  ws.getCell("A2").value = asOf ? `As of ${asOf}` : "All posted entries to date";
+  const bs = await storage.getBalanceSheet(asOf);
+
+  const assetsHeader = ws.addRow(["Assets", "", "Amount (KES)"]);
+  styleHeaderRow(assetsHeader);
+  bs.assets.forEach((l: any) => {
+    const row = ws.addRow([l.code ?? "", l.name, l.balance]);
+    row.getCell(3).numFmt = KES_FMT; row.getCell(3).alignment = { horizontal: "right" };
+  });
+  const totalAssetsRow = ws.addRow(["", "Total assets", bs.totalAssets]);
+  totalAssetsRow.getCell(3).numFmt = KES_FMT; totalAssetsRow.getCell(3).alignment = { horizontal: "right" };
+  styleTotalsRow(totalAssetsRow);
+
+  ws.addRow([]);
+  const liabHeader = ws.addRow(["Liabilities", "", "Amount (KES)"]);
+  styleHeaderRow(liabHeader);
+  bs.liabilities.forEach((l: any) => {
+    const row = ws.addRow([l.code ?? "", l.name, l.balance]);
+    row.getCell(3).numFmt = KES_FMT; row.getCell(3).alignment = { horizontal: "right" };
+  });
+  const totalLiabRow = ws.addRow(["", "Total liabilities", bs.totalLiabilities]);
+  totalLiabRow.getCell(3).numFmt = KES_FMT; totalLiabRow.getCell(3).alignment = { horizontal: "right" };
+  styleTotalsRow(totalLiabRow);
+
+  ws.addRow([]);
+  const equityHeader = ws.addRow(["Equity", "", "Amount (KES)"]);
+  styleHeaderRow(equityHeader);
+  bs.equity.forEach((l: any) => {
+    const row = ws.addRow([l.code ?? "", l.name, l.balance]);
+    row.getCell(3).numFmt = KES_FMT; row.getCell(3).alignment = { horizontal: "right" };
+  });
+  const retainedRow = ws.addRow(["", "Retained earnings (net income to date)", bs.retainedEarnings]);
+  retainedRow.getCell(3).numFmt = KES_FMT; retainedRow.getCell(3).alignment = { horizontal: "right" };
+  const totalEquityRow = ws.addRow(["", "Total equity", bs.totalEquity]);
+  totalEquityRow.getCell(3).numFmt = KES_FMT; totalEquityRow.getCell(3).alignment = { horizontal: "right" };
+  styleTotalsRow(totalEquityRow);
+
+  ws.addRow([]);
+  const totalRow = ws.addRow(["", "Total liabilities & equity", bs.totalLiabilitiesAndEquity]);
+  totalRow.getCell(3).numFmt = KES_FMT; totalRow.getCell(3).alignment = { horizontal: "right" };
+  totalRow.eachCell((c) => { c.font = { bold: true, size: 12 }; });
+  styleTotalsRow(totalRow);
+
+  autosizeColumns(ws, [10, 34, 20]);
+}
+
+async function buildGeneralLedgerSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, from?: string, to?: string) {
+  const ws = wb.addWorksheet("General Ledger");
+  addTitleBlock(ws, hotelName, "General Ledger", from, to, "F");
+  const cols = ["Date", "Entry #", "Description", "Debit (KES)", "Credit (KES)", "Balance (KES)"];
+  const header = ws.addRow(cols);
+  styleHeaderRow(header);
+
+  const { lines, openingBalances } = await storage.getGeneralLedger(from, to);
+
+  const byAccount = new Map<string, { name: string; rows: typeof lines }>();
+  for (const l of lines) {
+    if (!byAccount.has(l.accountCode)) byAccount.set(l.accountCode, { name: l.accountName, rows: [] });
+    byAccount.get(l.accountCode)!.rows.push(l);
+  }
+
+  const accountCodes = Array.from(byAccount.keys()).sort();
+  if (accountCodes.length === 0) {
+    ws.addRow(["No posted journal entries in this period.", "", "", "", "", ""]);
+  }
+
+  for (const code of accountCodes) {
+    const { name, rows } = byAccount.get(code)!;
+    const opening = openingBalances.get(code) ?? 0;
+
+    const acctHeaderRow = ws.addRow([`${code} — ${name}`, "", "", "", "", ""]);
+    ws.mergeCells(`A${acctHeaderRow.number}:C${acctHeaderRow.number}`);
+    acctHeaderRow.eachCell((c) => { c.font = { bold: true }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTAL_ROW } }; });
+
+    let running = opening;
+    if (from) {
+      const openRow = ws.addRow(["", "", "Opening balance", "", "", Math.round(opening)]);
+      openRow.getCell(6).numFmt = KES_FMT; openRow.getCell(6).alignment = { horizontal: "right" };
+      openRow.font = { italic: true, color: { argb: MUTED } };
+    }
+
+    let acctDebit = 0;
+    let acctCredit = 0;
+    for (const l of rows) {
+      running += l.debit - l.credit;
+      acctDebit += l.debit;
+      acctCredit += l.credit;
+      const row = ws.addRow([l.entryDate, l.entryNumber, l.description, l.debit || "", l.credit || "", Math.round(running)]);
+      [4, 5, 6].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
+    }
+
+    const closingRow = ws.addRow(["", "", "Closing balance", Math.round(acctDebit), Math.round(acctCredit), Math.round(running)]);
+    [4, 5, 6].forEach((c) => { closingRow.getCell(c).numFmt = KES_FMT; closingRow.getCell(c).alignment = { horizontal: "right" }; });
+    styleTotalsRow(closingRow);
+
+    ws.addRow([]);
+  }
+
+  ws.views = [{ state: "frozen", ySplit: 4 }];
+  autosizeColumns(ws, [14, 14, 34, 16, 16, 18]);
+}
+
+export type FinanceReportKey = "trial-balance" | "profit-loss" | "balance-sheet" | "general-ledger";
+
+export async function buildFinanceReportsWorkbook(
+  storage: IStorage,
+  opts: { sections: FinanceReportKey[]; asOf?: string; from?: string; to?: string }
+): Promise<ExcelJS.Workbook> {
+  const settings = await storage.getSettings();
+  const rawHotelName = settings.hotelName || "The Chekata";
+  const hotelName = getCurrentEnvironment() === "test" ? `TEST COMPANY — ${rawHotelName}` : rawHotelName;
+  const { sections, asOf, from, to } = opts;
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = hotelName;
+  wb.created = new Date();
+
+  if (sections.includes("trial-balance")) await buildTrialBalanceSheet(wb, storage, hotelName, asOf);
+  if (sections.includes("profit-loss")) await buildProfitAndLossSheet(wb, storage, hotelName, from, to);
+  if (sections.includes("balance-sheet")) await buildBalanceSheetSheet(wb, storage, hotelName, asOf);
+  if (sections.includes("general-ledger")) await buildGeneralLedgerSheet(wb, storage, hotelName, from, to);
+
+  return wb;
+}
+
 export async function buildReportsWorkbook(
   storage: IStorage,
   opts: { from?: string; to?: string; sheet: ReportSheetKey | "all" }

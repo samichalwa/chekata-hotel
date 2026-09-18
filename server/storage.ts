@@ -1767,6 +1767,7 @@ export interface IStorage {
   getTrialBalance(asOfDate?: string): Promise<any[]>;
   getProfitAndLoss(from?: string, to?: string): Promise<any>;
   getBalanceSheet(asOfDate?: string): Promise<any>;
+  getGeneralLedger(from?: string, to?: string): Promise<{ lines: any[]; openingBalances: Map<string, number> }>;
 
   // ---------------- Phase 2: Inventory ----------------
   listStores(): Promise<Store[]>;
@@ -2978,6 +2979,57 @@ export class DatabaseStorage implements IStorage {
       totalAssets, totalLiabilities, totalEquity,
       totalLiabilitiesAndEquity: totalLiabilities + totalEquity,
     };
+  }
+
+  async getGeneralLedger(from?: string, to?: string) {
+    const [rows, openingRows] = await Promise.all([
+      sql<{
+        entry_number: string; entry_date: string; je_description: string; source_module: string; status: string;
+        code: string; name: string; debit: number; credit: number; line_description: string | null;
+      }[]>`
+        SELECT je.entry_number, je.entry_date, je.description AS je_description, je.source_module, je.status,
+          a.code, a.name, l.debit, l.credit, l.description AS line_description
+        FROM journal_entry_lines l
+        JOIN journal_entries je ON je.id = l.journal_entry_id
+        JOIN chart_of_accounts a ON a.id = l.account_id
+        WHERE je.status = 'posted'
+          ${from ? sql`AND je.entry_date >= ${from}` : sql``}
+          ${to ? sql`AND je.entry_date <= ${to}` : sql``}
+        ORDER BY je.entry_date, je.entry_number, l.id
+      `,
+      // Opening balance per account = everything posted strictly before the range start.
+      // With no `from`, the ledger already starts at account inception, so there is nothing to carry forward.
+      from
+        ? sql<{ code: string; name: string; total_debit: number; total_credit: number }[]>`
+            SELECT a.code, a.name,
+              COALESCE(SUM(l.debit), 0) AS total_debit,
+              COALESCE(SUM(l.credit), 0) AS total_credit
+            FROM chart_of_accounts a
+            LEFT JOIN journal_entry_lines l ON l.account_id = a.id
+            LEFT JOIN journal_entries je ON je.id = l.journal_entry_id AND je.status = 'posted' AND je.entry_date < ${from}
+            GROUP BY a.code, a.name
+          `
+        : Promise.resolve([]),
+    ]);
+
+    const lines = rows.map((r) => ({
+      entryNumber: r.entry_number,
+      entryDate: r.entry_date,
+      description: r.line_description || r.je_description,
+      sourceModule: r.source_module,
+      status: r.status,
+      accountCode: r.code,
+      accountName: r.name,
+      debit: Number(r.debit) || 0,
+      credit: Number(r.credit) || 0,
+    }));
+
+    const openingBalances = new Map<string, number>();
+    for (const r of openingRows as { code: string; name: string; total_debit: number; total_credit: number }[]) {
+      openingBalances.set(r.code, (Number(r.total_debit) || 0) - (Number(r.total_credit) || 0));
+    }
+
+    return { lines, openingBalances };
   }
 
   // ================= Phase 2: Inventory =================
