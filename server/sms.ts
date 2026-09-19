@@ -62,22 +62,6 @@ export async function sendSms(input: SendSmsInput): Promise<SendSmsResult> {
     const body = new URLSearchParams({ username, to: phone, message });
     if (settings.smsSenderId) body.set("from", settings.smsSenderId);
 
-    // TEMPORARY DEBUG LOGGING (2026-09-18) — added to capture the exact
-    // outgoing request/response for the Africa's Talking "UserInBlacklist"
-    // investigation. Never logs the API key. Remove once the ticket with
-    // AT support is resolved.
-    const maskedApiKey = apiKey.length > 4 ? `***${apiKey.slice(-4)}` : "***";
-    console.log("[SMS-DEBUG] Outgoing Africa's Talking request", {
-      url: baseUrl,
-      isSandbox,
-      username,
-      to: phone,
-      from: settings.smsSenderId || "(none set)",
-      messageLength: message.length,
-      messagePreview: message.slice(0, 40),
-      apiKey: maskedApiKey,
-    });
-
     try {
       const res = await fetch(baseUrl, {
         method: "POST",
@@ -89,25 +73,22 @@ export async function sendSms(input: SendSmsInput): Promise<SendSmsResult> {
         body: body.toString(),
       });
       const text = await res.text();
-      console.log("[SMS-DEBUG] Africa's Talking response", {
-        httpStatus: res.status,
-        rawBody: text,
-      });
       if (!res.ok) return { ok: false, error: `Africa's Talking error ${res.status}: ${text}` };
       let parsed: any;
       try { parsed = JSON.parse(text); } catch { parsed = null; }
       const recipients = parsed?.SMSMessageData?.Recipients;
       if (Array.isArray(recipients) && recipients.length > 0) {
         const first = recipients[0];
-        console.log("[SMS-DEBUG] Recipient result", first);
-        // Africa's Talking returns statusCode 101/102 for accepted/sent
-        if (first.statusCode !== 101 && first.statusCode !== 102) {
+        // Africa's Talking's accepted/success codes: 100 (Processed), 101
+        // (Sent), 102 (Queued). Anything else (e.g. 401/406/407) is a real
+        // rejection. This previously omitted 100, so a successfully
+        // delivered, billed message was still reported to the user as failed.
+        if (first.statusCode !== 100 && first.statusCode !== 101 && first.statusCode !== 102) {
           return { ok: false, error: first.status || `Africa's Talking rejected the message (status ${first.statusCode}).` };
         }
       }
       return { ok: true };
     } catch (e: any) {
-      console.log("[SMS-DEBUG] Request threw", { message: e?.message });
       return { ok: false, error: e?.message ?? "Failed to reach Africa's Talking." };
     }
   }
