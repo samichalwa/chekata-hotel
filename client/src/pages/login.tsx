@@ -10,6 +10,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useLogin, useForgotPassword, useSetupStatus, type DbEnvironment } from "@/hooks/use-auth";
 import { ChaimsMark, ChaimsWordmark } from "@/components/chaims-logo";
+import { InstallAppButton } from "@/components/install-app-button";
 
 const loginSchema = z.object({
   username: z.string().min(1, "Email address is required"),
@@ -201,6 +202,8 @@ export default function LoginPage() {
             </form>
           </Form>
         )}
+
+        <InstallAppButton className="mt-4" />
 
         <p className="mt-6 text-center text-[11px] text-muted-foreground/70" data-testid="text-login-developer-credit">
           Developed by SAMIC
