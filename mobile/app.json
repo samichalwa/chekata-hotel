@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "The Chekata",
+    "slug": "chekata-mobile",
+    "scheme": "chekata",
+    "version": "1.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F8F4EC",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F8F4EC"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.thechekata.mobile"
+    },
+    "android": {
+      "package": "com.thechekata.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#CCB49D",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}
