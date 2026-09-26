@@ -256,6 +256,7 @@ export function useDecideApproval() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["approvals"] });
       queryClient.invalidateQueries({ queryKey: ["finance"] });
+      queryClient.invalidateQueries({ queryKey: ["director"] });
     },
   });
 }

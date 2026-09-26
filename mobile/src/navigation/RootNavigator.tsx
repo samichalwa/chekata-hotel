@@ -6,6 +6,7 @@ import { Text, View, ActivityIndicator, StyleSheet } from "react-native";
 import { useAuth } from "../context/AuthContext";
 import { hasAnyModule } from "../api/types";
 import { colors } from "../theme/theme";
+import { useDirectorSummary } from "../api/director";
 
 import LoginScreen from "../screens/auth/LoginScreen";
 import DashboardScreen from "../screens/dashboard/DashboardScreen";
@@ -54,6 +55,9 @@ function MainTabs() {
   const canApprove = hasAnyModule(user, ["purchasing", "internal-requisitions", "hr", "leave", "payroll", "finance"]);
   const canFinance = hasAnyModule(user, ["finance", "budgeting", "expenses"]);
   const canBook = hasAnyModule(user, ["accommodation", "facilities", "movie-room", "bar-restaurant"]);
+  // Shares the Today briefing's cached query, so the badge stays in sync.
+  const { data: summary } = useDirectorSummary(!!user);
+  const pending = summary?.approvals.total ?? 0;
 
   return (
     <Tab.Navigator
@@ -67,13 +71,17 @@ function MainTabs() {
       <Tab.Screen
         name="Dashboard"
         component={DashboardScreen}
-        options={{ tabBarLabel: ({ focused }) => <TabIcon label="Dashboard" focused={focused} /> }}
+        options={{ tabBarLabel: ({ focused }) => <TabIcon label="Today" focused={focused} /> }}
       />
       {canApprove ? (
         <Tab.Screen
           name="Approvals"
           component={ApprovalsScreen}
-          options={{ tabBarLabel: ({ focused }) => <TabIcon label="Approvals" focused={focused} /> }}
+          options={{
+            tabBarLabel: ({ focused }) => <TabIcon label="Approvals" focused={focused} />,
+            tabBarBadge: pending > 0 ? (pending > 99 ? "99+" : pending) : undefined,
+            tabBarBadgeStyle: { backgroundColor: colors.danger, color: "#fff", fontSize: 11 },
+          }}
         />
       ) : null}
       {canFinance ? (
