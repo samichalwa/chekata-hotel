@@ -108,7 +108,7 @@ function NewIrDialog({ items, stores, accounts }: { items: InventoryItem[]; stor
       <DialogContent className="max-h-[90vh] overflow-y-auto max-w-3xl">
         <DialogHeader><DialogTitle>New internal requisition</DialogTitle></DialogHeader>
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium">Type</label>
               <Select value={type} onValueChange={(v) => setType(v as "permanent" | "loan")}>
@@ -127,7 +127,7 @@ function NewIrDialog({ items, stores, accounts }: { items: InventoryItem[]; stor
               </Select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium">Department (optional)</label>
               <Input value={department} onChange={(e) => setDepartment(e.target.value)} data-testid="input-ir-department" />
@@ -323,7 +323,7 @@ function InternalRequisitionsTab({ canAdjust }: { canAdjust: boolean }) {
   const sorted = [...irs].sort((a, b) => b.createdAt - a.createdAt);
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{irs.length} requisition{irs.length === 1 ? "" : "s"}</div>
         <NewIrDialog items={items} stores={stores} accounts={accounts} />
       </div>
@@ -438,7 +438,7 @@ export default function InternalRequisitions() {
   const loanCount = irs.filter((i) => i.type === "loan" && i.status === "issued").length;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Internal Requisitions" description="Request, approve, and issue stock for internal use — permanent consumption or returnable loans." />
 
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">

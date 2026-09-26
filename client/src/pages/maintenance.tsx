@@ -92,7 +92,7 @@ function ReportIssueDialog() {
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="category" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Category</FormLabel>
@@ -145,7 +145,7 @@ function ReportIssueDialog() {
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="reportedBy" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Reported by</FormLabel>
@@ -222,7 +222,7 @@ export default function Maintenance() {
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader
         title="Maintenance"
         description="Track every reported maintenance issue from report through to resolution and closure."

@@ -72,7 +72,7 @@ function TableFormDialog({ table, trigger }: { table?: TableEntity; trigger: Rea
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="outlet" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Outlet</FormLabel>
@@ -129,7 +129,7 @@ function TablesTab({ canManage }: { canManage: boolean }) {
 
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-card-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
         <div>
           <h2 className="text-lg font-semibold">Tables</h2>
           {!canManage && <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1"><Lock className="h-3 w-3" /> View-only — ask an administrator for edit rights.</p>}
@@ -240,7 +240,7 @@ function MenuItemFormDialog({ item, trigger }: { item?: MenuItem; trigger: React
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="category" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Outlet</FormLabel>
@@ -296,7 +296,7 @@ function MenuItemsTab({ canManage }: { canManage: boolean }) {
 
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-card-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
         <div>
           <h2 className="text-lg font-semibold">Menu items</h2>
           {!canManage && <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1"><Lock className="h-3 w-3" /> View-only — ask an administrator for edit rights.</p>}
@@ -366,7 +366,7 @@ export default function Lists() {
   const canManageMenuItems = Boolean(currentUser?.isAdmin || currentUser?.canManageMenuItemsList);
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Lists" description="Manage the shared reference lists used across Bar & Restaurant — tables and menu items." />
 
       <Tabs defaultValue="tables">

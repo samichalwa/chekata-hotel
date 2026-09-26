@@ -114,7 +114,7 @@ function NewTlrDialog() {
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <Input type="number" min={0} step="0.5" placeholder="Duration" value={line.durationValue} onChange={(e) => updateLine(idx, { durationValue: e.target.value })} data-testid={`input-tlr-line-duration-${idx}`} />
                   <Select value={line.durationUnit} onValueChange={(v) => updateLine(idx, { durationUnit: v as "days" | "hours" })}>
                     <SelectTrigger data-testid={`select-tlr-line-unit-${idx}`}><SelectValue /></SelectTrigger>
@@ -209,7 +209,7 @@ function TemporaryLaborRequisitionsTab() {
   const sorted = [...tlrs].sort((a, b) => b.createdAt - a.createdAt);
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{tlrs.length} requisition{tlrs.length === 1 ? "" : "s"}</div>
         <NewTlrDialog />
       </div>
@@ -314,7 +314,7 @@ export default function TemporaryLaborRequisitions() {
   const draftCount = tlrs.filter((t) => t.status === "draft").length;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Temporary Labor Requisitions" description="Request temporary workers ahead of time, by role, headcount, and duration — approval auto-creates placeholder staff slots for HR to fill in." />
 
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">

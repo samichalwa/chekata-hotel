@@ -155,7 +155,7 @@ function StaffFormDialog({ member, trigger }: { member?: StaffMember; trigger: R
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="name" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Full name</FormLabel>
@@ -171,7 +171,7 @@ function StaffFormDialog({ member, trigger }: { member?: StaffMember; trigger: R
                 </FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="department" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Department</FormLabel>
@@ -208,7 +208,7 @@ function StaffFormDialog({ member, trigger }: { member?: StaffMember; trigger: R
                 </FormItem>
               )} />
             ) : (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField control={form.control} name="dayRate" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Day rate (KES)</FormLabel>
@@ -227,7 +227,7 @@ function StaffFormDialog({ member, trigger }: { member?: StaffMember; trigger: R
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="phone" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Phone (optional)</FormLabel>
@@ -243,7 +243,7 @@ function StaffFormDialog({ member, trigger }: { member?: StaffMember; trigger: R
                 </FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="hireDate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Hire date (optional)</FormLabel>
@@ -268,7 +268,7 @@ function StaffFormDialog({ member, trigger }: { member?: StaffMember; trigger: R
 
             <div className="border-t pt-4 space-y-4">
               <h3 className="text-sm font-medium">Identity &amp; next of kin</h3>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField control={form.control} name="nationalId" render={({ field }) => (
                   <FormItem>
                     <FormLabel>National ID (optional)</FormLabel>
@@ -295,7 +295,7 @@ function StaffFormDialog({ member, trigger }: { member?: StaffMember; trigger: R
 
             <div className="border-t pt-4 space-y-4">
               <h3 className="text-sm font-medium">Banking details (for bank-advice export)</h3>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <FormField control={form.control} name="bankName" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Bank name (optional)</FormLabel>
@@ -367,7 +367,7 @@ export default function Staff() {
   const sorted = [...staff].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader
         title="Staff"
         description="Manage the team, employment details, and monthly payroll cost."

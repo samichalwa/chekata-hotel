@@ -73,7 +73,7 @@ function BudgetLineFormDialog({ streams, trigger }: { streams: DefinitionListIte
         <DialogHeader><DialogTitle>Set / update a budget line</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="month" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Month</FormLabel>
@@ -142,7 +142,7 @@ export default function Budgeting() {
   const streamLabel = (code: string) => activeStreams.find((s) => s.code === code)?.label ?? streams.find((s) => s.code === code)?.label ?? code;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader
         title="Budgeting"
         description="Set monthly income-stream budgets and track variance against posted Finance actuals. Income streams are fully configurable in Lists."

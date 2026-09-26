@@ -95,7 +95,7 @@ function StatutoryRateEditDialog({ rate }: { rate: StatutoryRateTable }) {
         <DialogHeader><DialogTitle>Edit {rate.label}</DialogTitle></DialogHeader>
         <div className="space-y-4">
           <div><Label>Rate (%)</Label><Input type="number" step="0.01" value={form.ratePercent} onChange={(e) => setForm((f) => ({ ...f, ratePercent: e.target.value }))} data-testid="input-rate-percent" /></div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div><Label>Lower limit (KES, optional)</Label><Input type="number" value={form.lowerLimit} onChange={(e) => setForm((f) => ({ ...f, lowerLimit: e.target.value }))} data-testid="input-rate-lower" /></div>
             <div><Label>Upper limit (KES, optional)</Label><Input type="number" value={form.upperLimit} onChange={(e) => setForm((f) => ({ ...f, upperLimit: e.target.value }))} data-testid="input-rate-upper" /></div>
           </div>
@@ -174,11 +174,11 @@ function PayeBandFormDialog({ band, trigger }: { band?: PayeBand; trigger: React
       <DialogContent>
         <DialogHeader><DialogTitle>{band ? "Edit PAYE band" : "Add PAYE band"}</DialogTitle></DialogHeader>
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div><Label>Band from (KES)</Label><Input type="number" value={form.bandFrom} onChange={(e) => setForm((f) => ({ ...f, bandFrom: e.target.value }))} data-testid="input-band-from" /></div>
             <div><Label>Band to (KES, blank = no limit)</Label><Input type="number" value={form.bandTo} onChange={(e) => setForm((f) => ({ ...f, bandTo: e.target.value }))} data-testid="input-band-to" /></div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div><Label>Rate (%)</Label><Input type="number" step="0.5" value={form.ratePercent} onChange={(e) => setForm((f) => ({ ...f, ratePercent: e.target.value }))} data-testid="input-band-rate" /></div>
             <div><Label>Sort order</Label><Input type="number" value={form.sortOrder} onChange={(e) => setForm((f) => ({ ...f, sortOrder: e.target.value }))} data-testid="input-band-sort" /></div>
           </div>
@@ -277,7 +277,7 @@ function NewPayRunDialog() {
         <DialogHeader><DialogTitle>New pay run</DialogTitle></DialogHeader>
         <div className="space-y-4">
           <div><Label>Period month</Label><Input type="month" value={form.periodMonth} onChange={(e) => setForm((f) => ({ ...f, periodMonth: e.target.value }))} data-testid="input-payrun-month" /></div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div><Label>Period start</Label><Input type="date" value={form.periodStart} onChange={(e) => setForm((f) => ({ ...f, periodStart: e.target.value }))} data-testid="input-payrun-start" /></div>
             <div><Label>Period end</Label><Input type="date" value={form.periodEnd} onChange={(e) => setForm((f) => ({ ...f, periodEnd: e.target.value }))} data-testid="input-payrun-end" /></div>
           </div>
@@ -339,7 +339,7 @@ function PayRunDetailSheet({ run, onClose }: { run: PayrollRun; onClose: () => v
         <SheetTitle>{run.runNumber} — {periodLabel(run.periodMonth)}</SheetTitle>
       </SheetHeader>
       <div className="mt-4 space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <Badge variant={runStatusVariant[run.status]}>{titleCase(run.status)}</Badge>
           <div className="flex gap-2">
             <Button size="sm" variant="outline" asChild data-testid="button-download-bankadvice">
@@ -482,7 +482,7 @@ export default function Payroll() {
   const lastApproved = [...runs].filter((r) => r.status === "approved").sort((a, b) => b.id - a.id)[0];
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Payroll" description="Statutory rates, PAYE bands, pay runs, payslips and bank-advice exports." />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

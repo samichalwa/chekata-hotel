@@ -123,7 +123,7 @@ function BucketPriceFormDialog({ price, trigger }: { price?: WaterBucketPrice; t
         <DialogHeader><DialogTitle>{price ? "Edit bucket price" : "Add bucket size & price"}</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="sizeLitres" render={({ field }) => (
                 <FormItem><FormLabel>Bucket size (litres)</FormLabel><FormControl><Input type="number" step="0.1" {...field} value={field.value as any} data-testid="input-bucket-size" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -225,7 +225,7 @@ function NewSaleDialog({ bucketPrices }: { bucketPrices: WaterBucketPrice[] }) {
         <DialogHeader><DialogTitle>New water sale</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="saleType" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Sale type</FormLabel>
@@ -245,7 +245,7 @@ function NewSaleDialog({ bucketPrices }: { bucketPrices: WaterBucketPrice[] }) {
             </div>
 
             {saleType === "bucket" ? (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField control={form.control} name="bucketSizeLitres" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Bucket size</FormLabel>
@@ -264,7 +264,7 @@ function NewSaleDialog({ bucketPrices }: { bucketPrices: WaterBucketPrice[] }) {
                 )} />
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField control={form.control} name="meterStart" render={({ field }) => (
                   <FormItem><FormLabel>Meter start reading</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-meter-start" /></FormControl><FormMessage /></FormItem>
                 )} />
@@ -284,7 +284,7 @@ function NewSaleDialog({ bucketPrices }: { bucketPrices: WaterBucketPrice[] }) {
             <FormField control={form.control} name="customerName" render={({ field }) => (
               <FormItem><FormLabel>Customer name</FormLabel><FormControl><Input {...field} data-testid="input-customer-name" /></FormControl><FormMessage /></FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="customerPhone" render={({ field }) => (
                 <FormItem><FormLabel>Phone (optional)</FormLabel><FormControl><Input {...field} value={field.value ?? ""} data-testid="input-customer-phone" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -292,7 +292,7 @@ function NewSaleDialog({ bucketPrices }: { bucketPrices: WaterBucketPrice[] }) {
                 <FormItem><FormLabel>Email (optional)</FormLabel><FormControl><Input type="email" {...field} value={field.value ?? ""} data-testid="input-customer-email" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="paymentMethod" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Payment method</FormLabel>
@@ -402,7 +402,7 @@ export default function WaterSales() {
   const bulkSalesCount = completedSales.filter((s) => s.saleType === "bulk").length;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader
         title="Water Sales"
         description="Standalone bulk and bucket water sales, recorded as paid transactions with a receipt on every sale."

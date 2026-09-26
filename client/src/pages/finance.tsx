@@ -64,7 +64,7 @@ function AccountFormDialog({ account, trigger }: { account?: ChartOfAccount; tri
         <DialogHeader><DialogTitle>{account ? "Edit account" : "New account"}</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="code" render={({ field }) => (
                 <FormItem><FormLabel>Account code</FormLabel><FormControl><Input placeholder="e.g. 1000" {...field} data-testid="input-account-code" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -123,7 +123,7 @@ function ChartOfAccountsTab() {
   const sorted = [...accounts].sort((a, b) => a.code.localeCompare(b.code));
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{accounts.length} account{accounts.length === 1 ? "" : "s"}</div>
         <AccountFormDialog trigger={<Button size="sm" data-testid="button-new-account"><Plus className="h-4 w-4 mr-1" /> Add account</Button>} />
       </div>
@@ -218,7 +218,7 @@ function PeriodFormDialog({ period, trigger }: { period?: AccountingPeriod; trig
         <DialogHeader><DialogTitle>{period ? "Edit period" : "New accounting period"}</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="name" render={({ field }) => (
                 <FormItem><FormLabel>Period name</FormLabel><FormControl><Input placeholder="e.g. September 2026" {...field} data-testid="input-period-name" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -226,7 +226,7 @@ function PeriodFormDialog({ period, trigger }: { period?: AccountingPeriod; trig
                 <FormItem><FormLabel>Financial year</FormLabel><FormControl><Input placeholder="e.g. FY2026" {...field} data-testid="input-period-fy" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="startDate" render={({ field }) => (
                 <FormItem><FormLabel>Start date</FormLabel><FormControl><Input type="date" {...field} data-testid="input-period-start" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -275,7 +275,7 @@ function PeriodsTab() {
   const sorted = [...periods].sort((a, b) => b.startDate.localeCompare(a.startDate));
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{periods.length} period{periods.length === 1 ? "" : "s"} — postings are blocked once a period is closed.</div>
         <PeriodFormDialog trigger={<Button size="sm" data-testid="button-new-period"><Plus className="h-4 w-4 mr-1" /> New period</Button>} />
       </div>
@@ -370,7 +370,7 @@ function NewJournalEntryDialog({ accounts }: { accounts: ChartOfAccount[] }) {
       <DialogContent className="max-h-[90vh] overflow-y-auto max-w-3xl">
         <DialogHeader><DialogTitle>New journal entry</DialogTitle></DialogHeader>
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium">Entry date</label>
               <Input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} data-testid="input-je-date" />
@@ -452,7 +452,7 @@ function JournalEntriesTab() {
   });
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{entries.length} entr{entries.length === 1 ? "y" : "ies"}</div>
         <NewJournalEntryDialog accounts={accounts} />
       </div>
@@ -538,7 +538,7 @@ function BankAccountFormDialog({ account, accounts, trigger }: { account?: BankA
             <FormField control={form.control} name="name" render={({ field }) => (
               <FormItem><FormLabel>Account name</FormLabel><FormControl><Input {...field} data-testid="input-bank-name" /></FormControl><FormMessage /></FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="bankName" render={({ field }) => (
                 <FormItem><FormLabel>Bank (optional)</FormLabel><FormControl><Input {...field} value={field.value ?? ""} data-testid="input-bank-bank-name" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -587,7 +587,7 @@ function BankAccountsTab() {
   });
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{bankAccounts.length} bank account{bankAccounts.length === 1 ? "" : "s"}</div>
         <BankAccountFormDialog accounts={accounts} trigger={<Button size="sm" data-testid="button-new-bank-account"><Plus className="h-4 w-4 mr-1" /> Add bank account</Button>} />
       </div>
@@ -671,7 +671,7 @@ function VoucherFormDialog({ accounts, bankAccounts, trigger }: { accounts: Char
         <DialogHeader><DialogTitle>New payment voucher</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="voucherDate" render={({ field }) => (
                 <FormItem><FormLabel>Date</FormLabel><FormControl><Input type="date" {...field} data-testid="input-pv-date" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -679,7 +679,7 @@ function VoucherFormDialog({ accounts, bankAccounts, trigger }: { accounts: Char
                 <FormItem><FormLabel>Payee</FormLabel><FormControl><Input {...field} data-testid="input-pv-payee" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="amount" render={({ field }) => (
                 <FormItem><FormLabel>Amount (KES)</FormLabel><FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-pv-amount" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -697,7 +697,7 @@ function VoucherFormDialog({ accounts, bankAccounts, trigger }: { accounts: Char
             <FormField control={form.control} name="paymentReference" render={({ field }) => (
               <FormItem><FormLabel>Payment reference (optional)</FormLabel><FormControl><Input {...field} value={field.value ?? ""} data-testid="input-pv-reference" /></FormControl><FormMessage /></FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="expenseAccountId" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Expense / payable account (debit)</FormLabel>
@@ -759,7 +759,7 @@ function PaymentVouchersTab() {
   });
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{vouchers.length} voucher{vouchers.length === 1 ? "" : "s"}</div>
         <VoucherFormDialog accounts={accounts} bankAccounts={bankAccounts} trigger={<Button size="sm" data-testid="button-new-voucher"><Plus className="h-4 w-4 mr-1" /> New payment voucher</Button>} />
       </div>
@@ -916,7 +916,7 @@ function ReportsTab() {
           <Input type="date" className="w-40" value={to} onChange={(e) => setTo(e.target.value)} data-testid="input-pnl-to" />
         </div>
         {pnl && (
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <div className="text-sm font-medium mb-2">Income</div>
               {pnl.income.map((l: any) => (
@@ -931,7 +931,7 @@ function ReportsTab() {
               ))}
               <div className="flex justify-between text-sm font-semibold border-t border-border pt-1 mt-1"><span>Total expenses</span><span className="tabular-nums">{formatKES(pnl.totalExpense)}</span></div>
             </div>
-            <div className="col-span-2 flex justify-between text-base font-bold border-t border-border pt-2"><span>Net profit</span><span className="tabular-nums">{formatKES(pnl.netProfit)}</span></div>
+            <div className="md:col-span-2 flex justify-between text-base font-bold border-t border-border pt-2"><span>Net profit</span><span className="tabular-nums">{formatKES(pnl.netProfit)}</span></div>
           </div>
         )}
       </Card>
@@ -942,7 +942,7 @@ function ReportsTab() {
           <Input type="date" className="w-40" value={asOf} onChange={(e) => setAsOf(e.target.value)} data-testid="input-bs-as-of" />
         </div>
         {bs && (
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <div className="text-sm font-medium mb-2">Assets</div>
               {bs.assets.map((l: any) => (
@@ -967,7 +967,7 @@ function ReportsTab() {
                 <div className="flex justify-between text-sm font-semibold border-t border-border pt-1 mt-1"><span>Total equity</span><span className="tabular-nums">{formatKES(bs.totalEquity)}</span></div>
               </div>
             </div>
-            <div className="col-span-2 flex justify-between text-base font-bold border-t border-border pt-2"><span>Total liabilities &amp; equity</span><span className="tabular-nums">{formatKES(bs.totalLiabilitiesAndEquity)}</span></div>
+            <div className="md:col-span-2 flex justify-between text-base font-bold border-t border-border pt-2"><span>Total liabilities &amp; equity</span><span className="tabular-nums">{formatKES(bs.totalLiabilitiesAndEquity)}</span></div>
           </div>
         )}
       </Card>
@@ -984,7 +984,7 @@ export default function Finance() {
   const draftVouchers = vouchers.filter((v) => v.status === "draft" || v.status === "pending_approval").length;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Finance" description="Chart of accounts, general ledger, payment vouchers, banking, and financial reports." />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

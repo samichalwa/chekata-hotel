@@ -92,7 +92,7 @@ function SupplierFormDialog({ supplier, trigger }: { supplier?: Supplier; trigge
             <FormField control={form.control} name="name" render={({ field }) => (
               <FormItem><FormLabel>Supplier name</FormLabel><FormControl><Input {...field} data-testid="input-supplier-name" /></FormControl><FormMessage /></FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="contactPerson" render={({ field }) => (
                 <FormItem><FormLabel>Contact person (optional)</FormLabel><FormControl><Input {...field} value={field.value ?? ""} data-testid="input-supplier-contact" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -100,7 +100,7 @@ function SupplierFormDialog({ supplier, trigger }: { supplier?: Supplier; trigge
                 <FormItem><FormLabel>Phone (optional)</FormLabel><FormControl><Input {...field} value={field.value ?? ""} data-testid="input-supplier-phone" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="email" render={({ field }) => (
                 <FormItem><FormLabel>Email (optional)</FormLabel><FormControl><Input {...field} value={field.value ?? ""} data-testid="input-supplier-email" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -141,7 +141,7 @@ function SuppliersTab({ canAdjust }: { canAdjust: boolean }) {
   });
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{suppliers.length} supplier{suppliers.length === 1 ? "" : "s"}</div>
         <SupplierFormDialog trigger={<Button size="sm" data-testid="button-new-supplier"><Plus className="h-4 w-4 mr-1" /> Add supplier</Button>} />
       </div>
@@ -258,7 +258,7 @@ function NewPrDialog({ items }: { items: InventoryItem[] }) {
       <DialogContent className="max-h-[90vh] overflow-y-auto max-w-3xl">
         <DialogHeader><DialogTitle>New purchase requisition</DialogTitle></DialogHeader>
         <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="text-sm font-medium">Type</label>
               <Select value={type} onValueChange={(v) => setType(v as "stock" | "direct")}>
@@ -431,7 +431,7 @@ function PurchaseRequisitionsTab({ canAdjust }: { canAdjust: boolean }) {
   const sorted = [...prs].sort((a, b) => b.createdAt - a.createdAt);
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{prs.length} requisition{prs.length === 1 ? "" : "s"}</div>
         <NewPrDialog items={items} />
       </div>
@@ -578,7 +578,7 @@ function NewPoDialog({ items, suppliers, accounts }: { items: InventoryItem[]; s
       <DialogContent className="max-h-[90vh] overflow-y-auto max-w-3xl">
         <DialogHeader><DialogTitle>New purchase order</DialogTitle></DialogHeader>
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium">Supplier</label>
               <Select value={supplierId} onValueChange={setSupplierId}>
@@ -594,7 +594,7 @@ function NewPoDialog({ items, suppliers, accounts }: { items: InventoryItem[]; s
               </Select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium">Payable account (liability)</label>
               <Select value={payableAccountId} onValueChange={setPayableAccountId}>
@@ -809,7 +809,7 @@ function PurchaseOrdersTab({ canAdjust }: { canAdjust: boolean }) {
   const sorted = [...orders].sort((a, b) => b.createdAt - a.createdAt);
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{orders.length} order{orders.length === 1 ? "" : "s"}</div>
         <NewPoDialog items={items} suppliers={suppliers} accounts={accounts} />
       </div>
@@ -947,7 +947,7 @@ function GoodsReceiptsTab() {
   const sorted = [...receipts].sort((a, b) => b.receivedAt - a.receivedAt);
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{receipts.length} goods receipt{receipts.length === 1 ? "" : "s"}</div>
       </div>
       {isLoading ? (
@@ -1004,7 +1004,7 @@ export default function Purchasing() {
   const openPos = orders.filter((o) => o.status === "approved" || o.status === "partially_received").length;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Purchasing" description="Suppliers, purchase requisitions, purchase orders, and goods receipts." />
 
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">

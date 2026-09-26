@@ -104,7 +104,7 @@ function ApprovalRuleFormDialog({ rule, users, trigger }: { rule?: ApprovalMatri
                 </FormItem>
               )} />
             ) : (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField control={form.control} name="minAmount" render={({ field }) => (
                   <FormItem><FormLabel>{isDayBanded ? "Min days" : "Min amount (KES)"}</FormLabel><FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-rule-min" /></FormControl><FormMessage /></FormItem>
                 )} />
@@ -113,7 +113,7 @@ function ApprovalRuleFormDialog({ rule, users, trigger }: { rule?: ApprovalMatri
                 )} />
               </div>
             )}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="reviewerUserId" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Reviewer (optional)</FormLabel>
@@ -162,7 +162,7 @@ function ApprovalMatrixTab() {
   const userName = (id: number | null) => users.find((u) => u.id === id)?.fullName ?? "—";
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{rules.length} rule{rules.length === 1 ? "" : "s"} — routes requester → reviewer → approver by document type and amount band.</div>
         <ApprovalRuleFormDialog users={users} trigger={<Button size="sm" data-testid="button-new-rule"><Plus className="h-4 w-4 mr-1" /> New rule</Button>} />
       </div>
@@ -477,7 +477,7 @@ function DefinitionsTab() {
   const { data: lists = [], isLoading } = useQuery<DefinitionList[]>({ queryKey: ["/api/admin/definitions"] });
   return (
     <Card className="p-4 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">Admin-editable dropdown option lists used across the system — e.g. Time &amp; Attendance Status, Shift Code, and Leave Type. Add any future list here without needing code changes.</p>
         <NewDefinitionListDialog />
       </div>
@@ -641,7 +641,7 @@ export default function SystemAdmin() {
   const { data: lists = [] } = useQuery<DefinitionList[]>({ queryKey: ["/api/admin/definitions"] });
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="System Administration" description="Approval matrix, table-level permissions, and admin-editable option lists used across every module." />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

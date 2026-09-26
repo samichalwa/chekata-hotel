@@ -110,7 +110,7 @@ function RecipeFormDialog({ recipe, trigger }: { recipe?: RecipeWithCost; trigge
         <DialogHeader><DialogTitle>{recipe ? "Edit recipe" : "New recipe"}</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="name" render={({ field }) => (
                 <FormItem><FormLabel>Recipe / dish name</FormLabel><FormControl><Input {...field} data-testid="input-recipe-name" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -120,7 +120,7 @@ function RecipeFormDialog({ recipe, trigger }: { recipe?: RecipeWithCost; trigge
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <FormLabel>Ingredients</FormLabel>
                 <Button type="button" size="sm" variant="outline" onClick={() => append({ inventoryItemId: 0, quantityPerServing: 0, unit: "" })} data-testid="button-add-ingredient">
                   <Plus className="h-4 w-4 mr-1" /> Add ingredient
@@ -155,7 +155,7 @@ function RecipeFormDialog({ recipe, trigger }: { recipe?: RecipeWithCost; trigge
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="laborCostPercent" render={({ field }) => (
                 <FormItem><FormLabel>Labor/other cost (% of ingredient cost)</FormLabel><FormControl><Input type="number" step="0.1" {...field} value={field.value as any} data-testid="input-recipe-other-cost" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -220,7 +220,7 @@ export default function FnbCosting() {
   const avgMargin = recipes.length > 0 ? recipes.reduce((sum, r) => sum + r.targetMarginPercent, 0) / recipes.length : 0;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="F&B Costing" description="Recipe costing for bar and restaurant menu items — ingredient costs update live from inventory pricing." />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -229,7 +229,7 @@ export default function FnbCosting() {
         <StatCard label="Avg. target margin" value={`${avgMargin.toFixed(1)}%`} icon={Percent} testId="stat-avg-margin" />
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground max-w-2xl">Costs recompute automatically whenever an ingredient's unit cost changes on a goods receipt — nothing needs recalculating manually.</p>
         <RecipeFormDialog trigger={<Button size="sm" data-testid="button-new-recipe"><Plus className="h-4 w-4 mr-1" /> Add recipe</Button>} />
       </div>

@@ -69,7 +69,7 @@ function ExpenseFormDialog({ expense, trigger }: { expense?: Expense; trigger: R
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="category" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Category</FormLabel>
@@ -90,7 +90,7 @@ function ExpenseFormDialog({ expense, trigger }: { expense?: Expense; trigger: R
                 </FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="date" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Date</FormLabel>
@@ -151,7 +151,7 @@ export default function Expenses() {
   const sorted = [...filtered].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader
         title="Expenses"
         description="Track maintenance, utilities, supplies, and other operating costs."

@@ -40,6 +40,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
@@ -86,6 +87,10 @@ const itemsByKey = new Map(items.map((item) => [item.key, item]));
 
 export function AppSidebar() {
   const [location] = useLocation();
+  // On phones the sidebar is a slide-out drawer; close it after a menu tap so
+  // the chosen page is visible straight away.
+  const { isMobile, setOpenMobile } = useSidebar();
+  const closeMobileNav = () => { if (isMobile) setOpenMobile(false); };
   const { data: user } = useCurrentUser();
   const { data: settings } = useQuery<Settings>({ queryKey: ["/api/settings"] });
   const logout = useLogout();
@@ -152,7 +157,7 @@ export function AppSidebar() {
                       {group.items.map((item) => (
                         <SidebarMenuItem key={item.title}>
                           <SidebarMenuButton asChild isActive={location === item.url} data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
-                            <Link href={item.url}>
+                            <Link href={item.url} onClick={closeMobileNav}>
                               <item.icon />
                               <span>{item.title}</span>
                             </Link>
@@ -172,7 +177,7 @@ export function AppSidebar() {
               <SidebarMenu>
                 <SidebarMenuItem key={settingsItem.title}>
                   <SidebarMenuButton asChild isActive={location === settingsItem.url} data-testid={`link-${settingsItem.title.toLowerCase().replace(/\s+/g, "-")}`}>
-                    <Link href={settingsItem.url}>
+                    <Link href={settingsItem.url} onClick={closeMobileNav}>
                       <settingsItem.icon />
                       <span>{settingsItem.title}</span>
                     </Link>

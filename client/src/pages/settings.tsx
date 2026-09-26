@@ -173,7 +173,7 @@ function HotelEmailTab() {
               <FormMessage />
             </FormItem>
           )} />
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField control={form.control} name="hotelPhone" render={({ field }) => (
               <FormItem>
                 <FormLabel>Phone (optional)</FormLabel>
@@ -218,7 +218,7 @@ function HotelEmailTab() {
               <FormMessage />
             </FormItem>
           )} />
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField control={form.control} name="emailFrom" render={({ field }) => (
               <FormItem>
                 <FormLabel>From address</FormLabel>
@@ -288,7 +288,7 @@ function HotelEmailTab() {
           )} />
           {smsProvider === "africastalking" && (
             <>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField control={form.control} name="smsUsername" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Africa's Talking username</FormLabel>
@@ -405,7 +405,7 @@ function TaxFormDialog({ tax, trigger }: { tax?: Tax; trigger: React.ReactNode }
         <DialogHeader><DialogTitle>{tax ? "Edit tax" : "Add tax"}</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="name" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Tax name</FormLabel>
@@ -424,7 +424,7 @@ function TaxFormDialog({ tax, trigger }: { tax?: Tax; trigger: React.ReactNode }
             <FormItem>
               <FormLabel>Applies to (revenue streams)</FormLabel>
               <FormDescription>Prices are entered tax-inclusive; this tax's share will be back-calculated and shown on invoices for the streams checked below.</FormDescription>
-              <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                 {revenueStreams.map((rs) => (
                   <FormField key={rs.key} control={form.control} name={rs.key} render={({ field }) => (
                     <label className="flex items-center gap-2 text-sm">
@@ -466,7 +466,7 @@ function TaxesTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground max-w-2xl">
           Prices entered elsewhere in the system already include tax. Add up to several taxes and tick which revenue streams each one applies to — the amount is back-calculated and shown on invoices without changing the total the guest pays.
         </p>
@@ -633,7 +633,7 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
         <DialogHeader><DialogTitle>{user ? "Edit user" : "Add user"}</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="fullName" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Full name</FormLabel>
@@ -677,7 +677,7 @@ function UserFormDialog({ user, trigger }: { user?: SafeUser; trigger: React.Rea
                     {MODULE_CATEGORY_GROUPS.map((group) => (
                       <div key={group.label} className="rounded-md border border-border/60 p-3">
                         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</p>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {group.keys.map((key) => {
                             const checked = (field.value as string[]).includes(key);
                             return (
@@ -868,7 +868,7 @@ function UsersTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground max-w-2xl">
           Create an account for each employee who needs to sign in — using their @thechekata.com email address as the username — and tick exactly which modules they can access. Administrators always have full access.
         </p>
@@ -946,7 +946,7 @@ export default function SettingsPage() {
   const { data: currentUser } = useCurrentUser();
 
   return (
-    <div className="p-6 space-y-6 max-w-4xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-4xl mx-auto">
       <PageHeader title="Settings" description="Hotel details, taxes, email, and user access." />
 
       <Tabs defaultValue="hotel">

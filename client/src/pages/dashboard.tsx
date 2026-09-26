@@ -93,7 +93,7 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Dashboard" description="The Chekata — overview for the current month." />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -124,7 +124,7 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <div className="flex items-center justify-between p-4 border-b border-card-border">
+          <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
             <h2 className="text-lg font-semibold flex items-center gap-2"><BedDouble className="h-4 w-4" /> Upcoming stays</h2>
             <Link href="/accommodation" className="text-xs text-primary hover:underline" data-testid="link-view-accommodation">View all</Link>
           </div>
@@ -155,7 +155,7 @@ export default function Dashboard() {
         </Card>
 
         <Card>
-          <div className="flex items-center justify-between p-4 border-b border-card-border">
+          <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
             <h2 className="text-lg font-semibold flex items-center gap-2"><PartyPopper className="h-4 w-4" /> Upcoming events</h2>
             <Link href="/facilities" className="text-xs text-primary hover:underline" data-testid="link-view-facilities">View all</Link>
           </div>

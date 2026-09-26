@@ -79,7 +79,7 @@ function ShopFormDialog({ shop, trigger }: { shop?: Shop; trigger: React.ReactNo
         <DialogHeader><DialogTitle>{shop ? "Edit shop" : "New shop"}</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="shopNumber" render={({ field }) => (
                 <FormItem><FormLabel>Shop number</FormLabel><FormControl><Input placeholder="e.g. SH-01" {...field} data-testid="input-shop-number" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -126,7 +126,7 @@ function ShopsTab() {
   });
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground max-w-2xl">Retail units/kiosks available for lease to tenants.</p>
         <ShopFormDialog trigger={<Button size="sm" data-testid="button-new-shop"><Plus className="h-4 w-4 mr-1" /> Add shop</Button>} />
       </div>
@@ -218,7 +218,7 @@ function TenantFormDialog({ tenant, trigger }: { tenant?: Tenant; trigger: React
         <DialogHeader><DialogTitle>{tenant ? "Edit tenant" : "New tenant"}</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="name" render={({ field }) => (
                 <FormItem><FormLabel>Tenant / business name</FormLabel><FormControl><Input {...field} data-testid="input-tenant-name" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -226,7 +226,7 @@ function TenantFormDialog({ tenant, trigger }: { tenant?: Tenant; trigger: React
                 <FormItem><FormLabel>Contact person (optional)</FormLabel><FormControl><Input {...field} value={field.value ?? ""} data-testid="input-tenant-contact" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="phone" render={({ field }) => (
                 <FormItem><FormLabel>Phone (optional)</FormLabel><FormControl><Input {...field} value={field.value ?? ""} data-testid="input-tenant-phone" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -270,7 +270,7 @@ function TenantsTab() {
   });
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground max-w-2xl">Tenants renting shops on this property.</p>
         <TenantFormDialog trigger={<Button size="sm" data-testid="button-new-tenant"><Plus className="h-4 w-4 mr-1" /> Add tenant</Button>} />
       </div>
@@ -373,7 +373,7 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
         <DialogHeader><DialogTitle>{lease ? "Edit lease" : "New lease"}</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="shopId" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Shop</FormLabel>
@@ -395,7 +395,7 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
                 </FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="monthlyRent" render={({ field }) => (
                 <FormItem><FormLabel>Monthly rent (KES)</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-lease-rent" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -403,7 +403,7 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
                 <FormItem><FormLabel>Electricity rate (KES/unit)</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-lease-electricity-rate" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="leaseStart" render={({ field }) => (
                 <FormItem><FormLabel>Lease start</FormLabel><FormControl><Input type="date" {...field} data-testid="input-lease-start" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -411,7 +411,7 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
                 <FormItem><FormLabel>Lease end (optional)</FormLabel><FormControl><Input type="date" {...field} value={field.value ?? ""} data-testid="input-lease-end" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="dueDayOfMonth" render={({ field }) => (
                 <FormItem><FormLabel>Rent due day of month</FormLabel><FormControl><Input type="number" min={1} max={28} {...field} value={field.value as any} data-testid="input-lease-due-day" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -419,7 +419,7 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
                 <FormItem><FormLabel>Remind (days before due)</FormLabel><FormControl><Input type="number" min={0} max={28} {...field} value={field.value as any} data-testid="input-lease-reminder-days" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="receivableAccountId" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Receivable (GL asset account)</FormLabel>
@@ -478,7 +478,7 @@ function LeasesTab() {
   const tenantName = (id: number) => tenants.find((t) => t.id === id)?.name ?? `#${id}`;
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground max-w-2xl">Tenancy leases linking tenants to shops, with rent, electricity rate, and GL account mapping.</p>
         <LeaseFormDialog trigger={<Button size="sm" data-testid="button-new-lease"><Plus className="h-4 w-4 mr-1" /> Add lease</Button>} />
       </div>
@@ -583,7 +583,7 @@ function MeterReadingFormDialog({ trigger }: { trigger: React.ReactNode }) {
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="periodMonth" render={({ field }) => (
                 <FormItem><FormLabel>Period (YYYY-MM)</FormLabel><FormControl><Input placeholder="2026-09" {...field} data-testid="input-reading-period" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -591,7 +591,7 @@ function MeterReadingFormDialog({ trigger }: { trigger: React.ReactNode }) {
                 <FormItem><FormLabel>Reading date</FormLabel><FormControl><Input type="date" {...field} data-testid="input-reading-date" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="startReading" render={({ field }) => (
                 <FormItem><FormLabel>Start reading</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-reading-start" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -623,7 +623,7 @@ function MeterReadingsTab() {
   const sorted = [...readings].sort((a, b) => b.createdAt - a.createdAt);
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground max-w-2xl">Monthly electricity meter readings per leased shop. Consumption and charge are calculated automatically using the lease's electricity rate.</p>
         <MeterReadingFormDialog trigger={<Button size="sm" data-testid="button-new-reading"><Plus className="h-4 w-4 mr-1" /> Record reading</Button>} />
       </div>
@@ -853,7 +853,7 @@ function RentInvoicesTab() {
         <StatCard label="Outstanding balance" value={formatKES(totalOutstanding)} icon={CircleDollarSign} accent="warning" testId="stat-rent-outstanding" />
         <StatCard label="Paid invoices" value={String(invoices.filter((i) => i.status === "paid").length)} icon={Receipt} accent="success" testId="stat-rent-paid" />
       </div>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground max-w-2xl">Rent invoices auto-generate hourly for active leases (with electricity charges from the latest meter reading) and email the tenant a PDF invoice. Record payments and cancellations here.</p>
         <GenerateInvoiceDialog trigger={<Button size="sm" data-testid="button-generate-invoice"><Plus className="h-4 w-4 mr-1" /> Generate invoice</Button>} />
       </div>
@@ -921,7 +921,7 @@ export default function Tenants() {
   const activeLeases = leases.filter((l) => l.status === "active").length;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Tenants" description="Shops, tenants, leases, meter readings, and rent invoicing." />
 
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">

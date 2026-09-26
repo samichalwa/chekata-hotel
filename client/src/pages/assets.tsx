@@ -104,7 +104,7 @@ function CategoryFormDialog({ category, accounts, trigger }: { category?: AssetC
             <FormField control={form.control} name="description" render={({ field }) => (
               <FormItem><FormLabel>Description (optional)</FormLabel><FormControl><Textarea {...field} value={field.value ?? ""} data-testid="input-category-description" /></FormControl><FormMessage /></FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="defaultUsefulLifeMonths" render={({ field }) => (
                 <FormItem><FormLabel>Default useful life (months)</FormLabel><FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-category-useful-life" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -119,7 +119,7 @@ function CategoryFormDialog({ category, accounts, trigger }: { category?: AssetC
                 </FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="depreciationExpenseAccountId" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Depreciation expense account</FormLabel>
@@ -236,7 +236,7 @@ function AssetFormDialog({ asset, categories, trigger }: { asset?: Asset; catego
         <DialogHeader><DialogTitle>{asset ? "Edit asset" : "Register new asset"}</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="name" render={({ field }) => (
                 <FormItem><FormLabel>Asset name</FormLabel><FormControl><Input {...field} data-testid="input-asset-name" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -251,7 +251,7 @@ function AssetFormDialog({ asset, categories, trigger }: { asset?: Asset; catego
                 </FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="serialNumber" render={({ field }) => (
                 <FormItem><FormLabel>Serial number (optional)</FormLabel><FormControl><Input {...field} value={field.value ?? ""} data-testid="input-asset-serial" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -262,7 +262,7 @@ function AssetFormDialog({ asset, categories, trigger }: { asset?: Asset; catego
             <FormField control={form.control} name="supplier" render={({ field }) => (
               <FormItem><FormLabel>Supplier (optional)</FormLabel><FormControl><Input {...field} value={field.value ?? ""} data-testid="input-asset-supplier" /></FormControl><FormMessage /></FormItem>
             )} />
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <FormField control={form.control} name="acquisitionDate" render={({ field }) => (
                 <FormItem><FormLabel>Acquisition date</FormLabel><FormControl><Input type="date" {...field} data-testid="input-asset-acquisition-date" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -273,7 +273,7 @@ function AssetFormDialog({ asset, categories, trigger }: { asset?: Asset; catego
                 <FormItem><FormLabel>Salvage value (KES)</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-asset-salvage" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="usefulLifeMonths" render={({ field }) => (
                 <FormItem><FormLabel>Useful life (months)</FormLabel><FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-asset-useful-life" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -454,7 +454,7 @@ export default function Assets() {
   const totalCost = assets.reduce((s, a) => s + a.acquisitionCost, 0);
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader
         title="Assets"
         description="Fixed asset register with automatic straight-line depreciation, posted to Finance as journal entries each period."

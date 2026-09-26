@@ -396,7 +396,7 @@ export default function Attendance() {
   const activeCount = staff.filter((s) => s.status === "active").length;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Attendance" description="Record daily attendance and review the attendance register." />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -116,7 +116,7 @@ function StoresTab({ canAdjust }: { canAdjust: boolean }) {
   });
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{stores.length} store{stores.length === 1 ? "" : "s"}</div>
         <StoreFormDialog trigger={<Button size="sm" data-testid="button-new-store"><Plus className="h-4 w-4 mr-1" /> Add store</Button>} />
       </div>
@@ -217,7 +217,7 @@ function ItemFormDialog({ item, categories, units, trigger }: { item?: Inventory
         <DialogHeader><DialogTitle>{item ? "Edit item" : "New inventory item"}</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="code" render={({ field }) => (
                 <FormItem><FormLabel>Item code (SKU)</FormLabel><FormControl><Input placeholder="e.g. INV-0001" {...field} data-testid="input-item-code" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -249,7 +249,7 @@ function ItemFormDialog({ item, categories, units, trigger }: { item?: Inventory
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="reorderLevel" render={({ field }) => (
                 <FormItem><FormLabel>Reorder level</FormLabel><FormControl><Input type="number" {...field} onChange={(e) => field.onChange(e.target.valueAsNumber || 0)} data-testid="input-item-reorder-level" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -298,7 +298,7 @@ function ItemsTab({ canAdjust }: { canAdjust: boolean }) {
   });
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{items.length} item{items.length === 1 ? "" : "s"}</div>
         <ItemFormDialog categories={categories} units={units} trigger={<Button size="sm" data-testid="button-new-item"><Plus className="h-4 w-4 mr-1" /> Add item</Button>} />
       </div>
@@ -370,7 +370,7 @@ function StockBalancesTab() {
   const nonZero = balances.filter((b) => b.balance !== 0);
   return (
     <Card>
-      <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-border">
         <div className="text-sm text-muted-foreground">{nonZero.length} balance{nonZero.length === 1 ? "" : "s"} across all stores</div>
       </div>
       {isLoading ? (
@@ -524,7 +524,7 @@ function StockAdjustmentDialog({ items, stores }: { items: InventoryItem[]; stor
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="direction" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Direction</FormLabel>
@@ -589,7 +589,7 @@ export default function Inventory() {
   }).length;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Inventory" description="Stores, item catalogue, stock ledger, and manual adjustments." />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

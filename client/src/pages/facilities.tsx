@@ -400,7 +400,7 @@ export default function Facilities() {
   const sortedFacilities = [...facilities].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Conference & Movie Room" description="Manage the conference hall, movie room, and any other bookable event space." />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -417,7 +417,7 @@ export default function Facilities() {
 
         <TabsContent value="bookings" className="mt-4">
           <Card>
-            <div className="flex items-center justify-between p-4 border-b border-card-border">
+            <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
               <h2 className="text-lg font-semibold">Bookings</h2>
               <FacilityBookingFormDialog facilities={facilities} trigger={
                 <Button size="sm" disabled={facilities.length === 0} data-testid="button-new-facility-booking"><Plus className="h-4 w-4 mr-1" /> New booking</Button>
@@ -510,7 +510,7 @@ export default function Facilities() {
 
         <TabsContent value="facilities" className="mt-4">
           <Card>
-            <div className="flex items-center justify-between p-4 border-b border-card-border">
+            <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
               <h2 className="text-lg font-semibold">Facilities</h2>
               <FacilityFormDialog trigger={<Button size="sm" data-testid="button-new-facility"><Plus className="h-4 w-4 mr-1" /> Add facility</Button>} />
             </div>

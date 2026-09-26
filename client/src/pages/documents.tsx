@@ -82,7 +82,7 @@ export default function Documents() {
   const skippedCount = documents.filter((d) => d.status === "skipped").length;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Invoices & Receipts" description="Every invoice and receipt generated across the hotel, with delivery status." />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -93,7 +93,7 @@ export default function Documents() {
       </div>
 
       <Card>
-        <div className="flex items-center justify-between p-4 border-b border-card-border">
+        <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
           <h2 className="text-lg font-semibold">Document log</h2>
         </div>
         {isLoading ? (

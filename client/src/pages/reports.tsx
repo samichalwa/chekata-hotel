@@ -176,7 +176,7 @@ export default function Reports() {
   }, [activeStaff]);
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader
         title="Reports"
         description="Every revenue and cost center, with Excel export for personnel, maintenance, revenue and cost reporting."

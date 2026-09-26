@@ -434,7 +434,7 @@ export default function BarRestaurant() {
   const restaurantMenu = menuItems.filter((m) => m.category === "restaurant").sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Bar & Restaurant" description="Take orders, manage the menu, and track outlet revenue." />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -452,7 +452,7 @@ export default function BarRestaurant() {
 
         <TabsContent value="orders" className="mt-4">
           <Card>
-            <div className="flex items-center justify-between p-4 border-b border-card-border">
+            <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
               <h2 className="text-lg font-semibold">Orders</h2>
               <NewOrderDialog trigger={<Button size="sm" data-testid="button-new-order"><Plus className="h-4 w-4 mr-1" /> New order</Button>} />
             </div>
@@ -533,7 +533,7 @@ export default function BarRestaurant() {
           </div>
           {([{ key: "bar", label: "Bar menu", list: barMenu, icon: Wine }, { key: "restaurant", label: "Restaurant menu", list: restaurantMenu, icon: UtensilsCrossed }] as const).map(({ key, label, list, icon: Icon }) => (
             <Card key={key}>
-              <div className="flex items-center justify-between p-4 border-b border-card-border">
+              <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
                 <h2 className="text-lg font-semibold flex items-center gap-2"><Icon className="h-4 w-4" /> {label}</h2>
               </div>
               {menuLoading ? (

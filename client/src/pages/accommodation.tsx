@@ -597,7 +597,7 @@ export default function Accommodation() {
   const sortedRooms = [...rooms].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader
         title="Accommodation"
         description="Manage rooms and guest bookings for the 8 standard and 2 executive rooms."
@@ -611,7 +611,7 @@ export default function Accommodation() {
       </div>
 
       <Tabs defaultValue="bookings">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <TabsList>
             <TabsTrigger value="bookings" data-testid="tab-bookings">Bookings</TabsTrigger>
             <TabsTrigger value="rooms" data-testid="tab-rooms">Rooms</TabsTrigger>
@@ -620,7 +620,7 @@ export default function Accommodation() {
 
         <TabsContent value="bookings" className="mt-4">
           <Card>
-            <div className="flex items-center justify-between p-4 border-b border-card-border">
+            <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
               <h2 className="text-lg font-semibold">Bookings</h2>
               <BookingFormDialog rooms={rooms} trigger={
                 <Button size="sm" data-testid="button-new-booking" disabled={rooms.length === 0}>
@@ -751,7 +751,7 @@ export default function Accommodation() {
 
         <TabsContent value="rooms" className="mt-4">
           <Card>
-            <div className="flex items-center justify-between p-4 border-b border-card-border">
+            <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
               <h2 className="text-lg font-semibold">Rooms</h2>
               <RoomFormDialog rooms={rooms} trigger={
                 <Button size="sm" data-testid="button-new-room"><Plus className="h-4 w-4 mr-1" /> Add room</Button>

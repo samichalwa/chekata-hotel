@@ -88,7 +88,7 @@ function LeaveTypeFormDialog({ leaveType, trigger }: { leaveType?: LeaveType; tr
             <FormField control={form.control} name="name" render={({ field }) => (
               <FormItem><FormLabel>Name</FormLabel><FormControl><Input {...field} data-testid="input-leavetype-name" /></FormControl><FormMessage /></FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="entitlementDaysPerYear" render={({ field }) => (
                 <FormItem><FormLabel>Entitlement days/year</FormLabel><FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-leavetype-entitlement" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -265,7 +265,7 @@ function NewLeaveRequestDialog({ staff, leaveTypes }: { staff: StaffMember[]; le
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="startDate" render={({ field }) => (
                 <FormItem><FormLabel>Start date</FormLabel><FormControl><Input type="date" {...field} data-testid="input-leaverequest-start" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -444,7 +444,7 @@ function LeaveBalancesTab() {
                   <SelectContent>{leaveTypes.map((lt) => <SelectItem key={lt.id} value={String(lt.id)}>{lt.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium">Entitlement (days)</label>
                   <Input type="number" value={form.entitlement} onChange={(e) => setForm((f) => ({ ...f, entitlement: e.target.value }))} data-testid="input-balance-entitlement" />
@@ -503,7 +503,7 @@ export default function Leave() {
   const approved = requests.filter((r) => r.status === "approved").length;
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Leave" description="Configure leave types, review requests, and track leave balances." />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
