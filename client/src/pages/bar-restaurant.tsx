@@ -97,7 +97,7 @@ function NewOrderDialog({ trigger }: { trigger: React.ReactNode }) {
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="customerName" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Customer name (optional)</FormLabel>
@@ -295,7 +295,7 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
             <span className="font-semibold tabular-nums">{formatKES(order.totalAmount)}</span>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Customer name (optional)</label>
               <Input

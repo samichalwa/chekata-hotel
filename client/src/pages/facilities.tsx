@@ -97,7 +97,7 @@ function FacilityFormDialog({ facility, trigger }: { facility?: Facility; trigge
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="rateType" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Rate type</FormLabel>
@@ -225,7 +225,7 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="clientName" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Client name</FormLabel>
@@ -256,7 +256,7 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
               </FormItem>
             )} />
             {facility?.rateType === "hourly" && (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField control={form.control} name="startTime" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Start time</FormLabel>
@@ -273,7 +273,7 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
                 )} />
               </div>
             )}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="rate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Rate (KES)</FormLabel>
@@ -289,7 +289,7 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
                 </FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="paymentMethod" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Payment method</FormLabel>

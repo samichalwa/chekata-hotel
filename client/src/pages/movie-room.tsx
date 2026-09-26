@@ -104,7 +104,7 @@ function ShowFormDialog({ show, trigger }: { show?: MovieShow; trigger: React.Re
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="startTime" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Start time</FormLabel>
@@ -396,7 +396,7 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
 
       <Card className="p-4 space-y-4">
         <h3 className="font-semibold">Guest details & payment</h3>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <Label>Guest name</Label>
             <Input value={guestName} onChange={(e) => setGuestName(e.target.value)} data-testid="input-guest-name" />
@@ -410,7 +410,7 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
           <Label>Email (optional — invoice is emailed here)</Label>
           <Input type="email" value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} placeholder="guest@example.com" data-testid="input-guest-email" />
         </div>
-        <div className="grid grid-cols-2 gap-4 items-end">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
           <div className="space-y-1.5">
             <Label>Amount paid now (KES)</Label>
             <Input type="number" value={amountPaid} onChange={(e) => setAmountPaid(e.target.value)} data-testid="input-booking-amount-paid" />
@@ -420,7 +420,7 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
             <span className="font-semibold tabular-nums">{formatKES(total)}</span>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <Label>Payment method</Label>
             <Select onValueChange={setPaymentMethod} value={paymentMethod}>
@@ -522,7 +522,7 @@ function EditBookingDialog({ booking, show, trigger }: { booking: MovieSeatBooki
             <FormField control={form.control} name="guestName" render={({ field }) => (
               <FormItem><FormLabel>Guest name</FormLabel><FormControl><Input {...field} data-testid="input-edit-guest-name" /></FormControl><FormMessage /></FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="guestPhone" render={({ field }) => (
                 <FormItem><FormLabel>Phone</FormLabel><FormControl><Input {...field} value={field.value ?? ""} data-testid="input-edit-guest-phone" /></FormControl><FormMessage /></FormItem>
               )} />
@@ -530,7 +530,7 @@ function EditBookingDialog({ booking, show, trigger }: { booking: MovieSeatBooki
                 <FormItem><FormLabel>Amount paid (KES)</FormLabel><FormControl><Input type="number" {...field} value={field.value as any} data-testid="input-edit-amount-paid" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="paymentMethod" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Payment method</FormLabel>

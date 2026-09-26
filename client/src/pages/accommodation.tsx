@@ -105,7 +105,7 @@ function RoomFormDialog({ room, rooms, trigger }: { room?: Room; rooms: Room[]; 
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="type" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Room type</FormLabel>
@@ -251,7 +251,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                 <FormMessage />
               </FormItem>
             )} />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="guestName" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Guest name</FormLabel>
@@ -267,7 +267,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                 </FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="guestEmail" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Email (optional — invoice/receipt is emailed here)</FormLabel>
@@ -283,7 +283,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                 </FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="checkIn" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Check-in</FormLabel>
@@ -299,7 +299,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                 </FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="rate" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Rate per night (KES)</FormLabel>
@@ -315,7 +315,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                 </FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="paymentMethod" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Payment method</FormLabel>
@@ -487,7 +487,7 @@ function IdentityDocumentsDialog({ booking, trigger }: { booking: AccommodationB
           {docs.length < 2 && (
             <div className="space-y-3 border-t pt-4">
               <h3 className="text-sm font-medium">Add a guest ID document</h3>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium">Guest number</label>
                   <Select onValueChange={setGuestNumber} value={guestNumber}>
@@ -507,7 +507,7 @@ function IdentityDocumentsDialog({ booking, trigger }: { booking: AccommodationB
                 <label className="text-sm font-medium">Guest name</label>
                 <Input value={guestName} onChange={(e) => setGuestName(e.target.value)} data-testid="input-id-guest-name" />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Front of ID (photo)</label>
                   <div className="flex gap-2">
