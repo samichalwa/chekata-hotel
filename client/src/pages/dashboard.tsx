@@ -4,6 +4,7 @@ import { Link } from "wouter";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { BedDouble, Wallet, TrendingUp, TrendingDown, PartyPopper, UtensilsCrossed, CalendarClock } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
+import { OwnerToday } from "@/components/owner-today";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
@@ -94,7 +95,11 @@ export default function Dashboard() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
-      <PageHeader title="Dashboard" description="The Chekata — overview for the current month." />
+      <OwnerToday />
+
+      <div className="border-t border-border pt-6">
+        <PageHeader title="This month" description="The Chekata — overview for the current month." />
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <StatCard label="Revenue (this month)" value={formatKES(totalRevenue)} icon={TrendingUp} accent="success" testId="stat-dashboard-revenue" />

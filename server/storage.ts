@@ -1158,6 +1158,19 @@ CREATE TABLE IF NOT EXISTS water_sales (
   created_at BIGINT NOT NULL
 )`;
   await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('water_sale', 'WS', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
+  // In-app notifications (Owner/Director briefing + bell). One row per recipient.
+  await sql`
+CREATE TABLE IF NOT EXISTS notifications (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  category TEXT NOT NULL DEFAULT 'system',
+  title TEXT NOT NULL,
+  body TEXT,
+  link_path TEXT,
+  created_at BIGINT NOT NULL,
+  read_at BIGINT
+)`;
+  await sql`CREATE INDEX IF NOT EXISTS notifications_user_created_idx ON notifications (user_id, created_at DESC)`;
   // Approval-workflow additions: standalone purchase orders now go through the same
   // draft -> pending_approval -> approved/rejected flow as requisitions.
   await ensureColumn("purchase_orders", "rejected_reason", "TEXT");

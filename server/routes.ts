@@ -37,6 +37,7 @@ import { buildDocumentPdf, buildMaintenanceReportPdf, buildPayslipPdf } from "./
 import { emailPayslipsForRun } from "./payroll-pdf-email";
 import { sendTransactionalEmail } from "./email";
 import { notifyApproversOfSubmission, notifyRequesterOfDecision, buildOriginFromRequest } from "./approvals";
+import { registerDirectorRoutes, notifyModuleUsers, kesText } from "./director";
 import ExcelJS from "exceljs";
 import { sendSms } from "./sms";
 import { saveBase64Upload, UploadValidationError, UPLOADS_ROOT, TEST_UPLOADS_ROOT } from "./uploads";
@@ -510,6 +511,7 @@ export async function registerRoutes(
         paymentReference: booking.paymentReference,
       });
       res.status(201).json({ ...booking, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
+      void notifyModuleUsers("accommodation", { category: "booking", title: `New booking: ${booking.guestName}`, body: `${booking.checkIn} → ${booking.checkOut} · ${kesText(booking.totalAmount)}`, linkPath: "/accommodation" }, (req as any).user?.id);
     } catch (err) { handleZodError(res, err); }
   });
   app.patch("/api/accommodation-bookings/:id", requireModule("accommodation"), async (req, res) => {
@@ -703,6 +705,7 @@ export async function registerRoutes(
         paymentReference: booking.paymentReference,
       });
       res.status(201).json({ ...booking, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
+      void notifyModuleUsers("facilities", { category: "booking", title: `New event booking: ${booking.clientName}`, body: `${booking.eventDate}${booking.startTime ? " " + booking.startTime : ""} · ${kesText(booking.totalAmount)}`, linkPath: "/facilities" }, (req as any).user?.id);
     } catch (err) { handleZodError(res, err); }
   });
   app.patch("/api/facility-bookings/:id", requireModule("facilities"), async (req, res) => {
@@ -1271,6 +1274,7 @@ export async function registerRoutes(
         smsResult = sms.ok ? { status: "sent" } : { status: "skipped", errorMessage: sms.error };
       }
       res.status(201).json({ ...created, _sms: smsResult });
+      void notifyModuleUsers("maintenance", { category: "maintenance", title: `Maintenance reported: ${created.title}`, body: `${String(created.priority).toUpperCase()} priority${created.location ? " · " + created.location : ""} · by ${created.reportedBy}`, linkPath: "/maintenance" }, (req as any).user?.id);
     } catch (err) { handleZodError(res, err); }
   });
   app.patch("/api/maintenance-issues/:id", requireModule("maintenance"), async (req, res) => {
@@ -2684,7 +2688,9 @@ export async function registerRoutes(
   app.post("/api/leave-requests", requireModule("leave"), async (req, res) => {
     try {
       const data = insertLeaveRequestSchema.parse(req.body);
-      res.status(201).json(await storage.createLeaveRequest(data));
+      const created = await storage.createLeaveRequest(data);
+      res.status(201).json(created);
+      void notifyModuleUsers("leave", { category: "leave", title: "New leave request", body: `${created.days} day${created.days === 1 ? "" : "s"} · ${created.startDate} → ${created.endDate}`, linkPath: "/approvals" }, (req as any).user?.id);
     } catch (err) { handleZodError(res, err); }
   });
   app.post("/api/leave-requests/:id/review", requireModule("leave"), async (req, res) => {
@@ -3129,6 +3135,9 @@ export async function registerRoutes(
       res.status(400).json({ error: err?.message ?? "Failed to issue credit note" });
     }
   });
+
+  // ---------- Owner / Director briefing + in-app notifications ----------
+  registerDirectorRoutes(app);
 
   return httpServer;
 }

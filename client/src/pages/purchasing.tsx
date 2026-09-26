@@ -312,7 +312,7 @@ function NewPrDialog({ items }: { items: InventoryItem[] }) {
   );
 }
 
-function ApprovePrDialog({ pr, suppliers, accounts, trigger }: { pr: PurchaseRequisition; suppliers: Supplier[]; accounts: ChartOfAccount[]; trigger: React.ReactNode }) {
+export function ApprovePrDialog({ pr, suppliers, accounts, trigger, onApproved }: { pr: Pick<PurchaseRequisition, "id" | "prNumber" | "type">; suppliers: Supplier[]; accounts: ChartOfAccount[]; trigger: React.ReactNode; onApproved?: () => void }) {
   const [open, setOpen] = useState(false);
   const [supplierId, setSupplierId] = useState<string>("");
   const [payableAccountId, setPayableAccountId] = useState<string>("");
@@ -327,6 +327,8 @@ function ApprovePrDialog({ pr, suppliers, accounts, trigger }: { pr: PurchaseReq
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/purchasing/requisitions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/purchasing/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/director/summary"] });
+      onApproved?.();
       toast({ title: "Requisition approved", description: "A purchase order has been generated." });
       setOpen(false); setSupplierId(""); setPayableAccountId(""); setExpenseAccountId("");
     },

@@ -10,6 +10,8 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { NotificationBell } from "@/components/notification-bell";
+import ApprovalsPage from "@/pages/approvals";
 import { Loader2, ShieldOff, Home } from "lucide-react";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
@@ -70,6 +72,8 @@ function AppRouter() {
   return (
     <Switch>
       <Route path="/" component={() => <Guarded moduleKey="dashboard" component={Dashboard} />} />
+      {/* Unified inbox: not a module/permission — its content is filtered by each underlying module. */}
+      <Route path="/approvals" component={ApprovalsPage} />
       <Route path="/accommodation" component={() => <Guarded moduleKey="accommodation" component={Accommodation} />} />
       <Route path="/facilities" component={() => <Guarded moduleKey="facilities" component={Facilities} />} />
       <Route path="/movie-room" component={() => <Guarded moduleKey="movie-room" component={MovieRoom} />} />
@@ -178,7 +182,10 @@ function App() {
                             <Home className="h-4 w-4" />
                           </Button>
                         </div>
-                        <ThemeToggle />
+                        <div className="flex items-center gap-1">
+                          <NotificationBell />
+                          <ThemeToggle />
+                        </div>
                       </header>
                       <main className="flex-1 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>
                         <AppRouter />

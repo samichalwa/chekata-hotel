@@ -50,6 +50,8 @@ import chekataLogo from "@/assets/chekata-logo.jpg";
 import { useCurrentUser, useLogout, canAccess } from "@/hooks/use-auth";
 import type { ModuleKey, Settings } from "@shared/schema";
 import { MODULE_CATEGORY_GROUPS } from "@shared/schema";
+import { CheckSquare } from "lucide-react";
+import { useDirectorSummary, hasAnyApprovalModule } from "@/lib/director";
 
 const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard, key: "dashboard" },
@@ -94,6 +96,11 @@ export function AppSidebar() {
   const { data: user } = useCurrentUser();
   const { data: settings } = useQuery<Settings>({ queryKey: ["/api/settings"] });
   const logout = useLogout();
+  // "Approvals" is a shortcut inbox, not a module: shown whenever the user holds
+  // any module that has an approval workflow. Never part of MODULE_CATEGORY_GROUPS.
+  const showApprovals = hasAnyApprovalModule(user);
+  const { data: summary } = useDirectorSummary();
+  const approvalsCount = summary?.approvals.total ?? 0;
 
   const visibleItems = items.filter((item) => canAccess(user, item.key));
   const visibleKeys = new Set(visibleItems.map((item) => item.key));
@@ -137,6 +144,27 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent className="gap-0">
+        {showApprovals && (
+          <SidebarGroup className="p-0 px-2 pt-1 pb-0.5">
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/approvals"} data-testid="link-approvals">
+                    <Link href="/approvals" onClick={closeMobileNav}>
+                      <CheckSquare />
+                      <span>Approvals</span>
+                      {approvalsCount > 0 && (
+                        <span className="ml-auto min-w-5 rounded-full bg-destructive px-1.5 text-center text-[11px] font-semibold leading-5 text-destructive-foreground tabular-nums group-data-[collapsible=icon]:hidden" data-testid="badge-sidebar-approvals">
+                          {approvalsCount > 99 ? "99+" : approvalsCount}
+                        </span>
+                      )}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
         {groupedMenu.map((group) => {
           const isOpen = openGroups[group.label] ?? false;
           return (

@@ -1,6 +1,7 @@
 import type { IStorage } from "./storage";
 import { sendTransactionalEmail } from "./email";
 import { parsePermissions } from "./auth";
+import { notifyModuleUsers, notifyUserByFullName } from "./director";
 import type { ModuleKey, Settings } from "@shared/schema";
 
 // Same pattern used for username-as-email validation elsewhere (see the password
@@ -44,6 +45,13 @@ export interface ApprovalNotifyInput {
 // Fired when a requester submits a draft for approval. Emails every active user
 // who holds the relevant module (admins always count as approvers too).
 export async function notifyApproversOfSubmission(ctx: NotifyContext, input: ApprovalNotifyInput): Promise<void> {
+  // In-app bell notification for every approver (independent of whether they have an email address).
+  await notifyModuleUsers(input.moduleKey, {
+    category: "approval",
+    title: `Approval needed: ${input.docNumber}`,
+    body: `${input.docType} from ${input.requestedBy}${input.purpose ? ` — ${input.purpose}` : ""}`,
+    linkPath: "/approvals",
+  });
   const approvers = await getApproverEmails(ctx.storage, input.moduleKey);
   if (approvers.length === 0) return;
   const hotelName = ctx.settings.hotelName || "The Chekata";
@@ -81,6 +89,12 @@ export interface DecisionNotifyInput {
 // Fired when an approver approves or declines a request. Emails the original requester
 // (matched by full name to an active user account whose username is an email address).
 export async function notifyRequesterOfDecision(ctx: NotifyContext, input: DecisionNotifyInput): Promise<void> {
+  await notifyUserByFullName(input.requestedBy, {
+    category: "decision",
+    title: `${input.docType} ${input.decision === "approved" ? "approved" : "declined"}: ${input.docNumber}`,
+    body: `By ${input.decidedBy}${input.reason ? ` — ${input.reason}` : ""}`,
+    linkPath: input.linkPath,
+  });
   const email = await getUserEmailByFullName(ctx.storage, input.requestedBy);
   if (!email) return;
   const hotelName = ctx.settings.hotelName || "The Chekata";
