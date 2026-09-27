@@ -456,35 +456,41 @@ export function registerDirectorRoutes(app: Express) {
     }
   });
 
+  // Notifications are removed as soon as they are read (opened) or deleted,
+  // so the list only ever holds what still needs attention.
   app.get("/api/notifications", async (req, res) => {
     const uid = currentUserId(req);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
     const rows = await sql`SELECT id, category, title, body, link_path, created_at, read_at FROM notifications
-      WHERE user_id = ${uid} ORDER BY created_at DESC, id DESC LIMIT ${limit}`;
+      WHERE user_id = ${uid} AND read_at IS NULL ORDER BY created_at DESC, id DESC LIMIT ${limit}`;
     const [{ c }] = await sql`SELECT COUNT(*)::int AS c FROM notifications WHERE user_id = ${uid} AND read_at IS NULL`;
     res.json({
       unread: n(c),
-      items: rows.map((r: any) => ({ id: r.id, category: r.category, title: r.title, body: r.body, linkPath: r.link_path, createdAt: n(r.created_at), readAt: r.read_at ? n(r.read_at) : null })),
+      items: rows.map((r: any) => ({ id: r.id, category: r.category, title: r.title, body: r.body, linkPath: r.link_path, createdAt: n(r.created_at), readAt: null })),
     });
   });
 
-  // Body: { ids?: number[] } — omit ids to mark everything read.
-  app.post("/api/notifications/read", async (req, res) => {
+  // Body: { ids?: number[] } — omit ids to remove everything for this user.
+  const removeNotifications = async (req: any, res: any) => {
     const uid = currentUserId(req);
+    if (!uid) return res.status(401).json({ error: "Not signed in" });
     const ids = Array.isArray(req.body?.ids) ? (req.body.ids as unknown[]).map(Number).filter(Number.isFinite) : null;
-    const now = Date.now();
     if (ids && ids.length > 0) {
-      await sql`UPDATE notifications SET read_at = ${now} WHERE user_id = ${uid} AND read_at IS NULL AND id IN ${sql(ids)}`;
+      await sql`DELETE FROM notifications WHERE user_id = ${uid} AND id IN ${sql(ids)}`;
     } else {
-      await sql`UPDATE notifications SET read_at = ${now} WHERE user_id = ${uid} AND read_at IS NULL`;
+      await sql`DELETE FROM notifications WHERE user_id = ${uid}`;
     }
     res.json({ ok: true });
-  });
-
-  // Housekeeping: clear read notifications older than 90 days (called opportunistically).
-  app.delete("/api/notifications/read", async (req, res) => {
+  };
+  app.post("/api/notifications/read", removeNotifications);
+  app.post("/api/notifications/delete", removeNotifications);
+  app.delete("/api/notifications/read", removeNotifications);
+  app.delete("/api/notifications/:id", async (req, res) => {
     const uid = currentUserId(req);
-    await sql`DELETE FROM notifications WHERE user_id = ${uid} AND read_at IS NOT NULL`;
+    if (!uid) return res.status(401).json({ error: "Not signed in" });
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    await sql`DELETE FROM notifications WHERE user_id = ${uid} AND id = ${id}`;
     res.json({ ok: true });
   });
 }

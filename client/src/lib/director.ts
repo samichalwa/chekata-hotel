@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { ModuleKey } from "@shared/schema";
@@ -53,18 +54,51 @@ export function useNotifications() {
   });
 }
 
-export function useMarkNotificationsRead() {
+type NotificationsData = { unread: number; items: NotificationItem[] };
+
+// Reading (opening) or deleting a notification removes it. Updates the list
+// optimistically so the row disappears immediately.
+export function useRemoveNotifications() {
   return useMutation({
-    mutationFn: async (ids?: number[]) => apiRequest("POST", "/api/notifications/read", ids ? { ids } : {}),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY }),
+    mutationFn: async (ids?: number[]) => apiRequest("POST", "/api/notifications/delete", ids ? { ids } : {}),
+    onMutate: async (ids?: number[]) => {
+      await queryClient.cancelQueries({ queryKey: NOTIFICATIONS_KEY });
+      const prev = queryClient.getQueryData<NotificationsData>(NOTIFICATIONS_KEY);
+      if (prev) {
+        const items = ids ? prev.items.filter((i) => !ids.includes(i.id)) : [];
+        const removed = prev.items.length - items.length;
+        queryClient.setQueryData<NotificationsData>(NOTIFICATIONS_KEY, { unread: ids ? Math.max(0, prev.unread - removed) : 0, items });
+      }
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) queryClient.setQueryData(NOTIFICATIONS_KEY, ctx.prev); },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY }),
   });
 }
 
-export function useClearReadNotifications() {
-  return useMutation({
-    mutationFn: async () => apiRequest("DELETE", "/api/notifications/read"),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY }),
-  });
+// Live alerts are computed from current data, so they can't be deleted — but
+// they can be dismissed from the bell. A dismissal is remembered on this device
+// until the alert's wording changes (e.g. a new amount) or the day rolls over.
+const DISMISS_KEY = "chaims.dismissedAlerts";
+function alertSig(a: DirectorAlert): string { return `${a.id}|${a.title}|${a.detail ?? ""}`; }
+function todayKey(): string { return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Nairobi" }); }
+function readDismissed(): string[] {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(DISMISS_KEY) || "null");
+    return raw && raw.day === todayKey() && Array.isArray(raw.sigs) ? raw.sigs : [];
+  } catch { return []; }
+}
+export function useDismissedAlerts() {
+  const [sigs, setSigs] = useState<string[]>(() => readDismissed());
+  const save = (next: string[]) => {
+    setSigs(next);
+    try { window.localStorage.setItem(DISMISS_KEY, JSON.stringify({ day: todayKey(), sigs: next })); } catch { /* storage unavailable */ }
+  };
+  return {
+    isDismissed: (a: DirectorAlert) => sigs.includes(alertSig(a)),
+    dismiss: (a: DirectorAlert) => save(Array.from(new Set([...sigs, alertSig(a)]))),
+    dismissAll: (list: DirectorAlert[]) => save(Array.from(new Set([...sigs, ...list.map(alertSig)]))),
+  };
 }
 
 // Modules that carry an approval workflow. Used only to decide whether to show

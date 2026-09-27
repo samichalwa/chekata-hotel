@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { Bell, CheckCheck, AlertOctagon, AlertTriangle, Info, CheckSquare, BedDouble, Wrench, CalendarDays, FileCheck2, Trash2, BellRing, BellOff, FileBarChart } from "lucide-react";
+import { Bell, CheckCheck, AlertOctagon, AlertTriangle, Info, CheckSquare, BedDouble, Wrench, CalendarDays, FileCheck2, BellRing, BellOff, FileBarChart, X } from "lucide-react";
 import { usePush } from "@/lib/push";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  useNotifications, useMarkNotificationsRead, useClearReadNotifications, useDirectorSummary, relativeTime,
+  useNotifications, useRemoveNotifications, useDismissedAlerts, useDirectorSummary, relativeTime,
   type NotificationItem, type DirectorAlert,
 } from "@/lib/director";
 
@@ -25,12 +25,12 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const { data } = useNotifications();
   const { data: summary } = useDirectorSummary();
-  const markRead = useMarkNotificationsRead();
-  const clearRead = useClearReadNotifications();
+  const remove = useRemoveNotifications();
+  const dismissed = useDismissedAlerts();
 
   const unread = data?.unread ?? 0;
   const items = data?.items ?? [];
-  const alerts = summary?.alerts ?? [];
+  const alerts = (summary?.alerts ?? []).filter((a) => !dismissed.isDismissed(a));
   const urgentAlerts = alerts.filter((a) => a.severity !== "info").length;
   const badge = unread + urgentAlerts;
 
@@ -44,7 +44,7 @@ export function NotificationBell() {
   }, [badge]);
 
   const openItem = (n: NotificationItem) => {
-    if (!n.readAt) markRead.mutate([n.id]);
+    remove.mutate([n.id]); // opened = read = removed
     setOpen(false);
     go(n.linkPath);
   };
@@ -65,14 +65,9 @@ export function NotificationBell() {
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
           <p className="text-sm font-semibold">Notifications</p>
           <div className="flex items-center gap-1">
-            {unread > 0 && (
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => markRead.mutate(undefined)} disabled={markRead.isPending} data-testid="button-mark-all-read">
-                <CheckCheck className="h-3.5 w-3.5 mr-1" />Mark all read
-              </Button>
-            )}
-            {items.some((i) => i.readAt) && (
-              <Button variant="ghost" size="icon" className="h-7 w-7" title="Clear read" aria-label="Clear read notifications" onClick={() => clearRead.mutate()} disabled={clearRead.isPending} data-testid="button-clear-read">
-                <Trash2 className="h-3.5 w-3.5" />
+            {(items.length > 0 || alerts.length > 0) && (
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => { if (items.length) remove.mutate(undefined); dismissed.dismissAll(alerts); }} disabled={remove.isPending} data-testid="button-clear-all">
+                <CheckCheck className="h-3.5 w-3.5 mr-1" />Clear all
               </Button>
             )}
           </div>
@@ -85,13 +80,18 @@ export function NotificationBell() {
                 {alerts.map((a) => {
                   const sev = SEVERITY_ICON[a.severity];
                   return (
-                    <button key={a.id} type="button" onClick={() => { setOpen(false); go(a.link); }} className="flex w-full items-start gap-2.5 px-3 py-2 text-left hover-elevate" data-testid={`bell-alert-${a.id}`}>
+                    <div key={a.id} className="group flex items-start hover-elevate">
+                    <button type="button" onClick={() => { setOpen(false); go(a.link); }} className="flex min-w-0 flex-1 items-start gap-2.5 py-2 pl-3 text-left" data-testid={`bell-alert-${a.id}`}>
                       <sev.icon className={`mt-0.5 h-4 w-4 shrink-0 ${sev.cls}`} />
                       <span className="min-w-0">
                         <span className="block text-sm font-medium leading-snug">{a.title}</span>
                         {a.detail && <span className="block text-xs text-muted-foreground truncate">{a.detail}</span>}
                       </span>
                     </button>
+                    <Button variant="ghost" size="icon" className="mr-1 mt-1 h-7 w-7 shrink-0 text-muted-foreground" aria-label={`Dismiss alert: ${a.title}`} title="Dismiss" onClick={() => dismissed.dismiss(a)} data-testid={`button-dismiss-alert-${a.id}`}>
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                    </div>
                   );
                 })}
               </div>
@@ -99,19 +99,23 @@ export function NotificationBell() {
             <div className="py-1">
               <p className="px-3 pt-1.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Activity</p>
               {items.length === 0 ? (
-                <p className="px-3 py-4 text-sm text-muted-foreground" data-testid="text-no-notifications">No notifications yet. New bookings, approval requests and decisions will appear here.</p>
+                <p className="px-3 py-4 text-sm text-muted-foreground" data-testid="text-no-notifications">You’re all caught up. New bookings, approval requests and decisions will appear here.</p>
               ) : items.map((n) => {
                 const Icon = CATEGORY_ICON[n.category] ?? Info;
                 return (
-                  <button key={n.id} type="button" onClick={() => openItem(n)} className={`flex w-full items-start gap-2.5 px-3 py-2 text-left hover-elevate ${n.readAt ? "" : "bg-primary/5"}`} data-testid={`notification-${n.id}`}>
-                    <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1">
-                      <span className={`block text-sm leading-snug ${n.readAt ? "" : "font-semibold"}`}>{n.title}</span>
-                      {n.body && <span className="block text-xs text-muted-foreground line-clamp-2">{n.body}</span>}
-                      <span className="block text-[11px] text-muted-foreground mt-0.5">{relativeTime(n.createdAt)}</span>
-                    </span>
-                    {!n.readAt && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="Unread" />}
-                  </button>
+                  <div key={n.id} className="flex items-start bg-primary/5 hover-elevate">
+                    <button type="button" onClick={() => openItem(n)} className="flex min-w-0 flex-1 items-start gap-2.5 py-2 pl-3 text-left" data-testid={`notification-${n.id}`}>
+                      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-semibold leading-snug">{n.title}</span>
+                        {n.body && <span className="block text-xs text-muted-foreground line-clamp-2">{n.body}</span>}
+                        <span className="block text-[11px] text-muted-foreground mt-0.5">{relativeTime(n.createdAt)}</span>
+                      </span>
+                    </button>
+                    <Button variant="ghost" size="icon" className="mr-1 mt-1 h-7 w-7 shrink-0 text-muted-foreground" aria-label={`Delete notification: ${n.title}`} title="Delete" onClick={() => remove.mutate([n.id])} data-testid={`button-delete-notification-${n.id}`}>
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 );
               })}
             </div>
