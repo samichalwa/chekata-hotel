@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Save, Send, Mail, MessageSquare, Building2, Plus, Pencil, Trash2, Percent, ShieldCheck, KeyRound, FileBarChart } from "lucide-react";
+import { Save, Send, Mail, MessageSquare, Building2, Plus, Pencil, Trash2, Percent, ShieldCheck, KeyRound, FileBarChart, Globe } from "lucide-react";
 import { PageHeader } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -23,6 +23,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import type { Settings, Tax, SafeUser, ModuleKey, Staff } from "@shared/schema";
 import { MODULE_KEYS, MODULE_LABELS, MODULE_CATEGORY_GROUPS } from "@shared/schema";
 import { DailyReportSettingsTab } from "@/components/daily-report-settings";
+import { OnlineBookingSettingsTab } from "@/components/online-booking-settings";
 
 const settingsFormSchema = z.object({
   hotelName: z.string().min(1, "Hotel name is required"),
@@ -955,6 +956,7 @@ export default function SettingsPage() {
           <TabsTrigger value="hotel" data-testid="tab-hotel-email"><Building2 className="h-4 w-4 mr-1" /> Hotel &amp; Email</TabsTrigger>
           <TabsTrigger value="taxes" data-testid="tab-taxes"><Percent className="h-4 w-4 mr-1" /> Taxes</TabsTrigger>
           {currentUser?.isAdmin && <TabsTrigger value="daily-report" data-testid="tab-daily-report"><FileBarChart className="h-4 w-4 mr-1" /> Daily report</TabsTrigger>}
+          {currentUser?.isAdmin && <TabsTrigger value="online-booking" data-testid="tab-online-booking"><Globe className="h-4 w-4 mr-1" /> Online booking</TabsTrigger>}
           {currentUser?.isAdmin && <TabsTrigger value="users" data-testid="tab-users"><KeyRound className="h-4 w-4 mr-1" /> Users &amp; Access</TabsTrigger>}
         </TabsList>
         <TabsContent value="hotel" className="pt-4">
@@ -966,6 +968,11 @@ export default function SettingsPage() {
         {currentUser?.isAdmin && (
           <TabsContent value="daily-report" className="pt-4">
             <DailyReportSettingsTab />
+          </TabsContent>
+        )}
+        {currentUser?.isAdmin && (
+          <TabsContent value="online-booking" className="pt-4">
+            <OnlineBookingSettingsTab />
           </TabsContent>
         )}
         {currentUser?.isAdmin && (

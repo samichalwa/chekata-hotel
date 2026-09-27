@@ -1,3 +1,5 @@
+import { paymentReferenceGuard } from "./payment-refs";
+import { registerPublicBookingRoutes, registerOnlineBookingStaffRoutes } from "./public-booking";
 import type { Express } from "express";
 import { z } from "zod";
 import { createServer } from 'node:http';
@@ -277,9 +279,13 @@ export async function registerRoutes(
   });
 
   registerPublicDailyReportRoute(app);
+  registerPublicBookingRoutes(app);
 
   // ---------- Everything below requires a signed-in, active user ----------
   app.use("/api", requireAuth);
+  // No payment reference (M-Pesa code, slip, bank ref) may ever be recorded twice.
+  app.use("/api", paymentReferenceGuard);
+  registerOnlineBookingStaffRoutes(app);
 
   // ---------- Uploads (ID-document photos, lease documents) ----------
   function handleUpload(category: string) {

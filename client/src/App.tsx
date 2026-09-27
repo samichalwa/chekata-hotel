@@ -13,6 +13,8 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notification-bell";
 import ApprovalsPage from "@/pages/approvals";
 import AllBookingsPage from "@/pages/all-bookings";
+import OnlineBookingsPage from "@/pages/online-bookings";
+import PublicBookPage from "@/pages/public-book";
 import { Loader2, ShieldOff, Home } from "lucide-react";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
@@ -69,6 +71,19 @@ function Guarded({ moduleKey, component: Component, requireAdminUsername }: { mo
   return <Component />;
 }
 
+function OnlineBookingsGate() {
+  const { data: user } = useCurrentUser();
+  if (!canAccess(user, "movie-room") && !canAccess(user, "bar-restaurant")) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
+        <ShieldOff className="h-8 w-8" />
+        <p>You don't have access to this section. Ask your administrator to grant access.</p>
+      </div>
+    );
+  }
+  return <OnlineBookingsPage />;
+}
+
 function AppRouter() {
   return (
     <Switch>
@@ -76,6 +91,8 @@ function AppRouter() {
       {/* Unified inbox: not a module/permission — its content is filtered by each underlying module. */}
       <Route path="/approvals" component={ApprovalsPage} />
       <Route path="/bookings" component={AllBookingsPage} />
+      {/* Online bookings: shortcut view (not a module) for movie-room / bar-restaurant holders. */}
+      <Route path="/online-bookings" component={OnlineBookingsGate} />
       <Route path="/accommodation" component={() => <Guarded moduleKey="accommodation" component={Accommodation} />} />
       <Route path="/facilities" component={() => <Guarded moduleKey="facilities" component={Facilities} />} />
       <Route path="/movie-room" component={() => <Guarded moduleKey="movie-room" component={MovieRoom} />} />
@@ -128,6 +145,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const resetToken = getResetToken(hash);
   const { data: setupStatus, isLoading: setupLoading } = useSetupStatus();
   const { data: user, isLoading: userLoading } = useCurrentUser();
+
+  // Public booking page for guests (movie seats / tables) — no sign-in.
+  if (hash.replace(/^#\/?/, "").split("?")[0] === "book") {
+    return <PublicBookPage />;
+  }
 
   // Password reset via an emailed link is reachable regardless of sign-in state.
   if (hash.replace(/^#\/?/, "").split("?")[0] === "reset-password") {

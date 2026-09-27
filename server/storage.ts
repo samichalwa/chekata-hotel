@@ -1095,6 +1095,60 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await ensureColumn("settings", "daily_report_sms_phones", "TEXT");
   await ensureColumn("settings", "daily_report_whatsapp_phone", "TEXT");
   await ensureColumn("settings", "daily_report_push", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("settings", "public_movie_booking_enabled", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("settings", "public_table_booking_enabled", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("settings", "mpesa_payment_type", "TEXT NOT NULL DEFAULT 'till'");
+  await ensureColumn("settings", "mpesa_number", "TEXT");
+  await ensureColumn("settings", "mpesa_account_number", "TEXT");
+  await ensureColumn("settings", "mpesa_business_name", "TEXT");
+  await ensureColumn("settings", "mpesa_message_max_age_hours", "INTEGER NOT NULL DEFAULT 24");
+  await ensureColumn("settings", "public_table_deposit", "REAL NOT NULL DEFAULT 1000");
+  await ensureColumn("settings", "public_table_max_party", "INTEGER NOT NULL DEFAULT 12");
+  await ensureColumn("settings", "public_table_open_time", "TEXT NOT NULL DEFAULT '07:00'");
+  await ensureColumn("settings", "public_table_close_time", "TEXT NOT NULL DEFAULT '22:00'");
+  await ensureColumn("settings", "public_movie_max_seats", "INTEGER NOT NULL DEFAULT 6");
+  await ensureColumn("settings", "public_booking_note", "TEXT");
+  await sql.unsafe(`
+CREATE TABLE IF NOT EXISTS table_reservations (
+  id SERIAL PRIMARY KEY,
+  reservation_ref TEXT NOT NULL UNIQUE,
+  outlet TEXT NOT NULL DEFAULT 'restaurant',
+  table_id INTEGER,
+  guest_name TEXT NOT NULL,
+  guest_phone TEXT NOT NULL,
+  guest_email TEXT,
+  reservation_date TEXT NOT NULL,
+  reservation_time TEXT NOT NULL,
+  party_size INTEGER NOT NULL DEFAULT 2,
+  notes TEXT,
+  status TEXT NOT NULL DEFAULT 'awaiting_verification',
+  source TEXT NOT NULL DEFAULT 'online',
+  deposit_amount REAL NOT NULL DEFAULT 0,
+  deposit_paid REAL NOT NULL DEFAULT 0,
+  payment_reference TEXT,
+  created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS online_payments (
+  id SERIAL PRIMARY KEY,
+  kind TEXT NOT NULL,
+  target_ref TEXT NOT NULL,
+  guest_name TEXT NOT NULL,
+  guest_phone TEXT NOT NULL,
+  guest_email TEXT,
+  mpesa_code TEXT NOT NULL UNIQUE,
+  amount REAL NOT NULL,
+  amount_due REAL NOT NULL,
+  paid_at BIGINT,
+  payer_name TEXT,
+  recipient TEXT,
+  raw_message TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  reviewed_by TEXT,
+  reviewed_at BIGINT,
+  review_note TEXT,
+  summary TEXT,
+  created_at BIGINT NOT NULL
+);`);
 
   // ---- Approval matrix wiring (Sept 2026): PR/PO/IR/leave/payment voucher routing ----
   await ensureColumn("approval_matrix_rules", "item_category", "TEXT");

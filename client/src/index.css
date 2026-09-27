@@ -314,3 +314,42 @@
     inset: -1px;
   }
 }
+
+
+/* Phone layout for data tables (see components/ui/table.tsx `stack`):
+   each row becomes a card, each cell a "Label  value" line. */
+@media (max-width: 639px) {
+  table.table-stack > thead { display: none; }
+  table.table-stack, table.table-stack > tbody, table.table-stack > tfoot,
+  table.table-stack > tbody > tr, table.table-stack > tfoot > tr { display: block; width: 100%; }
+  table.table-stack > tbody > tr, table.table-stack > tfoot > tr {
+    padding: 0.75rem 1rem; border-bottom: 1px solid hsl(var(--border));
+  }
+  table.table-stack > tbody > tr:last-child { border-bottom: 0; }
+  table.table-stack > tbody > tr > td, table.table-stack > tfoot > tr > td {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    width: 100%; min-width: 0; padding: 0.2rem 0 !important; text-align: right !important;
+    white-space: normal; overflow-wrap: anywhere;
+  }
+  table.table-stack > tbody > tr > td::before, table.table-stack > tfoot > tr > td::before {
+    content: attr(data-label); flex-shrink: 0; max-width: 45%;
+    font-size: 0.75rem; line-height: 1.25rem; color: hsl(var(--muted-foreground)); text-align: left;
+  }
+  /* First column is the row's title: full width, no label. */
+  table.table-stack > tbody > tr > td:first-child {
+    justify-content: flex-start; text-align: left !important; font-weight: 500; padding-bottom: 0.35rem !important;
+  }
+  table.table-stack > tbody > tr > td:first-child::before,
+  table.table-stack td[data-label=""]::before,
+  table.table-stack td[data-label="Actions"]::before,
+  table.table-stack td[data-label="Action"]::before { content: none; }
+  table.table-stack td[data-label=""]:not(:first-child) { justify-content: center; text-align: center !important; }
+  /* Action buttons sit on their own line, left-aligned. */
+  table.table-stack td[data-label="Actions"], table.table-stack td[data-label="Action"] {
+    justify-content: flex-start; padding-top: 0.4rem !important;
+  }
+  table.table-stack td[data-label="Actions"] > *, table.table-stack td[data-label="Action"] > * { justify-content: flex-start; flex-wrap: wrap; margin-left: -0.5rem; }
+  /* Empty cells (no value) are hidden to keep cards compact. */
+  table.table-stack > tbody > tr > td:empty { display: none; }
+  table.table-stack > tbody > tr > td > * { max-width: 100%; }
+}

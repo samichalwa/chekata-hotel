@@ -2,18 +2,66 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-const Table = React.forwardRef<
-  HTMLTableElement,
-  React.HTMLAttributes<HTMLTableElement>
->(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
-    <table
-      ref={ref}
-      className={cn("w-full caption-bottom text-sm", className)}
-      {...props}
-    />
-  </div>
-))
+type TableProps = React.HTMLAttributes<HTMLTableElement> & {
+  /**
+   * On phones (< 640px) each row is shown as a stacked card, every value
+   * labelled with its column heading (labels are read from the header row
+   * automatically). Pass `stack={false}` for wide grids that should keep
+   * horizontal scrolling instead (e.g. day-by-day matrices).
+   */
+  stack?: boolean
+}
+
+const Table = React.forwardRef<HTMLTableElement, TableProps>(({ className, stack = true, ...props }, ref) => {
+  const innerRef = React.useRef<HTMLTableElement | null>(null)
+  const setRefs = React.useCallback((node: HTMLTableElement | null) => {
+    innerRef.current = node
+    if (typeof ref === "function") ref(node)
+    else if (ref) (ref as React.MutableRefObject<HTMLTableElement | null>).current = node
+  }, [ref])
+
+  React.useLayoutEffect(() => {
+    const table = innerRef.current
+    if (!table || !stack) return
+    let frame = 0
+    const apply = () => {
+      frame = 0
+      const headRow = table.querySelector(":scope > thead > tr:last-child")
+      const labels: string[] = []
+      if (headRow) {
+        for (const th of Array.from(headRow.children) as HTMLTableCellElement[]) {
+          const text = (th.getAttribute("data-label") ?? th.textContent ?? "").trim()
+          for (let i = 0; i < (th.colSpan || 1); i++) labels.push(text)
+        }
+      }
+      for (const tr of Array.from(table.querySelectorAll(":scope > tbody > tr, :scope > tfoot > tr"))) {
+        let col = 0
+        for (const td of Array.from(tr.children) as HTMLTableCellElement[]) {
+          const span = td.colSpan || 1
+          if (!td.hasAttribute("data-label-fixed")) {
+            const label = span > 1 ? "" : labels[col] ?? ""
+            if (td.getAttribute("data-label") !== label) td.setAttribute("data-label", label)
+          }
+          col += span
+        }
+      }
+    }
+    apply()
+    const observer = new MutationObserver(() => { if (!frame) frame = requestAnimationFrame(apply) })
+    observer.observe(table, { childList: true, subtree: true, characterData: true })
+    return () => { observer.disconnect(); if (frame) cancelAnimationFrame(frame) }
+  }, [stack])
+
+  return (
+    <div className="relative w-full overflow-auto">
+      <table
+        ref={setRefs}
+        className={cn("w-full caption-bottom text-sm", stack && "table-stack", className)}
+        {...props}
+      />
+    </div>
+  )
+})
 Table.displayName = "Table"
 
 const TableHeader = React.forwardRef<

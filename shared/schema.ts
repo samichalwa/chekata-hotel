@@ -496,6 +496,21 @@ export const settings = pgTable("settings", {
   dailyReportSmsPhones: text("daily_report_sms_phones"), // comma-separated; SMS carries a PDF link
   dailyReportWhatsappPhone: text("daily_report_whatsapp_phone"), // prefills the WhatsApp share button
   dailyReportPush: integer("daily_report_push").notNull().default(1), // push to users with the dashboard module
+  // Public online booking (#/book): guests pay by M-Pesa first and paste the confirmation SMS;
+  // nothing is held until a valid payment message is submitted, and the office verifies it.
+  publicMovieBookingEnabled: integer("public_movie_booking_enabled").notNull().default(1),
+  publicTableBookingEnabled: integer("public_table_booking_enabled").notNull().default(1),
+  mpesaPaymentType: text("mpesa_payment_type").notNull().default("till"), // till | paybill | phone
+  mpesaNumber: text("mpesa_number"), // till / paybill / phone number guests pay to
+  mpesaAccountNumber: text("mpesa_account_number"), // paybill account (blank = use the booking reference)
+  mpesaBusinessName: text("mpesa_business_name"), // name as it appears on the guest's M-Pesa message
+  mpesaMessageMaxAgeHours: integer("mpesa_message_max_age_hours").notNull().default(24),
+  publicTableDeposit: real("public_table_deposit").notNull().default(1000), // KES per reservation, credited to the bill
+  publicTableMaxParty: integer("public_table_max_party").notNull().default(12),
+  publicTableOpenTime: text("public_table_open_time").notNull().default("07:00"),
+  publicTableCloseTime: text("public_table_close_time").notNull().default("22:00"),
+  publicMovieMaxSeats: integer("public_movie_max_seats").notNull().default(6),
+  publicBookingNote: text("public_booking_note"),
 });
 
 export const insertSettingsSchema = createInsertSchema(settings).omit({ id: true });
@@ -1522,3 +1537,52 @@ export const insertWaterSaleSchema = createInsertSchema(waterSales).omit({
 });
 export type InsertWaterSale = z.infer<typeof insertWaterSaleSchema>;
 export type WaterSale = typeof waterSales.$inferSelect;
+
+
+// ---------- Online (public) bookings ----------
+// Restaurant / bar table reservations — from the public page (deposit paid by M-Pesa) or staff.
+export const TABLE_RESERVATION_STATUSES = ["awaiting_verification", "confirmed", "seated", "completed", "cancelled", "no_show"] as const;
+export type TableReservationStatus = typeof TABLE_RESERVATION_STATUSES[number];
+export interface TableReservation {
+  id: number;
+  reservationRef: string;
+  outlet: string; // restaurant | bar
+  tableId: number | null;
+  guestName: string;
+  guestPhone: string;
+  guestEmail: string | null;
+  reservationDate: string; // YYYY-MM-DD
+  reservationTime: string; // HH:MM
+  partySize: number;
+  notes: string | null;
+  status: TableReservationStatus;
+  source: string; // online | staff
+  depositAmount: number;
+  depositPaid: number;
+  paymentReference: string | null;
+  createdAt: number;
+}
+
+// A pasted M-Pesa confirmation awaiting the office's check. kind=movie → targetRef is the
+// seat bookingRef; kind=table → targetRef is the reservationRef.
+export interface OnlinePayment {
+  id: number;
+  kind: "movie" | "table";
+  targetRef: string;
+  guestName: string;
+  guestPhone: string;
+  guestEmail: string | null;
+  mpesaCode: string;
+  amount: number;
+  amountDue: number;
+  paidAt: number | null;
+  payerName: string | null;
+  recipient: string | null;
+  rawMessage: string;
+  status: "pending" | "verified" | "rejected";
+  reviewedBy: string | null;
+  reviewedAt: number | null;
+  reviewNote: string | null;
+  createdAt: number;
+  summary: string | null; // human line e.g. "Friday Movie — Seats A1, A2 (Sat 27 Sep 19:00)"
+}

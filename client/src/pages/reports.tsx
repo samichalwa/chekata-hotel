@@ -245,7 +245,7 @@ export default function Reports() {
               <h2 className="text-lg font-semibold">Profit & loss summary</h2>
             </div>
             <div className="overflow-x-auto">
-              <Table>
+              <Table stack={false}>
                 <TableBody>
                   <TableRow className="bg-muted/40">
                     <TableCell className="font-semibold" colSpan={2}>Revenue</TableCell>

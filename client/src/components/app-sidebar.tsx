@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   LayoutDashboard,
   CalendarRange,
+  Globe,
   Plus,
   Minus,
   BedDouble,
@@ -102,6 +103,10 @@ export function AppSidebar() {
   const showApprovals = hasAnyApprovalModule(user);
   // "All bookings" is likewise a shortcut view (rooms + events + movie seats), not a module.
   const showAllBookings = (["accommodation", "facilities", "movie-room"] as const).some((m) => canAccess(user, m));
+  // "Online bookings" is a shortcut view (public-page M-Pesa verification), not a module.
+  const showOnlineBookings = canAccess(user, "movie-room") || canAccess(user, "bar-restaurant");
+  const { data: onlinePending } = useQuery<{ count: number }>({ queryKey: ["/api/online-payments/pending-count"], enabled: showOnlineBookings, refetchInterval: 60000 });
+  const onlineCount = onlinePending?.count ?? 0;
   const { data: summary } = useDirectorSummary();
   const approvalsCount = summary?.approvals.total ?? 0;
 
@@ -147,7 +152,7 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent className="gap-0">
-        {(showApprovals || showAllBookings) && (
+        {(showApprovals || showAllBookings || showOnlineBookings) && (
           <SidebarGroup className="p-0 px-2 pt-1 pb-0.5">
             <SidebarGroupContent>
               <SidebarMenu>
@@ -172,6 +177,21 @@ export function AppSidebar() {
                       <Link href="/bookings" onClick={closeMobileNav}>
                         <CalendarRange />
                         <span>All bookings</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
+                {showOnlineBookings && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location === "/online-bookings"} data-testid="link-online-bookings">
+                      <Link href="/online-bookings" onClick={closeMobileNav}>
+                        <Globe />
+                        <span>Online bookings</span>
+                        {onlineCount > 0 && (
+                          <span className="ml-auto min-w-5 rounded-full bg-destructive px-1.5 text-center text-[11px] font-semibold leading-5 text-destructive-foreground tabular-nums group-data-[collapsible=icon]:hidden" data-testid="badge-sidebar-online-bookings">
+                            {onlineCount > 99 ? "99+" : onlineCount}
+                          </span>
+                        )}
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
