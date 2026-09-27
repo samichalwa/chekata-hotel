@@ -354,6 +354,23 @@ export function registerDailyReportRoutes(app: Express, requireAdmin: (req: any,
     }
   });
 
+  // On-screen version of the report: the same (permission-filtered) summary
+  // the PDF is built from, plus the letterhead details.
+  app.get("/api/director/daily-report/data", async (req, res) => {
+    try {
+      const date = isDate(req.query.date) ? req.query.date : hotelToday();
+      const settings = await storage.getSettings();
+      const summary = await buildDirectorSummary((req as any).user, date);
+      res.json({
+        hotel: { name: companyDisplayName(settings), address: settings.hotelAddress || null, phone: settings.hotelPhone || null },
+        today: hotelToday(),
+        summary,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Failed to build report" });
+    }
+  });
+
   // Text + signed PDF link for WhatsApp sharing. Admin-only because the link
   // exposes the full (unfiltered) owner report.
   app.get("/api/director/daily-report/share", requireAdmin, async (req, res) => {

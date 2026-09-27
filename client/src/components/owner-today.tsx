@@ -118,7 +118,7 @@ export function OwnerToday() {
         </Button>
       </div>
 
-      <DailyCloseActions user={user} date={s.date} />
+      <DailyCloseActions user={user} date={s.date} showView />
 
       {visibleActions.length > 0 && (
         <div className="grid grid-cols-4 sm:grid-cols-7 gap-2" data-testid="owner-quick-actions">

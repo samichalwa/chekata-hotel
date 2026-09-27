@@ -12,6 +12,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notification-bell";
 import ApprovalsPage from "@/pages/approvals";
+import DailyClosePage from "@/pages/daily-close";
 import AllBookingsPage from "@/pages/all-bookings";
 import OnlineBookingsPage from "@/pages/online-bookings";
 import PublicBookPage from "@/pages/public-book";
@@ -90,6 +91,7 @@ function AppRouter() {
       <Route path="/" component={() => <Guarded moduleKey="dashboard" component={Dashboard} />} />
       {/* Unified inbox: not a module/permission — its content is filtered by each underlying module. */}
       <Route path="/approvals" component={ApprovalsPage} />
+      <Route path="/daily-close/:date?" component={() => <Guarded moduleKey="dashboard" component={DailyClosePage} />} />
       <Route path="/bookings" component={AllBookingsPage} />
       {/* Online bookings: shortcut view (not a module) for movie-room / bar-restaurant holders. */}
       <Route path="/online-bookings" component={OnlineBookingsGate} />
