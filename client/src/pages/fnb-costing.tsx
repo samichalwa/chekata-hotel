@@ -223,7 +223,7 @@ export default function FnbCosting() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="F&B Costing" description="Recipe costing for bar and restaurant menu items — ingredient costs update live from inventory pricing." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Recipes" value={String(recipes.length)} icon={ChefHat} testId="stat-recipes-count" />
         <StatCard label="Active recipes" value={String(recipes.filter((r) => r.active).length)} icon={TrendingUp} accent="success" testId="stat-active-recipes" />
         <StatCard label="Avg. target margin" value={`${avgMargin.toFixed(1)}%`} icon={Percent} testId="stat-avg-margin" />

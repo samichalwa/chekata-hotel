@@ -85,7 +85,7 @@ export default function Documents() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Invoices & Receipts" description="Every invoice and receipt generated across the hotel, with delivery status." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Total documents" value={String(documents.length)} icon={FileText} testId="stat-documents-total" />
         <StatCard label="Emailed" value={String(sentCount)} icon={Mail} accent="success" testId="stat-documents-sent" />
         <StatCard label="Failed" value={String(failedCount)} icon={XCircle} accent="warning" testId="stat-documents-failed" />

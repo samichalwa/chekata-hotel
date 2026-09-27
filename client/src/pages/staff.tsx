@@ -374,7 +374,7 @@ export default function Staff() {
         action={<StaffFormDialog trigger={<Button size="sm" data-testid="button-new-staff"><Plus className="h-4 w-4 mr-1" /> Add staff</Button>} />}
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Total staff" value={String(staff.length)} icon={Users} testId="stat-staff-count" />
         <StatCard label="Active staff" value={String(activeStaff.length)} icon={UserCheck} accent="success" testId="stat-active-staff" />
         <StatCard label="Monthly payroll (permanent)" value={formatKES(monthlyPayroll)} icon={Wallet} accent="warning" testId="stat-monthly-payroll" />

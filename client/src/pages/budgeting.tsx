@@ -163,7 +163,7 @@ export default function Budgeting() {
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Total budgeted" value={formatKES(totalBudgeted)} icon={PiggyBank} accent="muted" testId="stat-budget-total-budgeted" />
         <StatCard label="Total actual (posted income)" value={formatKES(totalActual)} icon={PiggyBank} accent="success" testId="stat-budget-total-actual" />
         <StatCard

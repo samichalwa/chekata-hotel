@@ -403,7 +403,7 @@ export default function Facilities() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Conference & Movie Room" description="Manage the conference hall, movie room, and any other bookable event space." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Facilities" value={String(facilities.length)} icon={PartyPopper} testId="stat-facility-count" />
         <StatCard label="Upcoming bookings" value={String(upcoming)} icon={CalendarCheck} testId="stat-upcoming-bookings" />
         <StatCard label="Facility revenue" value={formatKES(revenue)} icon={PartyPopper} accent="success" testId="stat-facility-revenue" />

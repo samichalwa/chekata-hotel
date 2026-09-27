@@ -158,7 +158,7 @@ export default function Expenses() {
         action={<ExpenseFormDialog trigger={<Button size="sm" data-testid="button-new-expense"><Plus className="h-4 w-4 mr-1" /> Record expense</Button>} />}
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Total costs (filtered)" value={formatKES(totalCosts)} icon={Receipt} accent="warning" testId="stat-total-expenses" />
         <StatCard label="Maintenance costs" value={formatKES(maintenanceCosts)} icon={Wrench} accent="muted" testId="stat-maintenance-costs" />
         <StatCard label="Entries" value={String(filtered.length)} icon={Receipt} testId="stat-expense-count" />

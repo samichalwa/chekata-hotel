@@ -409,7 +409,7 @@ export default function WaterSales() {
         action={<NewSaleDialog bucketPrices={bucketPrices} />}
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Total revenue" value={formatKES(totalRevenue)} icon={Wallet} accent="success" testId="stat-water-revenue" />
         <StatCard label="Litres sold" value={`${totalLitres.toFixed(1)}L`} icon={Droplets} testId="stat-water-litres" />
         <StatCard label="Bucket sales" value={String(bucketSalesCount)} icon={Receipt} accent="muted" testId="stat-water-bucket-count" />

@@ -644,7 +644,7 @@ export default function SystemAdmin() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="System Administration" description="Approval matrix, table-level permissions, and admin-editable option lists used across every module." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Approval rules" value={String(rules.length)} icon={ShieldCheck} testId="stat-approval-rules" />
         <StatCard label="Definition lists" value={String(lists.length)} icon={ListChecks} accent="success" testId="stat-definition-lists" />
         <StatCard label="Permission tables" value={String(PERMISSION_TABLE_KEYS.length)} icon={Sliders} accent="warning" testId="stat-permission-tables" />

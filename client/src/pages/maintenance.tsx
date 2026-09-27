@@ -229,7 +229,7 @@ export default function Maintenance() {
         action={<ReportIssueDialog />}
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Open" value={String(openCount)} icon={AlertTriangle} accent="warning" testId="stat-issues-open" />
         <StatCard label="In progress" value={String(inProgressCount)} icon={Wrench} testId="stat-issues-in-progress" />
         <StatCard label="Resolved (awaiting close)" value={String(resolvedCount)} icon={CheckCircle2} accent="success" testId="stat-issues-resolved" />

@@ -117,7 +117,7 @@ export default function Dashboard() {
         <PageHeader title="This month" description="The Chekata — overview for the current month." />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Revenue (this month)" value={formatKES(totalRevenue)} icon={TrendingUp} accent="success" testId="stat-dashboard-revenue" />
         <StatCard label="Costs (this month)" value={formatKES(totalCosts)} icon={TrendingDown} accent="warning" testId="stat-dashboard-costs" />
         <StatCard label="Net profit" value={formatKES(netProfit)} icon={Wallet} accent={netProfit >= 0 ? "success" : "warning"} testId="stat-dashboard-profit" />

@@ -848,7 +848,7 @@ function RentInvoicesTab() {
   const totalOutstanding = invoices.filter((i) => i.status !== "cancelled" && i.status !== "paid").reduce((sum, i) => sum + (i.totalAmount - i.amountPaid), 0);
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Total invoices" value={String(invoices.length)} icon={Receipt} testId="stat-rent-invoices-count" />
         <StatCard label="Outstanding balance" value={formatKES(totalOutstanding)} icon={CircleDollarSign} accent="warning" testId="stat-rent-outstanding" />
         <StatCard label="Paid invoices" value={String(invoices.filter((i) => i.status === "paid").length)} icon={Receipt} accent="success" testId="stat-rent-paid" />
@@ -924,7 +924,7 @@ export default function Tenants() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Tenants" description="Shops, tenants, leases, meter readings, and rent invoicing." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Shops" value={String(shops.length)} icon={Store} testId="stat-shops-count" />
         <StatCard label="Tenants" value={String(tenants.length)} icon={Users} testId="stat-tenants-count" />
         <StatCard label="Active leases" value={String(activeLeases)} icon={FileSignature} accent="success" testId="stat-active-leases" />

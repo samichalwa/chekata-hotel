@@ -399,7 +399,7 @@ export default function Attendance() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Attendance" description="Record daily attendance and review the attendance register." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-2 gap-3 sm:gap-4">
         <StatCard label="Active staff" value={String(activeCount)} icon={Users} testId="stat-attendance-active-staff" />
         <StatCard label="Today" value={formatDate(todayISO())} icon={CalendarCheck} testId="stat-attendance-today" />
       </div>

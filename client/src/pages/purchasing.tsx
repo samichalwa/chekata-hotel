@@ -1009,7 +1009,7 @@ export default function Purchasing() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Purchasing" description="Suppliers, purchase requisitions, purchase orders, and goods receipts." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Suppliers" value={String(suppliers.length)} icon={Truck} testId="stat-suppliers-count" />
         <StatCard label="PRs pending approval" value={String(pendingPrs)} icon={FileText} accent="warning" testId="stat-pending-prs" />
         <StatCard label="Open purchase orders" value={String(openPos)} icon={ShoppingCart} testId="stat-open-pos" />

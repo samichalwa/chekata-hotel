@@ -441,7 +441,7 @@ export default function InternalRequisitions() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Internal Requisitions" description="Request, approve, and issue stock for internal use — permanent consumption or returnable loans." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Total requisitions" value={String(irs.length)} icon={ClipboardCheck} testId="stat-ir-total" />
         <StatCard label="Pending approval" value={String(pendingCount)} icon={Send} accent="warning" testId="stat-ir-pending" />
         <StatCard label="Issued" value={String(issuedCount)} icon={PackageMinus} accent="success" testId="stat-ir-issued" />

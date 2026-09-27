@@ -91,7 +91,7 @@ export function OwnerToday() {
 
   const actions: QuickAction[] = [
     { label: "Approvals", href: "/approvals", icon: CheckSquare, count: s.approvals.total, show: hasAnyApprovalModule(user) },
-    { label: "Bookings", href: "/accommodation", icon: BedDouble, module: "accommodation" },
+    { label: "Bookings", href: "/bookings", icon: BedDouble, show: (["accommodation", "facilities", "movie-room"] as const).some((m) => canAccess(user, m)) },
     { label: "Events", href: "/facilities", icon: PartyPopper, module: "facilities" },
     { label: "Movie Room", href: "/movie-room", icon: Film, module: "movie-room" },
     { label: "Finance", href: "/finance", icon: Landmark, module: "finance" },
@@ -263,7 +263,7 @@ export function OwnerToday() {
                   <p className="text-xs font-medium text-muted-foreground mb-1">Latest seat bookings{(s.movie.totalBookings ?? 0) > 0 && <span className="font-normal"> · {s.movie.totalBookings} in total</span>}</p>
                   <div className="divide-y divide-border">
                     {s.movie.recent!.map((b) => (
-                      <Row key={b.id} href="/movie-room" testId={`movie-booking-${b.id}`}
+                      <Row key={b.id} href="/movie-room?tab=bookings" testId={`movie-booking-${b.id}`}
                         label={<>
                           <span className="block truncate">{b.guestName}<span className="text-muted-foreground"> · Seat {b.seat}</span></span>
                           <span className="block truncate text-xs text-muted-foreground">{b.showTitle} · {shortDate(b.showDate)}{b.showTime ? ` · ${b.showTime}` : ""}</span>

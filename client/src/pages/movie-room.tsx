@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
@@ -626,6 +626,13 @@ export default function MovieRoom() {
   const activeBookings = bookings.filter((b) => b.status !== "cancelled");
   const revenue = activeBookings.reduce((s, b) => s + b.amountPaid, 0);
   const upcomingShows = shows.filter((s) => s.status === "scheduled").length;
+  // Tab: honour ?tab=… (used by the All bookings / Today links), otherwise open
+  // on "Book Seats" when a show is scheduled and on "Bookings" when none is.
+  const [tabChoice, setTabChoice] = useState<string | null>(() => new URLSearchParams(window.location.search).get("tab"));
+  useEffect(() => {
+    if (window.location.search) history.replaceState(history.state, "", window.location.pathname + window.location.hash);
+  }, []);
+  const activeTab = tabChoice ?? (showsLoading || upcomingShows > 0 ? "book" : "bookings");
   const sortedBookings = [...bookings].sort((a, b) => b.createdAt - a.createdAt);
   const sortedShows = [...shows].sort((a, b) => (b.showDate + b.startTime).localeCompare(a.showDate + a.startTime));
 
@@ -658,13 +665,13 @@ export default function MovieRoom() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Movie Room (Seat Booking)" description="Book individual seats (rows A–G, seats 1–7) for movie nights and events, front row facing the screen." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Scheduled shows" value={String(upcomingShows)} icon={Clapperboard} testId="stat-upcoming-shows" />
         <StatCard label="Seats booked" value={String(activeBookings.length)} icon={Armchair} testId="stat-seats-booked" />
         <StatCard label="Movie room revenue" value={formatKES(revenue)} icon={Ticket} accent="success" testId="stat-movie-revenue" />
       </div>
 
-      <Tabs defaultValue="book">
+      <Tabs value={activeTab} onValueChange={setTabChoice}>
         <TabsList>
           <TabsTrigger value="book" data-testid="tab-book-seats">Book Seats</TabsTrigger>
           <TabsTrigger value="bookings" data-testid="tab-bookings">Bookings</TabsTrigger>

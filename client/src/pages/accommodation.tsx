@@ -596,6 +596,86 @@ export default function Accommodation() {
   const sortedBookings = [...bookings].sort((a, b) => b.createdAt - a.createdAt);
   const sortedRooms = [...rooms].sort((a, b) => a.name.localeCompare(b.name));
 
+  const renderActions = (b: (typeof sortedBookings)[number], align: "start" | "end") => (
+    <div className={`flex gap-1 ${align === "end" ? "justify-end" : "flex-wrap"}`}>
+  {b.status === "pending_payment" && (
+    <ConfirmOverrideDialog
+      endpoint={`/api/accommodation-bookings/${b.id}/confirm-override`}
+      invalidateKeys={[["/api/accommodation-bookings"]]}
+      recipientName={b.guestName}
+      trigger={
+        <Button size="icon" variant="ghost" title="Confirm without payment (Director override)" data-testid={`button-confirm-override-${b.id}`}>
+          <ShieldCheck className="h-4 w-4" />
+        </Button>
+      }
+    />
+  )}
+  {b.status === "confirmed" && (
+    <Button size="icon" variant="ghost" title="Check in" onClick={() => setBookingStatus.mutate({ id: b.id, status: "checked_in", roomId: b.roomId })} data-testid={`button-checkin-${b.id}`}>
+      <LogIn className="h-4 w-4" />
+    </Button>
+  )}
+  {b.status === "confirmed" && (
+    <ConfirmOverrideDialog
+      endpoint={`/api/accommodation-bookings/${b.id}/checkin-override`}
+      invalidateKeys={[["/api/accommodation-bookings"]]}
+      recipientName={b.guestName}
+      title="Check in without ID"
+      description={`Director's-discretion override: checks in ${b.guestName} even though no guest ID document has been recorded yet. This action and your reason are logged against the booking.`}
+      placeholder="e.g. Repeat corporate guest, ID on file from a previous stay"
+      actionLabel="Check in without ID"
+      pendingLabel="Checking in..."
+      successTitle="Guest checked in without ID"
+      errorTitle="Could not check in"
+      onOverrideSuccess={() => apiRequest("PATCH", `/api/rooms/${b.roomId}`, { status: "occupied" }).then(() => queryClient.invalidateQueries({ queryKey: ["/api/rooms"] }))}
+      trigger={
+        <Button size="icon" variant="ghost" title="Check in without ID (Director override)" data-testid={`button-checkin-override-${b.id}`}>
+          <ShieldCheck className="h-4 w-4" />
+        </Button>
+      }
+    />
+  )}
+  {b.status === "checked_in" && (
+    <Button size="icon" variant="ghost" title="Check out" onClick={() => setBookingStatus.mutate({ id: b.id, status: "checked_out", roomId: b.roomId })} data-testid={`button-checkout-${b.id}`}>
+      <LogOut className="h-4 w-4" />
+    </Button>
+  )}
+  <IdentityDocumentsDialog booking={b} trigger={
+    <Button size="icon" variant="ghost" title="Guest ID documents" data-testid={`button-manage-ids-${b.id}`}><IdCard className="h-4 w-4" /></Button>
+  } />
+  <BookingFormDialog booking={b} rooms={rooms} trigger={
+    <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-booking-${b.id}`}><Pencil className="h-4 w-4" /></Button>
+  } />
+  {b.totalAmount - (b.creditedAmount ?? 0) > 0 && (
+    <CreditNoteDialog
+      endpoint={`/api/accommodation-bookings/${b.id}/credit-note`}
+      invalidateKeys={[["/api/accommodation-bookings"], ["/api/documents"]]}
+      maxAmount={b.totalAmount - (b.creditedAmount ?? 0)}
+      recipientName={b.guestName}
+      recipientPhone={b.guestPhone}
+      trigger={
+        <Button size="icon" variant="ghost" title="Issue credit note" data-testid={`button-credit-note-${b.id}`}><Undo2 className="h-4 w-4" /></Button>
+      }
+    />
+  )}
+  <AlertDialog>
+    <AlertDialogTrigger asChild>
+      <Button size="icon" variant="ghost" title="Delete" data-testid={`button-delete-booking-${b.id}`}><Trash2 className="h-4 w-4" /></Button>
+    </AlertDialogTrigger>
+    <AlertDialogContent>
+      <AlertDialogHeader>
+        <AlertDialogTitle>Delete this booking?</AlertDialogTitle>
+        <AlertDialogDescription>This removes {b.guestName}'s booking permanently.</AlertDialogDescription>
+      </AlertDialogHeader>
+      <AlertDialogFooter>
+        <AlertDialogCancel>Cancel</AlertDialogCancel>
+        <AlertDialogAction onClick={() => deleteBooking.mutate(b.id)}>Delete</AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  </AlertDialog>
+</div>
+  );
+
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader
@@ -603,7 +683,7 @@ export default function Accommodation() {
         description="Manage rooms and guest bookings for the 8 standard and 2 executive rooms."
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Total rooms" value={String(rooms.length)} icon={BedDouble} hint={`${occupied} occupied now`} testId="stat-total-rooms" />
         <StatCard label="Active bookings" value={String(activeBookings.length)} icon={LogIn} testId="stat-active-bookings" />
         <StatCard label="Accommodation revenue" value={formatKES(totalRevenue)} icon={BedDouble} accent="success" testId="stat-accommodation-revenue" />
@@ -633,7 +713,32 @@ export default function Accommodation() {
             ) : sortedBookings.length === 0 ? (
               <div className="p-8 text-center text-sm text-muted-foreground">No bookings yet. Create the first one.</div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              <ul className="divide-y divide-border sm:hidden" data-testid="list-bookings-mobile">
+                {sortedBookings.map((b) => {
+                  const room = roomById.get(b.roomId);
+                  const balance = b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0);
+                  return (
+                    <li key={b.id} className="px-4 py-3" data-testid={`card-booking-${b.id}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{b.guestName}{b.numberOfGuests > 1 && <span className="ml-1 text-xs font-normal text-muted-foreground">({b.numberOfGuests} guests)</span>}</p>
+                          <p className="text-xs text-muted-foreground">{room?.name ?? "—"} · {formatDate(b.checkIn)} → {formatDate(b.checkOut)}</p>
+                        </div>
+                        <Badge variant={statusVariant[b.status]} className="shrink-0">{titleCase(b.status)}</Badge>
+                      </div>
+                      <div className="mt-2 flex items-baseline justify-between gap-3 text-sm">
+                        <span className="text-muted-foreground">Total <span className="font-medium text-foreground tabular-nums">{formatKES(b.totalAmount)}</span></span>
+                        {balance > 0
+                          ? <span className="font-medium tabular-nums text-amber-600 dark:text-amber-400">{formatKES(balance)} due</span>
+                          : <span className="text-muted-foreground">Paid</span>}
+                      </div>
+                      <div className="-ml-2 mt-1">{renderActions(b, "start")}</div>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="hidden overflow-x-auto sm:block">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -661,83 +766,7 @@ export default function Accommodation() {
                           <TableCell className="text-right tabular-nums">{balance > 0 ? formatKES(balance) : "Paid"}</TableCell>
                           <TableCell><Badge variant={statusVariant[b.status]}>{titleCase(b.status)}</Badge></TableCell>
                           <TableCell className="text-right">
-                            <div className="flex justify-end gap-1">
-                              {b.status === "pending_payment" && (
-                                <ConfirmOverrideDialog
-                                  endpoint={`/api/accommodation-bookings/${b.id}/confirm-override`}
-                                  invalidateKeys={[["/api/accommodation-bookings"]]}
-                                  recipientName={b.guestName}
-                                  trigger={
-                                    <Button size="icon" variant="ghost" title="Confirm without payment (Director override)" data-testid={`button-confirm-override-${b.id}`}>
-                                      <ShieldCheck className="h-4 w-4" />
-                                    </Button>
-                                  }
-                                />
-                              )}
-                              {b.status === "confirmed" && (
-                                <Button size="icon" variant="ghost" title="Check in" onClick={() => setBookingStatus.mutate({ id: b.id, status: "checked_in", roomId: b.roomId })} data-testid={`button-checkin-${b.id}`}>
-                                  <LogIn className="h-4 w-4" />
-                                </Button>
-                              )}
-                              {b.status === "confirmed" && (
-                                <ConfirmOverrideDialog
-                                  endpoint={`/api/accommodation-bookings/${b.id}/checkin-override`}
-                                  invalidateKeys={[["/api/accommodation-bookings"]]}
-                                  recipientName={b.guestName}
-                                  title="Check in without ID"
-                                  description={`Director's-discretion override: checks in ${b.guestName} even though no guest ID document has been recorded yet. This action and your reason are logged against the booking.`}
-                                  placeholder="e.g. Repeat corporate guest, ID on file from a previous stay"
-                                  actionLabel="Check in without ID"
-                                  pendingLabel="Checking in..."
-                                  successTitle="Guest checked in without ID"
-                                  errorTitle="Could not check in"
-                                  onOverrideSuccess={() => apiRequest("PATCH", `/api/rooms/${b.roomId}`, { status: "occupied" }).then(() => queryClient.invalidateQueries({ queryKey: ["/api/rooms"] }))}
-                                  trigger={
-                                    <Button size="icon" variant="ghost" title="Check in without ID (Director override)" data-testid={`button-checkin-override-${b.id}`}>
-                                      <ShieldCheck className="h-4 w-4" />
-                                    </Button>
-                                  }
-                                />
-                              )}
-                              {b.status === "checked_in" && (
-                                <Button size="icon" variant="ghost" title="Check out" onClick={() => setBookingStatus.mutate({ id: b.id, status: "checked_out", roomId: b.roomId })} data-testid={`button-checkout-${b.id}`}>
-                                  <LogOut className="h-4 w-4" />
-                                </Button>
-                              )}
-                              <IdentityDocumentsDialog booking={b} trigger={
-                                <Button size="icon" variant="ghost" title="Guest ID documents" data-testid={`button-manage-ids-${b.id}`}><IdCard className="h-4 w-4" /></Button>
-                              } />
-                              <BookingFormDialog booking={b} rooms={rooms} trigger={
-                                <Button size="icon" variant="ghost" title="Edit" data-testid={`button-edit-booking-${b.id}`}><Pencil className="h-4 w-4" /></Button>
-                              } />
-                              {b.totalAmount - (b.creditedAmount ?? 0) > 0 && (
-                                <CreditNoteDialog
-                                  endpoint={`/api/accommodation-bookings/${b.id}/credit-note`}
-                                  invalidateKeys={[["/api/accommodation-bookings"], ["/api/documents"]]}
-                                  maxAmount={b.totalAmount - (b.creditedAmount ?? 0)}
-                                  recipientName={b.guestName}
-                                  recipientPhone={b.guestPhone}
-                                  trigger={
-                                    <Button size="icon" variant="ghost" title="Issue credit note" data-testid={`button-credit-note-${b.id}`}><Undo2 className="h-4 w-4" /></Button>
-                                  }
-                                />
-                              )}
-                              <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                  <Button size="icon" variant="ghost" title="Delete" data-testid={`button-delete-booking-${b.id}`}><Trash2 className="h-4 w-4" /></Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                  <AlertDialogHeader>
-                                    <AlertDialogTitle>Delete this booking?</AlertDialogTitle>
-                                    <AlertDialogDescription>This removes {b.guestName}'s booking permanently.</AlertDialogDescription>
-                                  </AlertDialogHeader>
-                                  <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => deleteBooking.mutate(b.id)}>Delete</AlertDialogAction>
-                                  </AlertDialogFooter>
-                                </AlertDialogContent>
-                              </AlertDialog>
-                            </div>
+                            {renderActions(b, "end")}
                           </TableCell>
                         </TableRow>
                       );
@@ -745,6 +774,7 @@ export default function Accommodation() {
                   </TableBody>
                 </Table>
               </div>
+              </>
             )}
           </Card>
         </TabsContent>

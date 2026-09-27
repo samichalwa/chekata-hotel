@@ -317,7 +317,7 @@ export default function TemporaryLaborRequisitions() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Temporary Labor Requisitions" description="Request temporary workers ahead of time, by role, headcount, and duration — approval auto-creates placeholder staff slots for HR to fill in." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Total requisitions" value={String(tlrs.length)} icon={ClipboardCheck} testId="stat-tlr-total" />
         <StatCard label="Drafts" value={String(draftCount)} icon={Send} accent="muted" testId="stat-tlr-draft" />
         <StatCard label="Pending" value={String(pendingCount)} icon={Send} accent="warning" testId="stat-tlr-pending" />

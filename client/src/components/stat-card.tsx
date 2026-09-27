@@ -20,15 +20,15 @@ const accentMap: Record<string, string> = {
 
 export function StatCard({ label, value, icon: Icon, hint, accent = "primary", testId }: StatCardProps) {
   return (
-    <Card className="p-4 flex flex-col gap-2" data-testid={testId}>
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">{label}</span>
-        <Icon className={cn("h-4 w-4", accentMap[accent])} />
+    <Card className="p-3 sm:p-4 flex min-w-0 flex-col gap-1.5 sm:gap-2" data-testid={testId}>
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-xs leading-snug text-muted-foreground">{label}</span>
+        <Icon className={cn("h-4 w-4 shrink-0", accentMap[accent])} />
       </div>
-      <span className="text-lg font-semibold tabular-nums" data-testid={testId ? `text-${testId}-value` : undefined}>
+      <span className="break-words text-base sm:text-lg font-semibold tabular-nums" data-testid={testId ? `text-${testId}-value` : undefined}>
         {value}
       </span>
-      {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
+      {hint && <span className="text-xs leading-snug text-muted-foreground">{hint}</span>}
     </Card>
   );
 }

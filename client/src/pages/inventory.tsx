@@ -592,7 +592,7 @@ export default function Inventory() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Inventory" description="Stores, item catalogue, stock ledger, and manual adjustments." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Stores" value={String(stores.length)} icon={Warehouse} testId="stat-stores-count" />
         <StatCard label="Inventory items" value={String(items.length)} icon={Package} testId="stat-items-count" />
         <StatCard label="Items at/below reorder level" value={String(lowStockCount)} icon={ClipboardList} accent="warning" testId="stat-low-stock-count" />

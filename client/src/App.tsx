@@ -12,6 +12,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notification-bell";
 import ApprovalsPage from "@/pages/approvals";
+import AllBookingsPage from "@/pages/all-bookings";
 import { Loader2, ShieldOff, Home } from "lucide-react";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
@@ -74,6 +75,7 @@ function AppRouter() {
       <Route path="/" component={() => <Guarded moduleKey="dashboard" component={Dashboard} />} />
       {/* Unified inbox: not a module/permission — its content is filtered by each underlying module. */}
       <Route path="/approvals" component={ApprovalsPage} />
+      <Route path="/bookings" component={AllBookingsPage} />
       <Route path="/accommodation" component={() => <Guarded moduleKey="accommodation" component={Accommodation} />} />
       <Route path="/facilities" component={() => <Guarded moduleKey="facilities" component={Facilities} />} />
       <Route path="/movie-room" component={() => <Guarded moduleKey="movie-room" component={MovieRoom} />} />

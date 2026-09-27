@@ -199,7 +199,7 @@ export default function Reports() {
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Total revenue" value={formatKES(totalRevenue)} icon={TrendingUp} accent="success" testId="stat-total-revenue" />
         <StatCard label="Total costs" value={formatKES(totalCosts)} icon={TrendingDown} accent="warning" testId="stat-total-costs" />
         <StatCard label="Net profit" value={formatKES(netProfit)} icon={Wallet} accent={netProfit >= 0 ? "success" : "warning"} testId="stat-net-profit" />
@@ -478,7 +478,7 @@ export default function Reports() {
           <div className="flex justify-end">
             <ExportButton sheet="staff" fromDate={fromDate} toDate={toDate} label="Export personnel report" />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
             <StatCard label="Active staff" value={String(activeStaff.length)} icon={Users2} accent="primary" testId="stat-active-staff" />
             <StatCard label="Monthly payroll" value={formatKES(monthlyPayroll)} icon={Wallet} accent="warning" testId="stat-monthly-payroll" />
             <StatCard label="Payroll this period" value={formatKES(proratedPayroll)} icon={TrendingDown} accent="warning" testId="stat-prorated-payroll" />
@@ -550,7 +550,7 @@ export default function Reports() {
           <div className="flex justify-end">
             <ExportButton sheet="expenses" fromDate={fromDate} toDate={toDate} label="Export expenses report" />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
             <StatCard label="Total expenses" value={formatKES(otherExpensesTotal)} icon={TrendingDown} accent="warning" testId="stat-total-expenses" />
             <StatCard label="Maintenance costs" value={formatKES(maintenanceTotal)} icon={Wrench} accent="warning" testId="stat-maintenance-costs" />
             <StatCard label="Records this period" value={String(expensesInRange.length)} icon={FileSpreadsheet} accent="muted" testId="stat-expense-count" />
@@ -622,7 +622,7 @@ export default function Reports() {
           <div className="flex justify-end">
             <ExportButton sheet="maintenance" fromDate={fromDate} toDate={toDate} label="Export maintenance report" />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-2 gap-3 sm:gap-4">
             <StatCard label="Open / in progress" value={String(openMaintenanceCount)} icon={Wrench} accent="warning" testId="stat-report-maintenance-open" />
             <StatCard label="Issues logged this period" value={String(maintenanceInRange.length)} icon={FileSpreadsheet} accent="muted" testId="stat-report-maintenance-count" />
           </div>
@@ -667,7 +667,7 @@ export default function Reports() {
           <div className="flex justify-end">
             <ExportButton sheet="budgeting" fromDate={fromDate} toDate={toDate} label="Export budgeting report" />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
             <StatCard label="Total budgeted (period)" value={formatKES(budgetVariance.reduce((s, r) => s + r.budgetedAmount, 0))} icon={PiggyBank} accent="muted" testId="stat-report-budget-total" />
             <StatCard label="Total actual (period)" value={formatKES(budgetVariance.reduce((s, r) => s + r.actualAmount, 0))} icon={Wallet} accent="success" testId="stat-report-budget-actual" />
             <StatCard
@@ -717,7 +717,7 @@ export default function Reports() {
           <div className="flex justify-end">
             <ExportButton sheet="assets" fromDate={fromDate} toDate={toDate} label="Export assets report" />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
             <StatCard label="Active assets" value={String(assetsList.filter((a) => a.status === "active").length)} icon={Boxes} accent="muted" testId="stat-report-assets-active" />
             <StatCard label="Total acquisition cost" value={formatKES(assetsList.reduce((s, a) => s + a.acquisitionCost, 0))} icon={Wallet} accent="success" testId="stat-report-assets-cost" />
             <StatCard label="Disposed assets" value={String(assetsList.filter((a) => a.status === "disposed").length)} icon={FileSpreadsheet} accent="warning" testId="stat-report-assets-disposed" />

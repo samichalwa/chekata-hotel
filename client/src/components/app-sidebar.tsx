@@ -2,6 +2,7 @@ import { Link, useLocation } from "wouter";
 import { useState } from "react";
 import {
   LayoutDashboard,
+  CalendarRange,
   Plus,
   Minus,
   BedDouble,
@@ -99,6 +100,8 @@ export function AppSidebar() {
   // "Approvals" is a shortcut inbox, not a module: shown whenever the user holds
   // any module that has an approval workflow. Never part of MODULE_CATEGORY_GROUPS.
   const showApprovals = hasAnyApprovalModule(user);
+  // "All bookings" is likewise a shortcut view (rooms + events + movie seats), not a module.
+  const showAllBookings = (["accommodation", "facilities", "movie-room"] as const).some((m) => canAccess(user, m));
   const { data: summary } = useDirectorSummary();
   const approvalsCount = summary?.approvals.total ?? 0;
 
@@ -144,10 +147,11 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent className="gap-0">
-        {showApprovals && (
+        {(showApprovals || showAllBookings) && (
           <SidebarGroup className="p-0 px-2 pt-1 pb-0.5">
             <SidebarGroupContent>
               <SidebarMenu>
+                {showApprovals && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location === "/approvals"} data-testid="link-approvals">
                     <Link href="/approvals" onClick={closeMobileNav}>
@@ -161,6 +165,17 @@ export function AppSidebar() {
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+                )}
+                {showAllBookings && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location === "/bookings"} data-testid="link-all-bookings">
+                      <Link href="/bookings" onClick={closeMobileNav}>
+                        <CalendarRange />
+                        <span>All bookings</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

@@ -506,7 +506,7 @@ export default function Leave() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Leave" description="Configure leave types, review requests, and track leave balances." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Pending requests" value={String(pending)} icon={ListChecks} accent="warning" testId="stat-leave-pending" />
         <StatCard label="Approved requests" value={String(approved)} icon={CheckCircle2} accent="success" testId="stat-leave-approved" />
         <StatCard label="Total requests" value={String(requests.length)} icon={CalendarDays} testId="stat-leave-total" />

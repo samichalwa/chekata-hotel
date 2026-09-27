@@ -121,3 +121,8 @@ export function relativeTime(ms: number): string {
   const d = Math.round(h / 24);
   return d === 1 ? "yesterday" : `${d} days ago`;
 }
+
+/** Today's date (YYYY-MM-DD) in the hotel's timezone (Africa/Nairobi). */
+export function hotelTodayClient(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}

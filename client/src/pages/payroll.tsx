@@ -485,7 +485,7 @@ export default function Payroll() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Payroll" description="Statutory rates, PAYE bands, pay runs, payslips and bank-advice exports." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Active staff" value={String(activeStaff)} icon={Users} testId="stat-payroll-staff" />
         <StatCard label="Pay runs" value={String(runs.length)} icon={Wallet} testId="stat-payroll-runs" />
         <StatCard label="Last approved net pay" value={lastApproved ? formatKES(lastApproved.totalNet) : "—"} icon={Landmark} testId="stat-payroll-lastnet" />

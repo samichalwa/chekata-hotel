@@ -987,7 +987,7 @@ export default function Finance() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Finance" description="Chart of accounts, general ledger, payment vouchers, banking, and financial reports." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Chart of accounts" value={String(accounts.length)} icon={BookOpen} testId="stat-accounts-count" />
         <StatCard label="Pending vouchers" value={String(draftVouchers)} icon={Receipt} accent="warning" testId="stat-pending-vouchers" />
         <StatCard label="Net profit (all-time)" value={pnl ? formatKES(pnl.netProfit) : "—"} icon={Wallet} accent="success" testId="stat-net-profit" />

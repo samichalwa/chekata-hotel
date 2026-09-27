@@ -437,7 +437,7 @@ export default function BarRestaurant() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader title="Bar & Restaurant" description="Take orders, manage the menu, and track outlet revenue." />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Bar revenue" value={formatKES(barRevenue)} icon={Wine} accent="success" testId="stat-bar-revenue" />
         <StatCard label="Restaurant revenue" value={formatKES(restaurantRevenue)} icon={UtensilsCrossed} accent="success" testId="stat-restaurant-revenue" />
         <StatCard label="Open orders" value={String(openOrders)} icon={Receipt} testId="stat-open-orders" />

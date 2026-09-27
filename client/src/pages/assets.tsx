@@ -461,7 +461,7 @@ export default function Assets() {
         action={<RunDepreciationDialog trigger={<Button size="sm" variant="default" data-testid="button-run-depreciation"><PlayCircle className="h-4 w-4 mr-1" /> Run depreciation</Button>} />}
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Active assets" value={String(activeCount)} icon={Boxes} accent="muted" testId="stat-assets-active" />
         <StatCard label="Total acquisition cost" value={formatKES(totalCost)} icon={Wallet} accent="success" testId="stat-assets-cost" />
         <StatCard label="Disposed" value={String(disposedCount)} icon={PackageX} accent="warning" testId="stat-assets-disposed" />
