@@ -109,6 +109,8 @@ export function AppSidebar() {
   // "Daily close report" is a shortcut view (same gate as the Today briefing it
   // comes from), not a module — figures inside are filtered per module access.
   const showDailyClose = canAccess(user, "dashboard");
+  // Top-of-sidebar Dashboard shortcut (the same page as Operations → Dashboard).
+  const showDashboardShortcut = canAccess(user, "dashboard");
   const { data: onlinePending } = useQuery<{ count: number }>({ queryKey: ["/api/online-payments/pending-count"], enabled: showOnlineBookings, refetchInterval: 60000 });
   const onlineCount = onlinePending?.count ?? 0;
   const { data: summary } = useDirectorSummary();
@@ -156,10 +158,20 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent className="gap-0">
-        {(showApprovals || showAllBookings || showOnlineBookings || showDailyClose) && (
+        {(showDashboardShortcut || showApprovals || showAllBookings || showOnlineBookings || showDailyClose) && (
           <SidebarGroup className="p-0 px-2 pt-1 pb-0.5">
             <SidebarGroupContent>
               <SidebarMenu>
+                {showDashboardShortcut && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location === "/dashboard"} data-testid="link-dashboard-shortcut">
+                      <Link href="/dashboard" onClick={closeMobileNav}>
+                        <LayoutDashboard />
+                        <span>Dashboard</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
                 {showApprovals && (
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild isActive={location === "/approvals"} data-testid="link-approvals">
