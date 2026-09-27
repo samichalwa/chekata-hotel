@@ -50,10 +50,10 @@ import {
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useQuery } from "@tanstack/react-query";
 import chekataLogo from "@/assets/chekata-logo.jpg";
-import { useCurrentUser, useLogout, canAccess } from "@/hooks/use-auth";
+import { useCurrentUser, useLogout, canAccess, useSetupStatus } from "@/hooks/use-auth";
 import type { ModuleKey, Settings } from "@shared/schema";
 import { MODULE_CATEGORY_GROUPS } from "@shared/schema";
-import { CheckSquare } from "lucide-react";
+import { CheckSquare, FlaskConical } from "lucide-react";
 import { useDirectorSummary, hasAnyApprovalModule } from "@/lib/director";
 
 const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
@@ -99,6 +99,14 @@ export function AppSidebar() {
   const { data: user } = useCurrentUser();
   const { data: settings } = useQuery<Settings>({ queryKey: ["/api/settings"] });
   const logout = useLogout();
+  const { data: setupStatus } = useSetupStatus();
+  // Link from Live to the Test environment, for people allowed into Test.
+  // Environments are separate databases with separate sign-ins, so this signs
+  // out of Live and opens the Test sign-in page (hms.thechekata.com/?env=test).
+  const showTestLink = !!user && user.environment === "live" && !!setupStatus?.testDbConfigured && (user.isAdmin || !!user.canAccessTest);
+  const switchToTest = () => {
+    logout.mutate(undefined, { onSettled: () => { window.location.href = "/?env=test"; } });
+  };
   // "Approvals" is a shortcut inbox, not a module: shown whenever the user holds
   // any module that has an approval workflow. Never part of MODULE_CATEGORY_GROUPS.
   const showApprovals = hasAnyApprovalModule(user);
@@ -294,6 +302,19 @@ export function AppSidebar() {
               <LogOut className="h-4 w-4" />
             </button>
           </div>
+        )}
+        {showTestLink && (
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton onClick={switchToTest} disabled={logout.isPending} title="Signs you out of Live and opens the Test sign-in page" data-testid="link-switch-to-test">
+                <FlaskConical />
+                <span className="flex flex-col leading-tight">
+                  <span>Go to Test environment</span>
+                  <span className="text-[11px] text-sidebar-foreground/50">Signs out of Live</span>
+                </span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
         )}
         <div className="px-2 py-1.5 text-xs text-sidebar-foreground/50 group-data-[collapsible=icon]:hidden">
           Currency: KES · All figures in Kenyan Shillings
