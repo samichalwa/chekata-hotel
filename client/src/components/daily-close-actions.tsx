@@ -27,8 +27,10 @@ export function useDailyReportPdf(date: string, enabled = true) {
     queryKey: ["daily-report-pdf", date],
     queryFn: async () => (await authedFetch(`/api/director/daily-report/pdf?date=${date}`)).blob(),
     enabled: enabled && !!date,
-    staleTime: 60_000,
-    gcTime: 5 * 60_000,
+    // Re-fetched by the Daily close screen whenever its figures refresh
+    // (every 15 minutes or on Refresh), so a shared PDF matches the screen.
+    staleTime: 15 * 60_000,
+    gcTime: 20 * 60_000,
   });
 }
 

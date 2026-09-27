@@ -1,4 +1,6 @@
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 import { Link, useLocation, useParams } from "wouter";
 import { LayoutDashboard, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -16,6 +18,8 @@ import chekataLogo from "@/assets/chekata-logo.jpg";
 // the signed-in user's module access.
 
 interface ReportData { hotel: { name: string; address: string | null; phone: string | null }; today: string; summary: DirectorSummary }
+
+export const REFRESH_MS = 15 * 60_000;
 
 const kes = (v: number) => `KES ${Math.round(v || 0).toLocaleString("en-KE")}`;
 const isDate = (v?: string) => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
@@ -85,11 +89,28 @@ export default function DailyClosePage() {
   const [, navigate] = useLocation();
   const { data: user } = useCurrentUser();
   const requested = isDate(params.date) ? params.date! : "";
-  const { data, isLoading, isError, refetch, isFetching } = useQuery<ReportData>({
+  const { data, isLoading, isError, refetch, isFetching, dataUpdatedAt } = useQuery<ReportData>({
     queryKey: [`/api/director/daily-report/data${requested ? `?date=${requested}` : ""}`],
-    staleTime: 30_000,
+    // Auto-refresh every 15 minutes while the screen is open; also refresh on
+    // returning to the tab/app if the figures are older than that.
+    staleTime: REFRESH_MS,
+    refetchInterval: REFRESH_MS,
+    refetchOnWindowFocus: true,
   });
   const s = data?.summary;
+  // Whenever the on-screen figures refresh (auto every 15 min, on Refresh, or
+  // on returning to the app), refresh the prepared PDF too so Share/Download
+  // always send the same numbers the screen shows. Skips the first load, when
+  // the PDF is already being fetched alongside the figures.
+  const lastUpdate = useRef<{ date: string; at: number } | null>(null);
+  useEffect(() => {
+    if (!s || !dataUpdatedAt) return;
+    const prev = lastUpdate.current;
+    lastUpdate.current = { date: s.date, at: dataUpdatedAt };
+    if (prev && prev.date === s.date && prev.at !== dataUpdatedAt) {
+      queryClient.invalidateQueries({ queryKey: ["daily-report-pdf", s.date] });
+    }
+  }, [s, dataUpdatedAt]);
   const date = s?.date ?? requested;
   const today = data?.today ?? "";
   const go = (d: string) => { if (isDate(d) && (!today || d <= today)) navigate(`/daily-close/${d}`); };
@@ -101,7 +122,7 @@ export default function DailyClosePage() {
           <Link href="/dashboard"><Button variant="ghost" size="icon" title="Open the Dashboard" data-testid="button-daily-dashboard"><LayoutDashboard className="h-4 w-4" /></Button></Link>
           <div>
             <h1 className="text-xl font-semibold">Daily close report</h1>
-            <p className="text-xs text-muted-foreground">View the report on screen, then share or download the PDF.</p>
+            <p className="text-xs text-muted-foreground" data-testid="text-daily-refresh">View on screen, then share or download the PDF · refreshes every 15 minutes{s ? ` · updated ${clock(s.generatedAt).split(", ").pop()}` : ""}</p>
           </div>
         </div>
         <div className="flex items-center gap-1">
