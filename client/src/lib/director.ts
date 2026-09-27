@@ -10,6 +10,8 @@ export interface StreamIncome { key: string; label: string; today: number; today
 export interface DirectorAlert { id: string; severity: "critical" | "warning" | "info"; title: string; detail: string; link: string }
 export interface ApprovalCount { key: string; label: string; count: number; oldestAt: number | null; link: string }
 
+export interface MovieShowSummary { id: number; title: string; date?: string; time: string | null; sold: number; capacity: number; paid?: number; due?: number }
+
 export interface DirectorSummary {
   date: string;
   generatedAt: number;
@@ -17,7 +19,8 @@ export interface DirectorSummary {
   rooms: null | { total: number; inHouse: number; occupancyPct: number; arrivals: number; arrivalsPendingPayment: number; departures: number; outOfOrder: number };
   arrivals: { id: number; guestName: string; roomName: string | null; status: string; balance: number }[];
   events: { id: number; clientName: string; facilityName: string | null; startTime: string | null; endTime: string | null; amount: number; status: string }[];
-  shows: { id: number; title: string; time: string | null; sold: number; capacity: number }[];
+  shows: MovieShowSummary[];
+  movie?: null | { bookedToday: { count: number; amount: number }; unpaid: { count: number; amount: number }; upcoming: MovieShowSummary[] };
   cash: null | { total: number; accounts: { id: number; name: string; balance: number }[] };
   receivables: { key: string; label: string; amount: number; count: number; link: string }[];
   expenses: null | { today: number; mtd: number };

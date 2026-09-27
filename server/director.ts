@@ -219,11 +219,37 @@ export async function buildDirectorSummary(user: any, date?: string) {
     }));
   }
   let shows: any[] = [];
+  let movie: null | {
+    bookedToday: { count: number; amount: number };
+    unpaid: { count: number; amount: number };
+    upcoming: { id: number; title: string; date: string; time: string | null; sold: number; capacity: number; paid: number; due: number }[];
+  } = null;
   if (can("movie-room")) {
-    shows = (await sql`SELECT s.*, (SELECT COUNT(*)::int FROM movie_seat_bookings b WHERE b.show_id = s.id AND b.status <> 'cancelled') AS sold
-        FROM movie_shows s WHERE s.show_date = ${today} AND s.status <> 'cancelled' ORDER BY s.start_time LIMIT 10`).map((r: any) => ({
-      id: r.id, title: r.name, time: r.start_time ?? null, sold: n(r.sold), capacity: 49,
-    }));
+    const showRow = (r: any) => ({
+      id: r.id, title: r.name, date: r.show_date, time: r.start_time ?? null, sold: n(r.sold), capacity: 49, paid: n(r.paid), due: n(r.due),
+    });
+    const withSeats = sql`SELECT s.*,
+        (SELECT COUNT(*)::int FROM movie_seat_bookings b WHERE b.show_id = s.id AND b.status <> 'cancelled') AS sold,
+        (SELECT COALESCE(SUM(b.amount_paid),0) FROM movie_seat_bookings b WHERE b.show_id = s.id AND b.status <> 'cancelled') AS paid,
+        (SELECT COALESCE(SUM(GREATEST(b.ticket_price - b.credited_amount - b.amount_paid, 0)),0) FROM movie_seat_bookings b WHERE b.show_id = s.id AND b.status <> 'cancelled') AS due
+        FROM movie_shows s`;
+    // Seats booked today = bookings created since Nairobi midnight (created_at is epoch ms).
+    const dayStartMs = Date.parse(`${today}T00:00:00+03:00`);
+    const [todayRows, upRows, [bt], [un]] = await Promise.all([
+      sql`${withSeats} WHERE s.show_date = ${today} AND s.status <> 'cancelled' ORDER BY s.start_time LIMIT 10`,
+      sql`${withSeats} WHERE s.show_date > ${today} AND s.status = 'scheduled' ORDER BY s.show_date, s.start_time LIMIT 5`,
+      sql`SELECT COUNT(*)::int AS c, COALESCE(SUM(ticket_price - credited_amount),0) AS a FROM movie_seat_bookings
+          WHERE status <> 'cancelled' AND created_at >= ${dayStartMs} AND created_at < ${dayStartMs + 86_400_000}`,
+      sql`SELECT COUNT(*)::int AS c, COALESCE(SUM(b.ticket_price - b.credited_amount - b.amount_paid),0) AS a
+          FROM movie_seat_bookings b JOIN movie_shows s ON s.id = b.show_id
+          WHERE b.status <> 'cancelled' AND s.status <> 'cancelled' AND b.ticket_price - b.credited_amount - b.amount_paid > 0.5`,
+    ]);
+    shows = todayRows.map(showRow);
+    movie = {
+      bookedToday: { count: n(bt.c), amount: n(bt.a) },
+      unpaid: { count: n(un.c), amount: n(un.a) },
+      upcoming: upRows.map(showRow),
+    };
   }
 
   // ---- Money position ----
@@ -246,6 +272,9 @@ export async function buildDirectorSummary(user: any, date?: string) {
     const [r] = await sql`SELECT COALESCE(SUM(total_amount - credited_amount - amount_paid),0) AS amount, COUNT(*)::int AS count
       FROM facility_bookings WHERE status <> 'cancelled' AND total_amount - credited_amount - amount_paid > 0.5`;
     receivables.push({ key: "facilities", label: "Event balances", amount: n(r.amount), count: n(r.count), link: "/facilities" });
+  }
+  if (movie) {
+    receivables.push({ key: "movie", label: "Movie seat balances", amount: movie.unpaid.amount, count: movie.unpaid.count, link: "/movie-room" });
   }
   let overdueRent = { amount: 0, count: 0 };
   if (can("tenants")) {
@@ -308,6 +337,9 @@ export async function buildDirectorSummary(user: any, date?: string) {
   if (rooms && rooms.outOfOrder > 0) {
     alerts.push({ id: "rooms-ooo", severity: "info", title: `${rooms.outOfOrder} room${rooms.outOfOrder === 1 ? "" : "s"} under maintenance`, detail: "Not available to sell.", link: "/accommodation" });
   }
+  for (const sh of shows) {
+    if (sh.due > 0.5) alerts.push({ id: `movie-unpaid-${sh.id}`, severity: "warning", title: `KES ${Math.round(sh.due).toLocaleString("en-KE")} unpaid for today's show`, detail: `${sh.title}${sh.time ? ` at ${sh.time}` : ""} · ${sh.sold} seat${sh.sold === 1 ? "" : "s"} booked`, link: "/movie-room" });
+  }
   if (can("maintenance")) {
     const [r] = await sql`SELECT COUNT(*) FILTER (WHERE priority IN ('urgent','high'))::int AS hi, COUNT(*)::int AS total
       FROM maintenance_issues WHERE status IN ('open','in_progress')`;
@@ -346,6 +378,7 @@ export async function buildDirectorSummary(user: any, date?: string) {
     arrivals: arrivalsList,
     events,
     shows,
+    movie,
     cash,
     receivables,
     expenses,

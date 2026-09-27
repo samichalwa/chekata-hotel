@@ -37,6 +37,24 @@ function SectionTitle({ children, action }: { children: React.ReactNode; action?
   );
 }
 
+function shortDate(d?: string): string {
+  if (!d) return "";
+  const dt = new Date(`${d}T00:00:00`);
+  return Number.isNaN(dt.getTime()) ? d : dt.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+}
+
+function ShowLabel({ title, when, due }: { title: string; when: string; due?: number }) {
+  return (
+    <>
+      <span className="block truncate">{title}</span>
+      <span className="block truncate text-xs text-muted-foreground">
+        {when}
+        {(due ?? 0) > 0.5 && <span className="text-amber-600 dark:text-amber-400"> · {formatKES(due!)} due</span>}
+      </span>
+    </>
+  );
+}
+
 function Row({ label, value, href, muted, testId }: { label: React.ReactNode; value: React.ReactNode; href?: string; muted?: boolean; testId?: string }) {
   const inner = (
     <div className={`flex items-center justify-between gap-3 py-2 text-sm ${href ? "hover-elevate rounded-md px-2 -mx-2" : ""}`} data-testid={testId}>
@@ -216,20 +234,33 @@ export function OwnerToday() {
               </div>
             </div>
           )}
-          {s.shows.length > 0 && (
-            <div className="mt-4">
-              <p className="text-xs font-medium text-muted-foreground mb-1">Movie shows today</p>
+          {s.movie && (
+            <div className="mt-4" data-testid="owner-movie">
+              <div className="flex items-baseline justify-between gap-2 mb-1">
+                <p className="text-xs font-medium text-muted-foreground"><Film className="inline h-3.5 w-3.5 mr-1" />Movie room</p>
+                <Link href="/movie-room" className="text-xs text-primary hover:underline" data-testid="link-owner-movie">Open</Link>
+              </div>
               <div className="divide-y divide-border">
+                <Row href="/movie-room" testId="row-movie-booked-today" label="Seats booked today"
+                  value={<>{s.movie.bookedToday.count}{s.movie.bookedToday.amount > 0 && <span className="text-muted-foreground font-normal"> · {formatKES(s.movie.bookedToday.amount)}</span>}</>} />
                 {s.shows.map((sh) => (
                   <Row key={sh.id} href="/movie-room" testId={`show-${sh.id}`}
-                    label={<><Film className="inline h-3.5 w-3.5 mr-1 text-muted-foreground" />{sh.title}{sh.time && <span className="text-muted-foreground"> · {sh.time}</span>}</>}
+                    label={<ShowLabel title={sh.title} when={`Today${sh.time ? ` · ${sh.time}` : ""}`} due={sh.due} />}
                     value={`${sh.sold}/${sh.capacity} seats`} />
                 ))}
+                {s.movie.upcoming.map((sh) => (
+                  <Row key={sh.id} href="/movie-room" testId={`upcoming-show-${sh.id}`}
+                    label={<ShowLabel title={sh.title} when={`${shortDate(sh.date)}${sh.time ? ` · ${sh.time}` : ""}`} due={sh.due} />}
+                    value={`${sh.sold}/${sh.capacity} seats`} />
+                ))}
+                {s.shows.length === 0 && s.movie.upcoming.length === 0 && (
+                  <p className="py-2 text-sm text-muted-foreground">No shows scheduled. <Link href="/movie-room" className="text-primary hover:underline">Add one</Link></p>
+                )}
               </div>
             </div>
           )}
           {s.rooms && s.arrivals.length === 0 && s.events.length === 0 && s.shows.length === 0 && (
-            <p className="mt-4 text-sm text-muted-foreground">No arrivals, events or shows scheduled today.</p>
+            <p className="mt-4 text-sm text-muted-foreground">No arrivals or events scheduled today.</p>
           )}
           {s.people && (
             <div className="mt-4 border-t border-border pt-3">
