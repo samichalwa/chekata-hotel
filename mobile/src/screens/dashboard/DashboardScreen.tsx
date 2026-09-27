@@ -224,7 +224,7 @@ export default function DashboardScreen() {
         ) : null}
 
         {/* Operations */}
-        {s.rooms || s.events.length || s.shows.length || s.people ? (
+        {s.rooms || s.events.length || s.shows.length || s.movie || s.people ? (
           <Card title="Operations today">
             {s.rooms ? (
               <View style={styles.tiles}>
@@ -256,17 +256,27 @@ export default function DashboardScreen() {
                 last={i === s.events.length - 1}
               />
             ))}
-            {s.shows.length > 0 ? <Text style={styles.subhead}>Movie shows today</Text> : null}
-            {s.shows.map((m, i) => (
-              <Row
-                key={`m${m.id}`}
-                label={m.title}
-                sub={m.time}
-                value={`${m.sold}/${m.capacity} seats`}
-                onPress={go("/movie-room")}
-                last={i === s.shows.length - 1}
-              />
-            ))}
+            {s.movie ? (
+              <>
+                <Text style={styles.subhead}>Movie room</Text>
+                <Row
+                  label="Seats booked today"
+                  value={s.movie.bookedToday.amount > 0 ? `${s.movie.bookedToday.count} · ${formatKes(s.movie.bookedToday.amount)}` : String(s.movie.bookedToday.count)}
+                  onPress={go("/movie-room")}
+                  last={s.shows.length === 0 && s.movie.upcoming.length === 0}
+                />
+                {[...s.shows.map((m) => ({ m, when: `Today${m.time ? ` · ${m.time}` : ""}` })), ...s.movie.upcoming.map((m) => ({ m, when: `${shortDay(m.date)}${m.time ? ` · ${m.time}` : ""}` }))].map(({ m, when }, i, arr) => (
+                  <Row
+                    key={`m${m.id}`}
+                    label={m.title}
+                    sub={(m.due ?? 0) > 0.5 ? `${when} · ${formatKes(m.due!)} due` : when}
+                    value={`${m.sold}/${m.capacity} seats`}
+                    onPress={go("/movie-room")}
+                    last={i === arr.length - 1}
+                  />
+                ))}
+              </>
+            ) : null}
             {s.people ? (
               <>
                 <Text style={styles.subhead}>People</Text>
@@ -364,6 +374,12 @@ export default function DashboardScreen() {
       </ScrollView>
     </Screen>
   );
+}
+
+function shortDay(d?: string): string {
+  if (!d) return "";
+  const dt = new Date(`${d}T00:00:00`);
+  return Number.isNaN(dt.getTime()) ? d : dt.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 }
 
 function notify(title: string, msg?: string) {
