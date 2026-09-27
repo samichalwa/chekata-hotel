@@ -223,6 +223,8 @@ export async function buildDirectorSummary(user: any, date?: string) {
     bookedToday: { count: number; amount: number };
     unpaid: { count: number; amount: number };
     upcoming: { id: number; title: string; date: string; time: string | null; sold: number; capacity: number; paid: number; due: number }[];
+    recent: { id: number; guestName: string; seat: string; showTitle: string; showDate: string; showTime: string | null; amount: number; paid: number; due: number; createdAt: number }[];
+    totalBookings: number;
   } = null;
   if (can("movie-room")) {
     const showRow = (r: any) => ({
@@ -235,7 +237,7 @@ export async function buildDirectorSummary(user: any, date?: string) {
         FROM movie_shows s`;
     // Seats booked today = bookings created since Nairobi midnight (created_at is epoch ms).
     const dayStartMs = Date.parse(`${today}T00:00:00+03:00`);
-    const [todayRows, upRows, [bt], [un]] = await Promise.all([
+    const [todayRows, upRows, [bt], [un], recentRows, [tot]] = await Promise.all([
       sql`${withSeats} WHERE s.show_date = ${today} AND s.status <> 'cancelled' ORDER BY s.start_time LIMIT 10`,
       sql`${withSeats} WHERE s.show_date > ${today} AND s.status = 'scheduled' ORDER BY s.show_date, s.start_time LIMIT 5`,
       sql`SELECT COUNT(*)::int AS c, COALESCE(SUM(ticket_price - credited_amount),0) AS a FROM movie_seat_bookings
@@ -243,12 +245,25 @@ export async function buildDirectorSummary(user: any, date?: string) {
       sql`SELECT COUNT(*)::int AS c, COALESCE(SUM(b.ticket_price - b.credited_amount - b.amount_paid),0) AS a
           FROM movie_seat_bookings b JOIN movie_shows s ON s.id = b.show_id
           WHERE b.status <> 'cancelled' AND s.status <> 'cancelled' AND b.ticket_price - b.credited_amount - b.amount_paid > 0.5`,
+      sql`SELECT b.id, b.guest_name, b.seat_row, b.seat_number, b.ticket_price, b.credited_amount, b.amount_paid, b.created_at,
+          s.name AS show_name, s.show_date, s.start_time
+          FROM movie_seat_bookings b JOIN movie_shows s ON s.id = b.show_id
+          WHERE b.status <> 'cancelled' ORDER BY b.created_at DESC, b.id DESC LIMIT 5`,
+      sql`SELECT COUNT(*)::int AS c FROM movie_seat_bookings WHERE status <> 'cancelled'`,
     ]);
     shows = todayRows.map(showRow);
     movie = {
       bookedToday: { count: n(bt.c), amount: n(bt.a) },
       unpaid: { count: n(un.c), amount: n(un.a) },
       upcoming: upRows.map(showRow),
+      recent: recentRows.map((r: any) => {
+        const amount = n(r.ticket_price) - n(r.credited_amount);
+        return {
+          id: r.id, guestName: r.guest_name, seat: `${r.seat_row}${r.seat_number}`, showTitle: r.show_name, showDate: r.show_date,
+          showTime: r.start_time ?? null, amount, paid: n(r.amount_paid), due: Math.max(0, amount - n(r.amount_paid)), createdAt: n(r.created_at),
+        };
+      }),
+      totalBookings: n(tot.c),
     };
   }
 

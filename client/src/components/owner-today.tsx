@@ -93,6 +93,7 @@ export function OwnerToday() {
     { label: "Approvals", href: "/approvals", icon: CheckSquare, count: s.approvals.total, show: hasAnyApprovalModule(user) },
     { label: "Bookings", href: "/accommodation", icon: BedDouble, module: "accommodation" },
     { label: "Events", href: "/facilities", icon: PartyPopper, module: "facilities" },
+    { label: "Movie Room", href: "/movie-room", icon: Film, module: "movie-room" },
     { label: "Finance", href: "/finance", icon: Landmark, module: "finance" },
     { label: "Expenses", href: "/expenses", icon: Receipt, module: "expenses" },
     { label: "Reports", href: "/reports", icon: FileBarChart, module: "reports" },
@@ -120,14 +121,14 @@ export function OwnerToday() {
       <DailyCloseActions user={user} date={s.date} />
 
       {visibleActions.length > 0 && (
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2" data-testid="owner-quick-actions">
+        <div className="grid grid-cols-4 sm:grid-cols-7 gap-2" data-testid="owner-quick-actions">
           {visibleActions.map((a) => (
             <Link key={a.label} href={a.href}>
-              <div className="relative flex h-20 flex-col items-center justify-center gap-1.5 rounded-lg border border-border bg-card hover-elevate active-elevate-2 cursor-pointer" data-testid={`quick-${a.label.toLowerCase()}`}>
+              <div className="relative flex h-20 flex-col items-center justify-center gap-1.5 rounded-lg border border-border bg-card hover-elevate active-elevate-2 cursor-pointer" data-testid={`quick-${a.label.toLowerCase().replace(/\s+/g, "-")}`}>
                 <a.icon className="h-5 w-5 text-primary" />
-                <span className="text-xs font-medium">{a.label}</span>
+                <span className="px-1 text-center text-xs font-medium leading-tight">{a.label}</span>
                 {a.count !== undefined && a.count > 0 && (
-                  <span className="absolute right-1.5 top-1.5 min-w-5 rounded-full bg-destructive px-1.5 text-center text-[11px] font-semibold leading-5 text-destructive-foreground tabular-nums" data-testid={`badge-quick-${a.label.toLowerCase()}`}>
+                  <span className="absolute right-1.5 top-1.5 min-w-5 rounded-full bg-destructive px-1.5 text-center text-[11px] font-semibold leading-5 text-destructive-foreground tabular-nums" data-testid={`badge-quick-${a.label.toLowerCase().replace(/\s+/g, "-")}`}>
                     {a.count > 99 ? "99+" : a.count}
                   </span>
                 )}
@@ -254,9 +255,26 @@ export function OwnerToday() {
                     value={`${sh.sold}/${sh.capacity} seats`} />
                 ))}
                 {s.shows.length === 0 && s.movie.upcoming.length === 0 && (
-                  <p className="py-2 text-sm text-muted-foreground">No shows scheduled. <Link href="/movie-room" className="text-primary hover:underline">Add one</Link></p>
+                  <p className="py-2 text-sm text-muted-foreground">No upcoming shows. <Link href="/movie-room" className="text-primary hover:underline">Schedule one</Link></p>
                 )}
               </div>
+              {(s.movie.recent?.length ?? 0) > 0 && (
+                <div className="mt-3" data-testid="owner-movie-recent">
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Latest seat bookings{(s.movie.totalBookings ?? 0) > 0 && <span className="font-normal"> · {s.movie.totalBookings} in total</span>}</p>
+                  <div className="divide-y divide-border">
+                    {s.movie.recent!.map((b) => (
+                      <Row key={b.id} href="/movie-room" testId={`movie-booking-${b.id}`}
+                        label={<>
+                          <span className="block truncate">{b.guestName}<span className="text-muted-foreground"> · Seat {b.seat}</span></span>
+                          <span className="block truncate text-xs text-muted-foreground">{b.showTitle} · {shortDate(b.showDate)}{b.showTime ? ` · ${b.showTime}` : ""}</span>
+                        </>}
+                        value={b.due > 0.5
+                          ? <span className="text-amber-600 dark:text-amber-400">{formatKES(b.due)} due</span>
+                          : <span className="text-muted-foreground">Paid</span>} />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {s.rooms && s.arrivals.length === 0 && s.events.length === 0 && s.shows.length === 0 && (
