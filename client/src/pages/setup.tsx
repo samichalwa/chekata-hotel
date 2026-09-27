@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
-import { Logo } from "@/components/logo";
+import chekataLogoFull from "@/assets/chekata-logo-full.jpg";
 import { useSetup } from "@/hooks/use-auth";
 
 const setupSchema = z.object({
@@ -48,7 +48,7 @@ export default function SetupPage() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-sm p-8">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <Logo className="h-10 w-10 text-primary" />
+          <img src={chekataLogoFull} alt="The Chekata Hotel" className="h-32 w-32 rounded-2xl object-cover shadow-md ring-1 ring-border" />
           <div>
             <h1 className="text-lg font-semibold">Welcome to The Chekata</h1>
             <p className="text-sm text-muted-foreground">Create the first administrator account to get started</p>

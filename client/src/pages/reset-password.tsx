@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useResetPassword } from "@/hooks/use-auth";
-import chekataLogo from "@/assets/chekata-logo.jpg";
+import chekataLogo from "@/assets/chekata-logo-full.jpg";
 
 const resetSchema = z
   .object({
@@ -66,7 +66,7 @@ export default function ResetPasswordPage({ token }: { token: string | null }) {
           <img
             src={chekataLogo}
             alt="The Chekata Hotel"
-            className="h-28 w-28 rounded-2xl object-cover shadow-md ring-1 ring-border"
+            className="h-40 w-40 rounded-2xl object-cover shadow-md ring-1 ring-border"
             data-testid="img-reset-logo"
           />
           <p className="text-sm text-muted-foreground">Choose a new password</p>

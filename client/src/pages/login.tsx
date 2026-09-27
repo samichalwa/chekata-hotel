@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useLogin, useForgotPassword, useSetupStatus, type DbEnvironment } from "@/hooks/use-auth";
-import { ChaimsMark, ChaimsWordmark } from "@/components/chaims-logo";
+import { ChaimsWordmark } from "@/components/chaims-logo";
+import chekataLogoFull from "@/assets/chekata-logo-full.jpg";
 import { InstallAppButton } from "@/components/install-app-button";
 
 const loginSchema = z.object({
@@ -117,7 +118,12 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-sm p-8">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <ChaimsMark className="h-20 w-20" />
+          <img
+            src={chekataLogoFull}
+            alt="The Chekata Hotel"
+            className="h-40 w-40 rounded-2xl object-cover shadow-md ring-1 ring-border"
+            data-testid="img-login-logo"
+          />
           <div className="flex flex-col items-center gap-1">
             <ChaimsWordmark className="text-2xl text-foreground" />
             <p className="text-xs uppercase tracking-[0.08em] text-muted-foreground">
