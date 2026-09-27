@@ -1108,6 +1108,14 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await ensureColumn("settings", "public_table_close_time", "TEXT NOT NULL DEFAULT '22:00'");
   await ensureColumn("settings", "public_movie_max_seats", "INTEGER NOT NULL DEFAULT 6");
   await ensureColumn("settings", "public_booking_note", "TEXT");
+  await ensureColumn("settings", "public_room_booking_enabled", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("settings", "public_room_pay_percent", "REAL NOT NULL DEFAULT 100");
+  await ensureColumn("settings", "public_room_max_nights", "INTEGER NOT NULL DEFAULT 30");
+  await ensureColumn("settings", "public_room_advance_days", "INTEGER NOT NULL DEFAULT 365");
+  await ensureColumn("settings", "public_room_check_in_time", "TEXT NOT NULL DEFAULT '14:00'");
+  await ensureColumn("settings", "public_room_check_out_time", "TEXT NOT NULL DEFAULT '10:00'");
+  await ensureColumn("accommodation_bookings", "booking_ref", "TEXT");
+  await ensureColumn("accommodation_bookings", "source", "TEXT");
   await sql.unsafe(`
 CREATE TABLE IF NOT EXISTS table_reservations (
   id SERIAL PRIMARY KEY,

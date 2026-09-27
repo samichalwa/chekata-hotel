@@ -70,7 +70,7 @@ export function StatusCheck() {
     <Card className="p-4 space-y-3">
       <h2 className="text-sm font-semibold flex items-center gap-2"><Search className="h-4 w-4" /> Check a booking</h2>
       <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-        <Input placeholder="Reference e.g. MOV-…" value={ref} onChange={(e) => setRef(e.target.value)} aria-label="Booking reference" data-testid="input-status-ref" />
+        <Input placeholder="Reference e.g. RMS-…" value={ref} onChange={(e) => setRef(e.target.value)} aria-label="Booking reference" data-testid="input-status-ref" />
         <Input placeholder="Mobile number" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} aria-label="Mobile number" data-testid="input-status-phone" />
         <Button variant="outline" disabled={!ref.trim() || phone.trim().length < 9 || q.isPending} onClick={() => q.mutate()} data-testid="button-check-status">Check</Button>
       </div>

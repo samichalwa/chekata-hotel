@@ -1,9 +1,10 @@
 // Online bookings — a shortcut view (NOT a module). Staff verify the M-Pesa messages guests
 // pasted on the public page (#/book) and manage table reservations. Movie payments need the
-// movie-room module, table payments / reservations need bar-restaurant (enforced server-side).
+// movie-room module, table payments / reservations need bar-restaurant, room payments need accommodation
+// (enforced server-side).
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Check, X, Clapperboard, UtensilsCrossed, ExternalLink, Copy, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { BedDouble, Check, X, Clapperboard, UtensilsCrossed, ExternalLink, Copy, AlertTriangle, CheckCircle2 } from "lucide-react";
 import type { OnlinePayment, TableReservation, TableRow as TableEntity } from "@shared/schema";
 import { parseMpesaMessage } from "@shared/mpesa";
 import { PageHeader } from "@/components/stat-card";
@@ -40,6 +41,7 @@ function ReviewDialog({ row, onClose }: { row: Row; onClose: () => void }) {
       queryClient.invalidateQueries({ queryKey: ["/api/online-payments/pending-count"] });
       queryClient.invalidateQueries({ queryKey: ["/api/table-reservations"] });
       queryClient.invalidateQueries({ queryKey: ["/api/movie-seat-bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accommodation-bookings"] });
       toast({ title: mode === "verify" ? "Payment verified — booking confirmed" : "Payment rejected — booking released" });
       onClose();
     },
@@ -108,7 +110,7 @@ function PaymentsList({ rows, onReview }: { rows: Row[]; onReview: (r: Row) => v
           {rows.map((r) => (
             <TableRow key={r.id} data-testid={`row-online-payment-${r.id}`}>
               <TableCell><div><div className="font-medium">{r.guestName}</div><div className="text-xs text-muted-foreground">{r.guestPhone}</div></div></TableCell>
-              <TableCell><div><div className="flex items-center gap-1.5">{r.kind === "movie" ? <Clapperboard className="h-4 w-4 shrink-0 text-muted-foreground" /> : <UtensilsCrossed className="h-4 w-4 shrink-0 text-muted-foreground" />}<span>{r.summary}</span></div><div className="text-xs text-muted-foreground">{r.targetRef}</div></div></TableCell>
+              <TableCell><div><div className="flex items-center gap-1.5">{r.kind === "movie" ? <Clapperboard className="h-4 w-4 shrink-0 text-muted-foreground" /> : r.kind === "room" ? <BedDouble className="h-4 w-4 shrink-0 text-muted-foreground" /> : <UtensilsCrossed className="h-4 w-4 shrink-0 text-muted-foreground" />}<span>{r.summary}</span></div><div className="text-xs text-muted-foreground">{r.targetRef}</div></div></TableCell>
               <TableCell><div><div className="font-medium tabular-nums">{r.mpesaCode}</div><div className="text-xs text-muted-foreground">{when(r.paidAt)}</div></div></TableCell>
               <TableCell className="text-right tabular-nums"><div><div className={r.amountOk ? "" : "text-destructive"}>{formatKES(r.amount)}</div><div className="text-xs text-muted-foreground">of {formatKES(r.amountDue)}</div></div></TableCell>
               <TableCell><div>{statusBadge(r.status)}{r.reviewedBy && <div className="text-xs text-muted-foreground">{r.reviewedBy}</div>}</div></TableCell>
@@ -188,7 +190,7 @@ export default function OnlineBookingsPage() {
   const publicUrl = `${window.location.origin}/#/book`;
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-6xl mx-auto">
-      <PageHeader title="Online bookings" description="Verify M-Pesa payments pasted by guests on the public booking page, and manage table reservations." />
+      <PageHeader title="Online bookings" description="Verify M-Pesa payments pasted by guests on the public booking page for rooms, movie seats and tables, and manage table reservations." />
       <Card className="p-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm"><span className="text-muted-foreground">Public booking link: </span><span className="font-medium break-all" data-testid="text-public-link">{publicUrl}</span></div>
         <div className="flex gap-2">

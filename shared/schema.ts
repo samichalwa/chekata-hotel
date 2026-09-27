@@ -50,6 +50,9 @@ export const accommodationBookings = pgTable("accommodation_bookings", {
   idOverriddenBy: text("id_overridden_by"),
   idOverriddenAt: bigint("id_overridden_at", { mode: "number" }),
   idOverrideReason: text("id_override_reason"),
+  // ---- Public online booking (#/book) ----
+  bookingRef: text("booking_ref"), // e.g. RMS-ABC123 — set for online bookings
+  source: text("source"), // "online" for bookings made on the public page; null = staff
 });
 
 export const insertAccommodationBookingSchema = createInsertSchema(accommodationBookings).omit({ id: true });
@@ -511,6 +514,12 @@ export const settings = pgTable("settings", {
   publicTableCloseTime: text("public_table_close_time").notNull().default("22:00"),
   publicMovieMaxSeats: integer("public_movie_max_seats").notNull().default(6),
   publicBookingNote: text("public_booking_note"),
+  publicRoomBookingEnabled: integer("public_room_booking_enabled").notNull().default(1),
+  publicRoomPayPercent: real("public_room_pay_percent").notNull().default(100), // % of the stay paid online to hold the room
+  publicRoomMaxNights: integer("public_room_max_nights").notNull().default(30),
+  publicRoomAdvanceDays: integer("public_room_advance_days").notNull().default(365),
+  publicRoomCheckInTime: text("public_room_check_in_time").notNull().default("14:00"),
+  publicRoomCheckOutTime: text("public_room_check_out_time").notNull().default("10:00"),
 });
 
 export const insertSettingsSchema = createInsertSchema(settings).omit({ id: true });
@@ -1567,7 +1576,7 @@ export interface TableReservation {
 // seat bookingRef; kind=table → targetRef is the reservationRef.
 export interface OnlinePayment {
   id: number;
-  kind: "movie" | "table";
+  kind: "movie" | "table" | "room";
   targetRef: string;
   guestName: string;
   guestPhone: string;

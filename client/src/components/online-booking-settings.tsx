@@ -17,12 +17,15 @@ export function OnlineBookingSettingsTab() {
   const { toast } = useToast();
   const { data } = useQuery<Settings>({ queryKey: ["/api/settings"] });
   const [f, setF] = useState({
+    room: true, roomPct: "100", roomNights: "30", roomAdvance: "365", roomIn: "14:00", roomOut: "10:00",
     movie: true, table: true, type: "till", number: "", account: "", business: "", maxAge: "24",
     deposit: "1000", maxParty: "12", open: "07:00", close: "22:00", maxSeats: "6", note: "",
   });
   useEffect(() => {
     if (!data) return;
     setF({
+      room: data.publicRoomBookingEnabled !== 0, roomPct: String(data.publicRoomPayPercent ?? 100), roomNights: String(data.publicRoomMaxNights ?? 30),
+      roomAdvance: String(data.publicRoomAdvanceDays ?? 365), roomIn: data.publicRoomCheckInTime || "14:00", roomOut: data.publicRoomCheckOutTime || "10:00",
       movie: data.publicMovieBookingEnabled !== 0, table: data.publicTableBookingEnabled !== 0,
       type: data.mpesaPaymentType || "till", number: data.mpesaNumber ?? "", account: data.mpesaAccountNumber ?? "",
       business: data.mpesaBusinessName ?? "", maxAge: String(data.mpesaMessageMaxAgeHours ?? 24),
@@ -33,10 +36,13 @@ export function OnlineBookingSettingsTab() {
   }, [data]);
   const set = (k: keyof typeof f, v: any) => setF((x) => ({ ...x, [k]: v }));
   const num = (v: string, d: number) => (Number.isFinite(Number(v)) && v.trim() !== "" ? Number(v) : d);
-  const invalid = f.open >= f.close || num(f.maxSeats, 0) < 1 || num(f.maxParty, 0) < 1 || num(f.deposit, -1) < 0 || num(f.maxAge, 0) < 1;
+  const invalid = f.open >= f.close || num(f.maxSeats, 0) < 1 || num(f.maxParty, 0) < 1 || num(f.deposit, -1) < 0 || num(f.maxAge, 0) < 1
+    || num(f.roomPct, 0) < 10 || num(f.roomPct, 0) > 100 || num(f.roomNights, 0) < 1 || num(f.roomAdvance, 0) < 1 || !f.roomIn || !f.roomOut;
 
   const save = useMutation({
     mutationFn: async () => (await apiRequest("PUT", "/api/settings", {
+      publicRoomBookingEnabled: f.room ? 1 : 0, publicRoomPayPercent: num(f.roomPct, 100), publicRoomMaxNights: Math.round(num(f.roomNights, 30)),
+      publicRoomAdvanceDays: Math.round(num(f.roomAdvance, 365)), publicRoomCheckInTime: f.roomIn, publicRoomCheckOutTime: f.roomOut,
       publicMovieBookingEnabled: f.movie ? 1 : 0, publicTableBookingEnabled: f.table ? 1 : 0,
       mpesaPaymentType: f.type, mpesaNumber: f.number.trim() || null, mpesaAccountNumber: f.account.trim() || null,
       mpesaBusinessName: f.business.trim() || null, mpesaMessageMaxAgeHours: Math.round(num(f.maxAge, 24)),
@@ -53,7 +59,7 @@ export function OnlineBookingSettingsTab() {
     <div className="space-y-4 max-w-3xl">
       <Card className="p-4 space-y-2">
         <h3 className="font-semibold">Public booking link</h3>
-        <p className="text-sm text-muted-foreground">Share this link (website, WhatsApp, QR code). Guests can view scheduled shows, pick movie seats and reserve tables. Nothing is held until they paste a valid M-Pesa message; your office then verifies it under Online bookings.</p>
+        <p className="text-sm text-muted-foreground">Share this link (website, WhatsApp, QR code). Guests can book rooms, view scheduled shows, pick movie seats and reserve tables. Nothing is held until they paste a valid M-Pesa message; your office then verifies it under Online bookings.</p>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Input readOnly value={url} data-testid="input-public-booking-url" />
           <div className="flex gap-2">
@@ -65,7 +71,17 @@ export function OnlineBookingSettingsTab() {
 
       <Card className="p-4 space-y-4">
         <h3 className="font-semibold">What guests can book</h3>
-        <div className="flex items-center justify-between gap-4"><div><Label>Movie room seats</Label><p className="text-xs text-muted-foreground">When off, shows stay visible but seats can't be booked online.</p></div><Switch checked={f.movie} onCheckedChange={(v) => set("movie", v)} data-testid="switch-public-movie" /></div>
+        <div className="flex items-center justify-between gap-4"><div><Label>Rooms (accommodation)</Label><p className="text-xs text-muted-foreground">Guests pick dates and a room type; the first free room of that type is held and shows in Accommodation as Pending payment.</p></div><Switch checked={f.room} onCheckedChange={(v) => set("room", v)} data-testid="switch-public-room" /></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5"><Label htmlFor="ob-room-pct">Pay online to hold a room (% of stay, 10–100)</Label><Input id="ob-room-pct" type="number" min={10} max={100} value={f.roomPct} onChange={(e) => set("roomPct", e.target.value)} data-testid="input-public-room-pct" /></div>
+          <div className="space-y-1.5"><Label htmlFor="ob-room-nights">Max nights per online booking</Label><Input id="ob-room-nights" type="number" min={1} value={f.roomNights} onChange={(e) => set("roomNights", e.target.value)} data-testid="input-public-room-nights" /></div>
+          <div className="space-y-1.5"><Label htmlFor="ob-room-adv">Book up to (days ahead)</Label><Input id="ob-room-adv" type="number" min={1} value={f.roomAdvance} onChange={(e) => set("roomAdvance", e.target.value)} data-testid="input-public-room-advance" /></div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5"><Label htmlFor="ob-room-in">Check-in from</Label><Input id="ob-room-in" type="time" value={f.roomIn} onChange={(e) => set("roomIn", e.target.value)} /></div>
+            <div className="space-y-1.5"><Label htmlFor="ob-room-out">Check-out by</Label><Input id="ob-room-out" type="time" value={f.roomOut} onChange={(e) => set("roomOut", e.target.value)} /></div>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-4 border-t border-border pt-4"><div><Label>Movie room seats</Label><p className="text-xs text-muted-foreground">When off, shows stay visible but seats can't be booked online.</p></div><Switch checked={f.movie} onCheckedChange={(v) => set("movie", v)} data-testid="switch-public-movie" /></div>
         <div className="flex items-center justify-between gap-4"><div><Label>Restaurant &amp; bar tables</Label></div><Switch checked={f.table} onCheckedChange={(v) => set("table", v)} data-testid="switch-public-table" /></div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5"><Label htmlFor="ob-seats">Max movie seats per booking</Label><Input id="ob-seats" type="number" min={1} value={f.maxSeats} onChange={(e) => set("maxSeats", e.target.value)} data-testid="input-public-max-seats" /></div>
@@ -97,7 +113,7 @@ export function OnlineBookingSettingsTab() {
         {!f.number.trim() && <p className="text-sm text-destructive">Add the M-Pesa number, otherwise guests can't pay online.</p>}
       </Card>
       <Button onClick={() => save.mutate()} disabled={save.isPending || invalid} data-testid="button-save-online-booking"><Save className="h-4 w-4 mr-1" /> Save</Button>
-      {invalid && <p className="text-sm text-destructive">Check the numbers and make sure opening time is before the last booking time.</p>}
+      {invalid && <p className="text-sm text-destructive">Check the numbers (room payment must be 10–100%) and make sure opening time is before the last booking time.</p>}
     </div>
   );
 }

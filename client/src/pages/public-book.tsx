@@ -1,7 +1,7 @@
 // Public booking page (no login): https://hms.thechekata.com/#/book
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { CalendarDays, Clock, Film, Loader2, UtensilsCrossed, AlertCircle, ArrowLeft } from "lucide-react";
+import { BedDouble, CalendarDays, Clock, Film, Loader2, UtensilsCrossed, AlertCircle, ArrowLeft } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -9,6 +9,7 @@ import { formatKES } from "@/lib/format";
 import chekataLogo from "@/assets/chekata-logo.jpg";
 import { type Info, type PublicShow, type Result, type Guest, publicApi, niceDate, PayInstructions, MpesaPaste, mpesaReady, GuestFields, Done, SeatMap } from "@/components/public-booking-parts";
 import { TableTab, StatusCheck } from "@/components/public-table-booking";
+import { RoomTab } from "@/components/public-room-booking";
 
 function MovieTab({ info }: { info: Info }) {
   const { data: shows, isLoading, refetch } = useQuery<PublicShow[]>({ queryKey: ["public-shows"], queryFn: () => publicApi("GET", "/api/public/movie-shows"), refetchInterval: 30000 });
@@ -98,8 +99,8 @@ function MovieTab({ info }: { info: Info }) {
 
 export default function PublicBookPage() {
   const { data: info, isLoading, error } = useQuery<Info>({ queryKey: ["public-booking-info"], queryFn: () => publicApi("GET", "/api/public/booking-info") });
-  useEffect(() => { document.title = `${info?.hotelName ?? "The Chekata"} — Book movie seats & tables`; }, [info?.hotelName]);
-  const defaultTab = info && !info.movieEnabled && info.tableEnabled ? "table" : "movie";
+  useEffect(() => { document.title = `${info?.hotelName ?? "The Chekata"} — Book rooms, movie seats & tables`; }, [info?.hotelName]);
+  const defaultTab = !info ? "room" : info.roomEnabled ? "room" : info.movieEnabled ? "movie" : info.tableEnabled ? "table" : "movie";
 
   return (
     <div className="min-h-screen bg-background">
@@ -108,7 +109,7 @@ export default function PublicBookPage() {
           <img src={chekataLogo} alt="" className="h-10 w-10 rounded-md object-cover" />
           <div className="leading-tight">
             <p className="font-semibold" data-testid="text-public-hotel-name">{info?.hotelName ?? "The Chekata"}</p>
-            <p className="text-xs text-muted-foreground">Book movie seats and tables</p>
+            <p className="text-xs text-muted-foreground">Book rooms, movie seats and tables</p>
           </div>
         </div>
       </header>
@@ -119,10 +120,14 @@ export default function PublicBookPage() {
           <>
             {info.note && <p className="rounded-md border border-border bg-card p-3 text-sm text-muted-foreground" data-testid="text-public-note">{info.note}</p>}
             <Tabs defaultValue={defaultTab}>
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="movie" data-testid="tab-public-movie"><Film className="h-4 w-4 mr-1.5" /> Movie Room</TabsTrigger>
-                <TabsTrigger value="table" data-testid="tab-public-table"><UtensilsCrossed className="h-4 w-4 mr-1.5" /> Reserve a table</TabsTrigger>
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="room" data-testid="tab-public-room"><BedDouble className="h-4 w-4 mr-1.5 shrink-0" /> Rooms</TabsTrigger>
+                <TabsTrigger value="movie" data-testid="tab-public-movie"><Film className="h-4 w-4 mr-1.5 shrink-0" /> Movies</TabsTrigger>
+                <TabsTrigger value="table" data-testid="tab-public-table"><UtensilsCrossed className="h-4 w-4 mr-1.5 shrink-0" /> Tables</TabsTrigger>
               </TabsList>
+              <TabsContent value="room" className="mt-4">
+                {info.roomEnabled ? <RoomTab info={info} /> : <Card className="p-6 text-center text-sm text-muted-foreground">Online room booking is closed at the moment. Please call reception{info.hotelPhone ? ` on ${info.hotelPhone}` : ""}.</Card>}
+              </TabsContent>
               <TabsContent value="movie" className="mt-4">
                 {!info.movieEnabled && <p className="mb-3 text-sm text-muted-foreground">Online seat booking is closed at the moment. Shows are listed for information; please book at reception.</p>}
                 <MovieTab info={info} />

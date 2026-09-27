@@ -5,7 +5,7 @@ import { z } from "zod";
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { storage } from "./storage";
+import { sql, storage } from "./storage";
 import {
   insertRoomSchema, insertAccommodationBookingSchema,
   insertFacilitySchema, insertFacilityBookingSchema,
@@ -559,6 +559,11 @@ export async function registerRoutes(
       }
       let updated = await storage.updateAccommodationBooking(id, data);
       if (!updated) return res.status(404).json({ error: "Booking not found" });
+      // An online booking cancelled here releases its pending M-Pesa submission too.
+      if (data.status === "cancelled" && before.status !== "cancelled" && before.bookingRef) {
+        const who = (req as any).user?.fullName ?? "staff";
+        await sql`UPDATE online_payments SET status = 'rejected', reviewed_by = ${who}, reviewed_at = ${Date.now()}, review_note = 'Booking cancelled in Accommodation' WHERE target_ref = ${before.bookingRef} AND status = 'pending'`;
+      }
       let docResult: any = null;
       const paymentDelta = (updated.amountPaid ?? 0) - (before.amountPaid ?? 0);
       // Auto-promote pending_payment → confirmed as soon as any payment lands,
@@ -589,7 +594,12 @@ export async function registerRoutes(
     } catch (err) { handleZodError(res, err); }
   });
   app.delete("/api/accommodation-bookings/:id", requireModule("accommodation"), async (req, res) => {
+    const gone = await storage.getAccommodationBooking(Number(req.params.id));
     await storage.deleteAccommodationBooking(Number(req.params.id));
+    if (gone?.bookingRef) {
+      const who = (req as any).user?.fullName ?? "staff";
+      await sql`UPDATE online_payments SET status = 'rejected', reviewed_by = ${who}, reviewed_at = ${Date.now()}, review_note = 'Booking deleted in Accommodation' WHERE target_ref = ${gone.bookingRef} AND status = 'pending'`;
+    }
     res.status(204).end();
   });
   // Director's-discretion override: confirm a booking that has no payment

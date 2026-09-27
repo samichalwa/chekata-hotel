@@ -4,7 +4,7 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import { sql, storage } from "./storage";
 import { parsePermissions, requireModule } from "./auth";
-import { MOVIE_SEAT_NUMBERS, MOVIE_SEAT_ROWS, TABLE_RESERVATION_STATUSES, type ModuleKey, type OnlinePayment, type TableReservation } from "@shared/schema";
+import { MOVIE_SEAT_NUMBERS, type AccommodationBooking, type Room, MOVIE_SEAT_ROWS, TABLE_RESERVATION_STATUSES, type ModuleKey, type OnlinePayment, type TableReservation } from "@shared/schema";
 import { parseMpesaMessage, recipientMatches } from "@shared/mpesa";
 import { duplicateRefMessage, findReferenceUse, inFlight, normalizeRef } from "./payment-refs";
 import { notifyModuleUsers } from "./director";
@@ -81,7 +81,7 @@ async function checkMpesa(raw: unknown, amountDue: number): Promise<Check> {
 }
 
 async function insertPayment(input: {
-  kind: "movie" | "table"; targetRef: string; guestName: string; guestPhone: string; guestEmail: string | null;
+  kind: "movie" | "table" | "room"; targetRef: string; guestName: string; guestPhone: string; guestEmail: string | null;
   check: Extract<Check, { ok: true }>; amountDue: number; rawMessage: string; summary: string;
 }): Promise<OnlinePayment> {
   const rows = await sql`INSERT INTO online_payments (kind, target_ref, guest_name, guest_phone, guest_email, mpesa_code, amount, amount_due, paid_at, payer_name, recipient, raw_message, status, summary, created_at)
@@ -103,6 +103,49 @@ async function upcomingShows() {
   });
 }
 
+// ---------- rooms ----------
+const addDays = (d: string, n: number) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+const nightsOf = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400_000);
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Bookings that block a room: anything not cancelled / checked out (pending online payments hold the room too).
+const blocks = (b: AccommodationBooking) => b.status !== "cancelled" && b.status !== "checked_out";
+const overlaps = (b: AccommodationBooking, checkIn: string, checkOut: string) => b.checkIn < checkOut && b.checkOut > checkIn;
+export const typeLabel = (t: string) => t.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+async function freeRooms(checkIn: string, checkOut: string): Promise<Room[]> {
+  const [rooms, bookings] = await Promise.all([storage.listRooms(), storage.listAccommodationBookings()]);
+  return rooms.filter((r) => r.status !== "maintenance" && !bookings.some((b) => b.roomId === r.id && blocks(b) && overlaps(b, checkIn, checkOut)));
+}
+
+// Guests choose a room category (type + nightly rate); the office sees the exact room assigned.
+async function roomOptions(checkIn: string, checkOut: string) {
+  const [all, free] = await Promise.all([storage.listRooms(), freeRooms(checkIn, checkOut)]);
+  const groups = new Map<string, { key: string; type: string; label: string; rate: number; total: number; available: number }>();
+  for (const r of all.filter((x) => x.status !== "maintenance")) {
+    const key = `${r.type}|${r.rate}`;
+    const g = groups.get(key) ?? { key, type: r.type, label: typeLabel(r.type), rate: r.rate, total: 0, available: 0 };
+    g.total += 1;
+    if (free.some((f) => f.id === r.id)) g.available += 1;
+    groups.set(key, g);
+  }
+  return Array.from(groups.values()).sort((a, b) => a.rate - b.rate || a.label.localeCompare(b.label));
+}
+
+function validateStay(s: any, checkIn: string, checkOut: string): string | null {
+  const { date: today } = nairobiNow();
+  if (!DATE_RE.test(checkIn) || !DATE_RE.test(checkOut)) return "Choose check-in and check-out dates.";
+  if (checkIn < today) return "Check-in can't be in the past.";
+  const nights = nightsOf(checkIn, checkOut);
+  if (nights < 1) return "Check-out must be at least one night after check-in.";
+  const maxN = s.publicRoomMaxNights || 30;
+  if (nights > maxN) return `Online bookings are limited to ${maxN} nights. Please call reception for longer stays.`;
+  const adv = s.publicRoomAdvanceDays || 365;
+  if (checkIn > addDays(today, adv)) return `Rooms can be booked up to ${adv} days ahead.`;
+  return null;
+}
+const payPercent = (s: any) => Math.min(100, Math.max(1, Number(s.publicRoomPayPercent) || 100));
+const payNow = (s: any, total: number) => Math.ceil((total * payPercent(s)) / 100);
+
 function hasModule(user: any, key: ModuleKey) {
   return !!user && (user.isAdmin || parsePermissions(user.permissions).includes(key));
 }
@@ -116,7 +159,9 @@ export function registerPublicBookingRoutes(app: Express) {
       const s = await storage.getSettings();
       res.json({
         hotelName: s.hotelName, hotelPhone: s.hotelPhone, hotelEmail: s.hotelEmail,
-        movieEnabled: !!s.publicMovieBookingEnabled, tableEnabled: !!s.publicTableBookingEnabled,
+        movieEnabled: !!s.publicMovieBookingEnabled, tableEnabled: !!s.publicTableBookingEnabled, roomEnabled: !!s.publicRoomBookingEnabled,
+        roomPayPercent: payPercent(s), roomMaxNights: s.publicRoomMaxNights || 30, roomAdvanceDays: s.publicRoomAdvanceDays || 365,
+        roomCheckInTime: s.publicRoomCheckInTime || "14:00", roomCheckOutTime: s.publicRoomCheckOutTime || "10:00", roomMaxGuests: 2,
         mpesa: { type: s.mpesaPaymentType || "till", number: s.mpesaNumber || null, accountNumber: s.mpesaAccountNumber || null, businessName: s.mpesaBusinessName || s.hotelName },
         tableDeposit: Number(s.publicTableDeposit) || 0, tableMaxParty: s.publicTableMaxParty || 12,
         tableOpenTime: s.publicTableOpenTime || "07:00", tableCloseTime: s.publicTableCloseTime || "22:00",
@@ -131,6 +176,76 @@ export function registerPublicBookingRoutes(app: Express) {
       // Scheduled shows are always viewable; seat booking itself is gated by publicMovieBookingEnabled.
       res.json(await upcomingShows());
     } catch { res.status(500).json({ error: "Shows are unavailable right now." }); }
+  });
+
+  app.get("/api/public/room-availability", rateLimit(60, 10 * 60_000), async (req, res) => {
+    try {
+      const s = await storage.getSettings();
+      const checkIn = str(req.query.checkIn, 10);
+      const checkOut = str(req.query.checkOut, 10);
+      const bad = validateStay(s, checkIn, checkOut);
+      if (bad) return res.status(400).json({ error: bad });
+      const nights = nightsOf(checkIn, checkOut);
+      res.json({ checkIn, checkOut, nights, options: (await roomOptions(checkIn, checkOut)).map((o) => ({ ...o, stayTotal: o.rate * nights, payNow: payNow(s, o.rate * nights) })) });
+    } catch { res.status(500).json({ error: "Room availability is unavailable right now." }); }
+  });
+
+  app.post("/api/public/room-bookings", rateLimit(8, 15 * 60_000), async (req, res) => {
+    let lockedCode: string | null = null;
+    try {
+      const s = await storage.getSettings();
+      if (!s.publicRoomBookingEnabled) return res.status(403).json({ error: "Online room booking is currently closed. Please contact reception." });
+      const b = req.body ?? {};
+      const guestName = str(b.guestName, 80);
+      const guestPhone = cleanPhone(b.guestPhone);
+      const guestEmail = str(b.guestEmail, 120) || null;
+      const checkIn = str(b.checkIn, 10);
+      const checkOut = str(b.checkOut, 10);
+      const guests = Math.floor(Number(b.guests)) || 1;
+      const notes = str(b.notes, 300) || null;
+      if (guestName.length < 2) return res.status(400).json({ error: "Enter your name." });
+      if (!PHONE_RE.test(guestPhone)) return res.status(400).json({ error: "Enter a valid Kenyan mobile number, e.g. 0712 345 678." });
+      if (guestEmail && !EMAIL_RE.test(guestEmail)) return res.status(400).json({ error: "Enter a valid email address or leave it blank." });
+      if (guests < 1 || guests > 2) return res.status(400).json({ error: "A room takes up to 2 guests. Book another room for more guests." });
+      const bad = validateStay(s, checkIn, checkOut);
+      if (bad) return res.status(400).json({ error: bad });
+      const [type, rateStr] = str(b.roomOption, 120).split("|");
+      const rate = Number(rateStr);
+      const pick = () => freeRooms(checkIn, checkOut).then((rs) => rs.filter((r) => r.type === type && r.rate === rate).sort((a, z) => a.name.localeCompare(z.name))[0]);
+      if (!(await pick())) return res.status(409).json({ error: "That room type is no longer available for those dates. Please choose another." });
+      const nights = nightsOf(checkIn, checkOut);
+      const total = rate * nights;
+      const due = payNow(s, total);
+      const check = await checkMpesa(b.mpesaMessage, due);
+      if (!check.ok) return res.status(400).json({ error: check.error });
+      lockedCode = check.code;
+      inFlight.add(lockedCode);
+
+      const ref = genRef("RMS");
+      const label = typeLabel(type);
+      const summary = `${label} room — ${nights} night${nights > 1 ? "s" : ""}, ${checkIn} to ${checkOut}, ${guests} guest${guests > 1 ? "s" : ""}`;
+      const payment = await insertPayment({ kind: "room", targetRef: ref, guestName, guestPhone, guestEmail, check, amountDue: due, rawMessage: str(b.mpesaMessage, 1000), summary });
+      try {
+        const room = await pick(); // re-check right before writing
+        if (!room) throw Object.assign(new Error("That room type is no longer available for those dates. Please choose another."), { status: 409 });
+        await storage.createAccommodationBooking({
+          roomId: room.id, guestName, guestPhone, guestEmail, checkIn, checkOut, rate, totalAmount: total, amountPaid: 0,
+          paymentMethod: "mpesa", paymentReference: null, status: "pending_payment", numberOfGuests: guests,
+          notes: `Online booking ${ref} — M-Pesa ${check.code} (${kes(check.amount)}) awaiting office verification${notes ? ` | Guest note: ${notes}` : ""}`,
+          bookingRef: ref, source: "online", createdAt: Date.now(),
+        } as any);
+      } catch (err: any) {
+        await sql`DELETE FROM online_payments WHERE id = ${payment.id}`;
+        return res.status(err?.status ?? 500).json({ error: err?.status ? err.message : "Booking failed. Please try again." });
+      }
+      void notifyModuleUsers("accommodation", { category: "booking", title: `Online room booking — verify M-Pesa ${check.code}`, body: `${guestName}: ${summary}. Paid ${kes(check.amount)} of ${kes(total)}.`, linkPath: "/online-bookings" });
+      void sendSms({ settings: s, to: guestPhone, message: `Hi ${guestName}, we received your room booking ${ref}: ${summary}. M-Pesa ${check.code} is being verified; we'll text you once confirmed. - ${s.hotelName}` }).catch(() => {});
+      res.status(201).json({ ref, status: "pending", summary, amount: check.amount, mpesaCode: check.code });
+    } catch (err: any) {
+      if (/duplicate key|unique/i.test(String(err?.message))) return res.status(409).json({ error: "This M-Pesa code has already been used. Each payment can only be used once." });
+      console.error("[public-booking] room booking failed:", err);
+      res.status(500).json({ error: "Booking failed. Please try again or contact reception." });
+    } finally { if (lockedCode) inFlight.delete(lockedCode); }
   });
 
   app.get("/api/public/booking-status", rateLimit(30, 10 * 60_000), async (req, res) => {
@@ -272,16 +387,17 @@ export function registerPublicBookingRoutes(app: Express) {
 }
 
 // ---------- staff routes (register AFTER requireAuth) ----------
+const KIND_MODULE: Record<OnlinePayment["kind"], ModuleKey> = { movie: "movie-room", table: "bar-restaurant", room: "accommodation" };
 function requireAnyBookingModule(req: Request, res: Response, next: NextFunction) {
   const user = (req as any).user;
-  if (hasModule(user, "movie-room") || hasModule(user, "bar-restaurant")) return next();
+  if (hasModule(user, "movie-room") || hasModule(user, "bar-restaurant") || hasModule(user, "accommodation")) return next();
   res.status(403).json({ error: "You don't have access to this module" });
 }
 
 export function registerOnlineBookingStaffRoutes(app: Express) {
   app.get("/api/online-payments", requireAnyBookingModule, async (req, res) => {
     const user = (req as any).user;
-    const kinds = [hasModule(user, "movie-room") ? "movie" : null, hasModule(user, "bar-restaurant") ? "table" : null].filter(Boolean) as string[];
+    const kinds = [hasModule(user, "movie-room") ? "movie" : null, hasModule(user, "bar-restaurant") ? "table" : null, hasModule(user, "accommodation") ? "room" : null].filter(Boolean) as string[];
     const rows = await sql`SELECT * FROM online_payments WHERE kind IN ${sql(kinds)} ORDER BY created_at DESC LIMIT 500` as any[];
     const s = await storage.getSettings();
     res.json(rows.map((r) => {
@@ -293,7 +409,7 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
 
   app.get("/api/online-payments/pending-count", requireAnyBookingModule, async (req, res) => {
     const user = (req as any).user;
-    const kinds = [hasModule(user, "movie-room") ? "movie" : null, hasModule(user, "bar-restaurant") ? "table" : null].filter(Boolean) as string[];
+    const kinds = [hasModule(user, "movie-room") ? "movie" : null, hasModule(user, "bar-restaurant") ? "table" : null, hasModule(user, "accommodation") ? "room" : null].filter(Boolean) as string[];
     const rows = await sql`SELECT COUNT(*)::int AS n FROM online_payments WHERE status = 'pending' AND kind IN ${sql(kinds)}` as any[];
     res.json({ count: rows[0]?.n ?? 0 });
   });
@@ -302,7 +418,7 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
     const rows = await sql`SELECT * FROM online_payments WHERE id = ${Number(req.params.id)}` as any[];
     const p = rows[0] ? rowToPayment(rows[0]) : null;
     if (!p) { res.status(404).json({ error: "Payment not found" }); return null; }
-    if (!hasModule((req as any).user, p.kind === "movie" ? "movie-room" : "bar-restaurant")) { res.status(403).json({ error: "You don't have access to this module" }); return null; }
+    if (!hasModule((req as any).user, KIND_MODULE[p.kind])) { res.status(403).json({ error: "You don't have access to this module" }); return null; }
     if (p.status !== "pending") { res.status(409).json({ error: `This payment was already ${p.status}.` }); return null; }
     return p;
   }
@@ -314,6 +430,10 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
       const user = (req as any).user;
       const who = user.fullName ?? user.username;
       const note = str(req.body?.note, 300) || null;
+      if (p.kind === "room") {
+        const bk = (await storage.listAccommodationBookings()).find((x) => x.bookingRef === p.targetRef);
+        if (!bk || bk.status === "cancelled") return res.status(409).json({ error: "This room booking was cancelled in Accommodation. Reject the payment instead and refund the guest if needed." });
+      }
       // Claim it atomically so two staff can't verify the same payment.
       const claimed = await sql`UPDATE online_payments SET status = 'verified', reviewed_by = ${who}, reviewed_at = ${Date.now()}, review_note = ${note} WHERE id = ${p.id} AND status = 'pending' RETURNING id` as any[];
       if (!claimed.length) return res.status(409).json({ error: "This payment was already reviewed." });
@@ -339,6 +459,26 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
           docResult = { status: doc.status, id: doc.id, publicToken: doc.publicToken };
         }
         void sendSms({ settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your Movie Room booking ${p.targetRef} is CONFIRMED: ${p.summary}. M-Pesa ${p.mpesaCode} received. Enjoy the show! - ${s.hotelName}` }).catch(() => {});
+      } else if (p.kind === "room") {
+        const bk = (await storage.listAccommodationBookings()).find((x) => x.bookingRef === p.targetRef && x.status !== "cancelled");
+        if (bk) {
+          const paid = Math.min((bk.amountPaid ?? 0) + p.amount, bk.totalAmount);
+          const updated = await storage.updateAccommodationBooking(bk.id, {
+            amountPaid: paid, paymentMethod: "mpesa", paymentReference: bk.paymentReference || p.mpesaCode,
+            status: bk.status === "pending_payment" ? "confirmed" : bk.status,
+            notes: (bk.notes ?? "").replace("awaiting office verification", `verified by ${who}`),
+          } as any);
+          const room = await storage.getRoom(bk.roomId);
+          const nights = nightsOf(bk.checkIn, bk.checkOut);
+          const doc = await issueDocument(storage, {
+            docType: "invoice", category: "accommodation", sourceId: bk.id, recipientName: bk.guestName, recipientEmail: bk.guestEmail, issueDate: todayLabel(),
+            lineItems: [{ label: `${room?.name ?? "Room"} \u2014 ${nights} night(s)`, detail: `${bk.checkIn} to ${bk.checkOut} @ ${kes(bk.rate)}/night`, amount: bk.totalAmount }],
+            totalAmount: bk.totalAmount, amountPaid: paid, balance: bk.totalAmount - paid, paymentMethod: "mpesa", paymentReference: p.mpesaCode,
+          });
+          docResult = { status: doc.status, id: doc.id, publicToken: doc.publicToken, bookingId: updated?.id };
+          const bal = bk.totalAmount - paid;
+          void sendSms({ settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your room booking ${p.targetRef} is CONFIRMED: ${p.summary}. M-Pesa ${p.mpesaCode} received.${bal > 0.5 ? ` Balance ${kes(bal)} payable at check-in.` : ""} Check-in from ${s.publicRoomCheckInTime || "14:00"}. - ${s.hotelName}` }).catch(() => {});
+        }
       } else {
         await sql`UPDATE table_reservations SET status = 'confirmed', deposit_paid = ${p.amount}, payment_reference = ${p.mpesaCode} WHERE reservation_ref = ${p.targetRef} AND status = 'awaiting_verification'`;
         void sendSms({ settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your table reservation ${p.targetRef} is CONFIRMED: ${p.summary}. Deposit ${kes(p.amount)} (M-Pesa ${p.mpesaCode}) will be deducted from your bill. - ${s.hotelName}` }).catch(() => {});
@@ -362,6 +502,9 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
       if (p.kind === "movie") {
         const seats = (await storage.listMovieSeatBookings()).filter((b) => b.bookingRef === p.targetRef && b.status !== "cancelled");
         for (const seat of seats) await storage.updateMovieSeatBooking(seat.id, { status: "cancelled", notes: `Online booking rejected: ${reason}` } as any);
+      } else if (p.kind === "room") {
+        const bk = (await storage.listAccommodationBookings()).find((x) => x.bookingRef === p.targetRef && x.status === "pending_payment");
+        if (bk) await storage.updateAccommodationBooking(bk.id, { status: "cancelled", notes: `${bk.notes ?? ""} | Online booking rejected: ${reason}` } as any);
       } else {
         await sql`UPDATE table_reservations SET status = 'cancelled', notes = COALESCE(notes || ' | ', '') || ${`Rejected: ${reason}`} WHERE reservation_ref = ${p.targetRef}`;
       }

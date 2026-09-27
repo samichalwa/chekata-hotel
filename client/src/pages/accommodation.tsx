@@ -722,7 +722,7 @@ export default function Accommodation() {
                     <li key={b.id} className="px-4 py-3" data-testid={`card-booking-${b.id}`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="truncate font-medium">{b.guestName}{b.numberOfGuests > 1 && <span className="ml-1 text-xs font-normal text-muted-foreground">({b.numberOfGuests} guests)</span>}</p>
+                          <p className="truncate font-medium">{b.guestName}{b.numberOfGuests > 1 && <span className="ml-1 text-xs font-normal text-muted-foreground">({b.numberOfGuests} guests)</span>}{b.source === "online" && <span className="block text-xs font-normal text-muted-foreground" data-testid={`text-online-ref-${b.id}`}>Online · {b.bookingRef}</span>}</p>
                           <p className="text-xs text-muted-foreground">{room?.name ?? "—"} · {formatDate(b.checkIn)} → {formatDate(b.checkOut)}</p>
                         </div>
                         <Badge variant={statusVariant[b.status]} className="shrink-0">{titleCase(b.status)}</Badge>
@@ -758,7 +758,7 @@ export default function Accommodation() {
                       const balance = b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0);
                       return (
                         <TableRow key={b.id} data-testid={`row-booking-${b.id}`}>
-                          <TableCell className="font-medium">{b.guestName}{b.numberOfGuests > 1 && <span className="text-xs text-muted-foreground ml-1">({b.numberOfGuests} guests)</span>}</TableCell>
+                          <TableCell className="font-medium">{b.guestName}{b.numberOfGuests > 1 && <span className="text-xs text-muted-foreground ml-1">({b.numberOfGuests} guests)</span>}{b.source === "online" && <span className="block text-xs font-normal text-muted-foreground" data-testid={`text-online-ref-${b.id}`}>Online · {b.bookingRef}</span>}</TableCell>
                           <TableCell>{room?.name ?? "—"}</TableCell>
                           <TableCell>{formatDate(b.checkIn)}</TableCell>
                           <TableCell>{formatDate(b.checkOut)}</TableCell>

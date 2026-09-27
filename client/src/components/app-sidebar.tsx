@@ -104,7 +104,7 @@ export function AppSidebar() {
   // "All bookings" is likewise a shortcut view (rooms + events + movie seats), not a module.
   const showAllBookings = (["accommodation", "facilities", "movie-room"] as const).some((m) => canAccess(user, m));
   // "Online bookings" is a shortcut view (public-page M-Pesa verification), not a module.
-  const showOnlineBookings = canAccess(user, "movie-room") || canAccess(user, "bar-restaurant");
+  const showOnlineBookings = canAccess(user, "movie-room") || canAccess(user, "bar-restaurant") || canAccess(user, "accommodation");
   const { data: onlinePending } = useQuery<{ count: number }>({ queryKey: ["/api/online-payments/pending-count"], enabled: showOnlineBookings, refetchInterval: 60000 });
   const onlineCount = onlinePending?.count ?? 0;
   const { data: summary } = useDirectorSummary();

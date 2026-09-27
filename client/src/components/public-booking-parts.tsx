@@ -11,7 +11,8 @@ import { parseMpesaMessage } from "@shared/mpesa";
 
 export interface Info {
   hotelName: string; hotelPhone: string | null; hotelEmail: string | null;
-  movieEnabled: boolean; tableEnabled: boolean;
+  movieEnabled: boolean; tableEnabled: boolean; roomEnabled: boolean;
+  roomPayPercent: number; roomMaxNights: number; roomAdvanceDays: number; roomCheckInTime: string; roomCheckOutTime: string; roomMaxGuests: number;
   mpesa: { type: "till" | "paybill" | "phone"; number: string | null; accountNumber: string | null; businessName: string };
   tableDeposit: number; tableMaxParty: number; tableOpenTime: string; tableCloseTime: string;
   movieMaxSeats: number; note: string | null; seatRows: string[]; seatNumbers: number[]; today: string;
