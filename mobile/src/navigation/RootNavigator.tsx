@@ -3,6 +3,7 @@ import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Text, View, ActivityIndicator, StyleSheet } from "react-native";
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useAuth } from "../context/AuthContext";
 import { hasAnyModule } from "../api/types";
 import { colors } from "../theme/theme";
@@ -27,6 +28,13 @@ const RootStack = createNativeStackNavigator();
 
 function TabIcon({ label, focused }: { label: string; focused: boolean }) {
   return <Text style={{ fontSize: 11, fontWeight: focused ? "700" : "500", color: focused ? colors.primary : colors.textMuted }}>{label}</Text>;
+}
+
+type IconName = React.ComponentProps<typeof Ionicons>["name"];
+function tabIcon(active: IconName, inactive: IconName) {
+  return ({ focused, color, size }: { focused: boolean; color: string; size: number }) => (
+    <Ionicons name={focused ? active : inactive} size={size ?? 22} color={color} />
+  );
 }
 
 function BookingsStack() {
@@ -71,14 +79,14 @@ function MainTabs() {
       <Tab.Screen
         name="Dashboard"
         component={DashboardScreen}
-        options={{ tabBarLabel: ({ focused }) => <TabIcon label="Today" focused={focused} /> }}
+        options={{ tabBarLabel: ({ focused }) => <TabIcon label="Today" focused={focused} />, tabBarIcon: tabIcon("today", "today-outline") }}
       />
       {canApprove ? (
         <Tab.Screen
           name="Approvals"
           component={ApprovalsScreen}
           options={{
-            tabBarLabel: ({ focused }) => <TabIcon label="Approvals" focused={focused} />,
+            tabBarLabel: ({ focused }) => <TabIcon label="Approvals" focused={focused} />, tabBarIcon: tabIcon("checkmark-done-circle", "checkmark-done-circle-outline"),
             tabBarBadge: pending > 0 ? (pending > 99 ? "99+" : pending) : undefined,
             tabBarBadgeStyle: { backgroundColor: colors.danger, color: "#fff", fontSize: 11 },
           }}
@@ -88,20 +96,20 @@ function MainTabs() {
         <Tab.Screen
           name="Finance"
           component={FinanceScreen}
-          options={{ tabBarLabel: ({ focused }) => <TabIcon label="Finance" focused={focused} /> }}
+          options={{ tabBarLabel: ({ focused }) => <TabIcon label="Finance" focused={focused} />, tabBarIcon: tabIcon("wallet", "wallet-outline") }}
         />
       ) : null}
       {canBook ? (
         <Tab.Screen
           name="Bookings"
           component={BookingsStack}
-          options={{ tabBarLabel: ({ focused }) => <TabIcon label="Bookings" focused={focused} /> }}
+          options={{ tabBarLabel: ({ focused }) => <TabIcon label="Bookings" focused={focused} />, tabBarIcon: tabIcon("bed", "bed-outline") }}
         />
       ) : null}
       <Tab.Screen
         name="Profile"
         component={ProfileStack}
-        options={{ tabBarLabel: ({ focused }) => <TabIcon label="Profile" focused={focused} /> }}
+        options={{ tabBarLabel: ({ focused }) => <TabIcon label="Profile" focused={focused} />, tabBarIcon: tabIcon("person-circle", "person-circle-outline") }}
       />
     </Tab.Navigator>
   );

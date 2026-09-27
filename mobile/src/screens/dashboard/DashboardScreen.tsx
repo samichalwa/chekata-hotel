@@ -1,11 +1,12 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, ScrollView, StyleSheet, RefreshControl, Pressable } from "react-native";
+import { View, Text, ScrollView, StyleSheet, RefreshControl, Pressable, Linking, Alert, Platform } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
 import { hasAnyModule } from "../../api/types";
 import { Screen, CenteredSpinner, EmptyState, PrimaryButton } from "../../components/ui";
 import { colors, spacing, typography, radius } from "../../theme/theme";
 import { formatKes } from "../../utils/format";
+import { fetchDailyReportShare, sendDailyReportNow, whatsappDigits } from "../../api/director";
 import {
   useDirectorSummary,
   useNotifications,
@@ -166,6 +167,8 @@ export default function DashboardScreen() {
             </View>
           ) : null}
         </View>
+
+        {user?.isAdmin ? <DailyClose date={s.date} /> : null}
 
         {/* Alerts */}
         <Card title="Needs your attention" right={<Text style={styles.countPill}>{s.alerts.length}</Text>}>
@@ -363,7 +366,53 @@ export default function DashboardScreen() {
   );
 }
 
+function notify(title: string, msg?: string) {
+  if (Platform.OS === "web") (globalThis as any).alert?.(msg ? `${title}\n${msg}` : title);
+  else Alert.alert(title, msg);
+}
+
+// Daily close report: WhatsApp (summary + PDF link), open the PDF, or email it now.
+function DailyClose({ date }: { date: string }) {
+  const [busy, setBusy] = useState<null | "wa" | "pdf" | "send">(null);
+  const run = (k: "wa" | "pdf" | "send", fn: () => Promise<void>) => async () => {
+    setBusy(k);
+    try { await fn(); } catch (e: any) { notify("Something went wrong", e?.response?.data?.error ?? e?.message); } finally { setBusy(null); }
+  };
+  const whatsapp = run("wa", async () => {
+    const sh = await fetchDailyReportShare(date);
+    const text = encodeURIComponent(`${sh.text}\n\nFull report (PDF): ${sh.url}`);
+    const phone = whatsappDigits(sh.whatsappPhone);
+    await Linking.openURL(phone ? `https://wa.me/${phone}?text=${text}` : `https://wa.me/?text=${text}`);
+  });
+  const pdf = run("pdf", async () => { await Linking.openURL((await fetchDailyReportShare(date)).url); });
+  const send = run("send", async () => {
+    const r = await sendDailyReportNow(date);
+    if (r.emails.length === 0 && r.sms.length === 0) notify("No recipients set", "Add email addresses in CHAIMS Settings → Daily report. Admins were alerted in the app.");
+    else notify("Daily close sent", `Email ${r.emails.filter((x) => x.ok).length}/${r.emails.length}${r.sms.length ? ` · SMS ${r.sms.filter((x) => x.ok).length}/${r.sms.length}` : ""}`);
+  });
+  const Btn = ({ label, onPress, k }: { label: string; onPress: () => void; k: "wa" | "pdf" | "send" }) => (
+    <Pressable onPress={onPress} disabled={busy !== null} style={[styles.dcBtn, busy !== null && { opacity: 0.6 }]} accessibilityRole="button" testID={`daily-${k}`}>
+      <Text style={styles.dcBtnText}>{busy === k ? "…" : label}</Text>
+    </Pressable>
+  );
+  return (
+    <View style={styles.dcWrap}>
+      <Text style={styles.dcTitle}>Daily close report</Text>
+      <View style={styles.dcRow}>
+        <Btn label="WhatsApp" onPress={whatsapp} k="wa" />
+        <Btn label="Open PDF" onPress={pdf} k="pdf" />
+        <Btn label="Email now" onPress={send} k="send" />
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  dcWrap: { marginBottom: spacing.md },
+  dcTitle: { fontSize: 12, fontWeight: "600", color: colors.textMuted, marginBottom: 6 },
+  dcRow: { flexDirection: "row", gap: 8 },
+  dcBtn: { flex: 1, alignItems: "center", paddingVertical: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  dcBtnText: { fontSize: 13, fontWeight: "600", color: colors.primary },
   container: { padding: spacing.md, paddingBottom: spacing.xl },
   greeting: { ...typography.h1, color: colors.text },
   date: { ...typography.h3, color: colors.text, marginTop: 2 },

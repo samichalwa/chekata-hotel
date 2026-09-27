@@ -84,3 +84,21 @@ export function relativeTime(ms: number): string {
   const d = Math.round(h / 24);
   return d === 1 ? "yesterday" : `${d} days ago`;
 }
+
+// Daily close report (admins). The server returns a summary text and a signed,
+// no-login PDF link, so WhatsApp messages always carry the PDF.
+export interface DailyReportShare { date: string; url: string; text: string; whatsappPhone: string | null }
+export async function fetchDailyReportShare(date?: string): Promise<DailyReportShare> {
+  return (await api.get<DailyReportShare>("/api/director/daily-report/share", { params: date ? { date } : undefined })).data;
+}
+export interface DailyReportSendResult { emails: { to: string; ok: boolean }[]; sms: { to: string; ok: boolean }[]; pushed: number }
+export async function sendDailyReportNow(date?: string): Promise<DailyReportSendResult> {
+  return (await api.post<DailyReportSendResult>("/api/director/daily-report/send", date ? { date } : {})).data;
+}
+export function whatsappDigits(raw?: string | null): string | null {
+  if (!raw) return null;
+  let d = raw.replace(/\D/g, "");
+  if (d.startsWith("0")) d = "254" + d.slice(1);
+  else if (d.length === 9) d = "254" + d;
+  return d.length >= 10 ? d : null;
+}
