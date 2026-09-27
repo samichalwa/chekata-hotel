@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useLogin, useForgotPassword, useSetupStatus, type DbEnvironment } from "@/hooks/use-auth";
 import chekataLogoFull from "@/assets/chekata-logo-full.jpg";
 import { InstallAppButton } from "@/components/install-app-button";
@@ -97,9 +96,11 @@ export default function LoginPage() {
   const { data: setupStatus } = useSetupStatus();
   const [serverError, setServerError] = useState<string | null>(null);
   const [mode, setMode] = useState<"login" | "forgot">("login");
-  // Phase 6 (Test/Live split): the toggle only appears once a Test database
-  // is actually wired up on this server — otherwise there is nothing to pick.
-  const [environment, setEnvironment] = useState<DbEnvironment>("live");
+  // The login screen signs in to Live. The Test environment is no longer
+  // offered on this screen; it is reached only through the private address
+  // hms.thechekata.com/?env=test (for administrators / testers).
+  const testRequested = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("env") === "test";
+  const environment: DbEnvironment = testRequested && setupStatus?.testDbConfigured ? "test" : "live";
 
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
@@ -139,28 +140,11 @@ export default function LoginPage() {
         ) : (
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              {setupStatus?.testDbConfigured && (
-                <div className="space-y-1.5">
-                  <p className="text-xs font-medium text-muted-foreground">Sign in to</p>
-                  <ToggleGroup
-                    type="single"
-                    value={environment}
-                    onValueChange={(value) => value && setEnvironment(value as DbEnvironment)}
-                    className="grid w-full grid-cols-2 gap-2"
-                    data-testid="toggle-login-environment"
-                  >
-                    <ToggleGroupItem value="live" className="gap-1.5 border data-[state=on]:border-primary" data-testid="toggle-environment-live">
-                      Live
-                    </ToggleGroupItem>
-                    <ToggleGroupItem value="test" className="gap-1.5 border data-[state=on]:border-primary" data-testid="toggle-environment-test">
-                      <FlaskConical className="h-3.5 w-3.5" /> Test
-                    </ToggleGroupItem>
-                  </ToggleGroup>
-                  {environment === "test" && (
-                    <p className="text-xs text-muted-foreground" data-testid="text-test-environment-note">
-                      Test mode never sends real emails, SMS, or WhatsApp messages. Requires Test environment access, granted per-user in Settings (administrators always have it).
-                    </p>
-                  )}
+              {testRequested && setupStatus?.testDbConfigured && (
+                <div className="rounded-md border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground" data-testid="text-test-environment-note">
+                  <p className="flex items-center gap-1.5 font-medium text-foreground"><FlaskConical className="h-3.5 w-3.5" /> Signing in to the Test environment</p>
+                  <p className="mt-1">Test mode never sends real emails, SMS, or WhatsApp messages. Requires Test environment access, granted per-user in Settings.</p>
+                  <a href="/" className="mt-1 inline-block text-primary underline-offset-2 hover:underline" data-testid="link-login-live">Sign in to Live instead</a>
                 </div>
               )}
               <FormField
