@@ -73,3 +73,10 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+// Authenticated fetch for non-JSON responses (e.g. PDF downloads).
+export async function authedFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(`${API_BASE}${url}`, { ...init, credentials: "include", headers: { ...(init.headers as Record<string, string> | undefined), ...authHeaders() } });
+  await throwIfResNotOk(res);
+  return res;
+}

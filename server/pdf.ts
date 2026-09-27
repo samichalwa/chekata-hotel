@@ -9,7 +9,7 @@ import { getCurrentEnvironment } from "./db-context";
 // gets "TEST COMPANY — " prefixed onto the company/hotel name wherever it
 // appears, so a Test-generated invoice/receipt/payslip/report can never be
 // mistaken for a real one, even out of context (e.g. forwarded by email).
-function companyDisplayName(settings: Settings): string {
+export function companyDisplayName(settings: Settings): string {
   const name = settings.hotelName || "The Chekata";
   return getCurrentEnvironment() === "test" ? `TEST COMPANY — ${name}` : name;
 }
@@ -18,7 +18,7 @@ function companyDisplayName(settings: Settings): string {
 // than the hotel name alone, which would otherwise run into the document
 // title box drawn to its right. Shrink the font just enough to fit the
 // available width instead of letting the two overlap.
-function drawCompanyHeaderName(doc: PDFKit.PDFDocument, text: string, x: number, y: number, maxWidth: number, color: string): void {
+export function drawCompanyHeaderName(doc: PDFKit.PDFDocument, text: string, x: number, y: number, maxWidth: number, color: string): void {
   const maxSize = 22;
   const minSize = 9;
   doc.font("Helvetica-Bold");
@@ -38,8 +38,8 @@ function drawCompanyHeaderName(doc: PDFKit.PDFDocument, text: string, x: number,
 // as the build step copies assets/ alongside dist/index.cjs (see
 // script/build.ts).
 const moduleDir = typeof __dirname !== "undefined" ? __dirname : path.dirname(fileURLToPath(import.meta.url));
-const LOGO_PATH = path.join(moduleDir, "assets", "chekata-logo.jpg");
-const LOGO_EXISTS = fs.existsSync(LOGO_PATH);
+export const LOGO_PATH = path.join(moduleDir, "assets", "chekata-logo.jpg");
+export const LOGO_EXISTS = fs.existsSync(LOGO_PATH);
 
 export interface DocLineItem {
   label: string;

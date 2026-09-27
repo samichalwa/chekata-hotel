@@ -8,6 +8,7 @@ import { sessionMiddleware, environmentMiddleware } from "./auth";
 import { schemaReady, storage } from "./storage";
 import { runTenantBillingCycle } from "./billing";
 import { startTestMessageLogPurgeSchedule } from "./test-environment";
+import { startDailyReportSchedule } from "./daily-report";
 
 const app = express();
 const httpServer = createServer(app);
@@ -124,6 +125,9 @@ app.use((req, res, next) => {
 
   // Phase 6: auto-purge intercepted Test-mode messages older than 30 days.
   startTestMessageLogPurgeSchedule();
+
+  // Owner/director daily close report (email PDF + SMS link + push) at the time set in Settings.
+  startDailyReportSchedule(log);
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.

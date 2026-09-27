@@ -1089,6 +1089,12 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   // editable in the Payroll → Statutory Rates screen without a code change.
   await ensureColumn("settings", "paye_personal_relief", "REAL NOT NULL DEFAULT 2400");
   await ensureColumn("settings", "water_rate_per_litre", "REAL NOT NULL DEFAULT 0");
+  await ensureColumn("settings", "daily_report_enabled", "INTEGER NOT NULL DEFAULT 0");
+  await ensureColumn("settings", "daily_report_time", "TEXT NOT NULL DEFAULT '21:00'");
+  await ensureColumn("settings", "daily_report_emails", "TEXT");
+  await ensureColumn("settings", "daily_report_sms_phones", "TEXT");
+  await ensureColumn("settings", "daily_report_whatsapp_phone", "TEXT");
+  await ensureColumn("settings", "daily_report_push", "INTEGER NOT NULL DEFAULT 1");
 
   // ---- Approval matrix wiring (Sept 2026): PR/PO/IR/leave/payment voucher routing ----
   await ensureColumn("approval_matrix_rules", "item_category", "TEXT");
@@ -1171,6 +1177,25 @@ CREATE TABLE IF NOT EXISTS notifications (
   read_at BIGINT
 )`;
   await sql`CREATE INDEX IF NOT EXISTS notifications_user_created_idx ON notifications (user_id, created_at DESC)`;
+  // Web Push: generated VAPID keys (per environment DB) and device subscriptions.
+  await sql`CREATE TABLE IF NOT EXISTS app_keys (name TEXT PRIMARY KEY, value TEXT NOT NULL)`;
+  await sql`CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    user_agent TEXT,
+    created_at BIGINT NOT NULL
+  )`;
+  await sql`CREATE INDEX IF NOT EXISTS push_subscriptions_user_idx ON push_subscriptions (user_id)`;
+  // Daily close report: one row per date once sent, so restarts never double-send.
+  await sql`CREATE TABLE IF NOT EXISTS daily_report_log (
+    report_date TEXT PRIMARY KEY,
+    sent_at BIGINT NOT NULL,
+    result TEXT
+  )`;
+
   // Approval-workflow additions: standalone purchase orders now go through the same
   // draft -> pending_approval -> approved/rejected flow as requisitions.
   await ensureColumn("purchase_orders", "rejected_reason", "TEXT");

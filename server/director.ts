@@ -11,6 +11,7 @@ import type { Express, Request } from "express";
 import { sql, storage } from "./storage";
 import { parsePermissions } from "./auth";
 import type { ModuleKey } from "@shared/schema";
+import { sendPushToUsers } from "./push";
 
 const TZ = "Africa/Nairobi";
 
@@ -375,6 +376,8 @@ export async function notifyUserIds(userIds: number[], input: NotifyInput): Prom
       await sql`INSERT INTO notifications (user_id, category, title, body, link_path, created_at)
         VALUES (${uid}, ${input.category ?? "system"}, ${input.title}, ${input.body ?? null}, ${input.linkPath ?? null}, ${now})`;
     }
+    // Also deliver to the users' phones/browsers that turned on push alerts.
+    void sendPushToUsers(ids, { title: input.title, body: input.body ?? null, url: input.linkPath ?? "/", tag: input.category ?? "system" });
   } catch (err) {
     console.error("[notifications] failed to store notification:", err);
   }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Bell, CheckCheck, AlertOctagon, AlertTriangle, Info, CheckSquare, BedDouble, Wrench, CalendarDays, FileCheck2, Trash2 } from "lucide-react";
+import { Bell, CheckCheck, AlertOctagon, AlertTriangle, Info, CheckSquare, BedDouble, Wrench, CalendarDays, FileCheck2, Trash2, BellRing, BellOff, FileBarChart } from "lucide-react";
+import { usePush } from "@/lib/push";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -8,7 +9,7 @@ import {
 } from "@/lib/director";
 
 const CATEGORY_ICON: Record<string, typeof Info> = {
-  approval: CheckSquare, decision: FileCheck2, booking: BedDouble, maintenance: Wrench, leave: CalendarDays,
+  approval: CheckSquare, decision: FileCheck2, report: FileBarChart, booking: BedDouble, maintenance: Wrench, leave: CalendarDays,
 };
 const SEVERITY_ICON: Record<DirectorAlert["severity"], { icon: typeof Info; cls: string }> = {
   critical: { icon: AlertOctagon, cls: "text-destructive" },
@@ -116,7 +117,41 @@ export function NotificationBell() {
             </div>
           </div>
         </div>
+        <PushFooter />
       </PopoverContent>
     </Popover>
+  );
+}
+
+function PushFooter() {
+  const { state, error, enable, disable } = usePush();
+  if (state === "unsupported") return null;
+  return (
+    <div className="border-t border-border px-3 py-2" data-testid="push-footer">
+      {state === "needs-install" ? (
+        <p className="text-xs text-muted-foreground" data-testid="text-push-install">
+          To get alerts on this iPhone/iPad when CHAIMS is closed: tap Share, then “Add to Home Screen”, open CHAIMS from the home screen and turn alerts on here.
+        </p>
+      ) : state === "denied" ? (
+        <p className="text-xs text-muted-foreground" data-testid="text-push-denied">
+          Alerts are blocked for this site. Allow notifications for CHAIMS in your browser or phone settings, then reopen this panel.
+        </p>
+      ) : state === "on" ? (
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><BellRing className="h-3.5 w-3.5 text-primary" />Alerts on for this device</span>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => void disable()} data-testid="button-push-off">
+            <BellOff className="h-3.5 w-3.5 mr-1" />Turn off
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">Get these alerts on this device even when CHAIMS is closed.</span>
+          <Button size="sm" className="h-7 shrink-0 px-2 text-xs" onClick={() => void enable()} disabled={state === "loading"} data-testid="button-push-on">
+            <BellRing className="h-3.5 w-3.5 mr-1" />{state === "loading" ? "…" : "Turn on"}
+          </Button>
+        </div>
+      )}
+      {error && <p className="mt-1 text-xs text-destructive" data-testid="text-push-error">{error}</p>}
+    </div>
   );
 }

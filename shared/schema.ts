@@ -489,6 +489,13 @@ export const settings = pgTable("settings", {
   smsEnabled: integer("sms_enabled").notNull().default(0),
   payePersonalRelief: real("paye_personal_relief").notNull().default(2400), // KES/month — Phase 4 payroll
   waterRatePerLitre: real("water_rate_per_litre").notNull().default(0), // KES/litre, tax-inclusive — used for bulk/metered water sales
+  // Daily close report (owner/director): emailed PDF + optional SMS link + push, at a set Nairobi time.
+  dailyReportEnabled: integer("daily_report_enabled").notNull().default(0),
+  dailyReportTime: text("daily_report_time").notNull().default("21:00"), // HH:MM, Africa/Nairobi
+  dailyReportEmails: text("daily_report_emails"), // comma-separated
+  dailyReportSmsPhones: text("daily_report_sms_phones"), // comma-separated; SMS carries a PDF link
+  dailyReportWhatsappPhone: text("daily_report_whatsapp_phone"), // prefills the WhatsApp share button
+  dailyReportPush: integer("daily_report_push").notNull().default(1), // push to users with the dashboard module
 });
 
 export const insertSettingsSchema = createInsertSchema(settings).omit({ id: true });

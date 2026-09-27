@@ -38,6 +38,8 @@ import { emailPayslipsForRun } from "./payroll-pdf-email";
 import { sendTransactionalEmail } from "./email";
 import { notifyApproversOfSubmission, notifyRequesterOfDecision, buildOriginFromRequest } from "./approvals";
 import { registerDirectorRoutes, notifyModuleUsers, kesText } from "./director";
+import { registerPushRoutes } from "./push";
+import { registerDailyReportRoutes, registerPublicDailyReportRoute } from "./daily-report";
 import ExcelJS from "exceljs";
 import { sendSms } from "./sms";
 import { saveBase64Upload, UploadValidationError, UPLOADS_ROOT, TEST_UPLOADS_ROOT } from "./uploads";
@@ -273,6 +275,8 @@ export async function registerRoutes(
       res.status(404).json({ error: "Not found" });
     }
   });
+
+  registerPublicDailyReportRoute(app);
 
   // ---------- Everything below requires a signed-in, active user ----------
   app.use("/api", requireAuth);
@@ -3138,6 +3142,8 @@ export async function registerRoutes(
 
   // ---------- Owner / Director briefing + in-app notifications ----------
   registerDirectorRoutes(app);
+  registerPushRoutes(app);
+  registerDailyReportRoutes(app, requireAdmin);
 
   return httpServer;
 }

@@ -11,6 +11,7 @@ import { formatKES } from "@/lib/format";
 import { useCurrentUser, canAccess } from "@/hooks/use-auth";
 import { useDirectorSummary, hasAnyApprovalModule, type DirectorAlert } from "@/lib/director";
 import type { ModuleKey } from "@shared/schema";
+import { DailyCloseActions } from "@/components/daily-close-actions";
 
 function longDate(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
@@ -97,6 +98,8 @@ export function OwnerToday() {
           <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
         </Button>
       </div>
+
+      <DailyCloseActions user={user} date={s.date} />
 
       {visibleActions.length > 0 && (
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2" data-testid="owner-quick-actions">
