@@ -2,6 +2,7 @@ import { Link, useLocation } from "wouter";
 import { useState } from "react";
 import {
   LayoutDashboard,
+  CalendarCheck,
   CalendarRange,
   Globe,
   Plus,
@@ -105,6 +106,9 @@ export function AppSidebar() {
   const showAllBookings = (["accommodation", "facilities", "movie-room"] as const).some((m) => canAccess(user, m));
   // "Online bookings" is a shortcut view (public-page M-Pesa verification), not a module.
   const showOnlineBookings = canAccess(user, "movie-room") || canAccess(user, "bar-restaurant") || canAccess(user, "accommodation");
+  // "Daily close report" is a shortcut view (same gate as the Today briefing it
+  // comes from), not a module — figures inside are filtered per module access.
+  const showDailyClose = canAccess(user, "dashboard");
   const { data: onlinePending } = useQuery<{ count: number }>({ queryKey: ["/api/online-payments/pending-count"], enabled: showOnlineBookings, refetchInterval: 60000 });
   const onlineCount = onlinePending?.count ?? 0;
   const { data: summary } = useDirectorSummary();
@@ -152,7 +156,7 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent className="gap-0">
-        {(showApprovals || showAllBookings || showOnlineBookings) && (
+        {(showApprovals || showAllBookings || showOnlineBookings || showDailyClose) && (
           <SidebarGroup className="p-0 px-2 pt-1 pb-0.5">
             <SidebarGroupContent>
               <SidebarMenu>
@@ -192,6 +196,16 @@ export function AppSidebar() {
                             {onlineCount > 99 ? "99+" : onlineCount}
                           </span>
                         )}
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
+                {showDailyClose && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={location.startsWith("/daily-close")} data-testid="link-daily-close">
+                      <Link href="/daily-close" onClick={closeMobileNav}>
+                        <CalendarCheck />
+                        <span>Daily close report</span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
