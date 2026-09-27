@@ -57,7 +57,7 @@ import { CheckSquare } from "lucide-react";
 import { useDirectorSummary, hasAnyApprovalModule } from "@/lib/director";
 
 const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard, key: "dashboard" },
+  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard, key: "dashboard" },
   { title: "Accommodation", url: "/accommodation", icon: BedDouble, key: "accommodation" },
   { title: "Conference & Movie Room", url: "/facilities", icon: PartyPopper, key: "facilities" },
   { title: "Movie Room (Seats)", url: "/movie-room", icon: Clapperboard, key: "movie-room" },
@@ -202,8 +202,8 @@ export function AppSidebar() {
                 )}
                 {showDailyClose && (
                   <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={location.startsWith("/daily-close")} data-testid="link-daily-close">
-                      <Link href="/daily-close" onClick={closeMobileNav}>
+                    <SidebarMenuButton asChild isActive={location === "/" || location.startsWith("/daily-close")} data-testid="link-daily-close">
+                      <Link href="/" onClick={closeMobileNav}>
                         <CalendarCheck />
                         <span>Daily close report</span>
                       </Link>

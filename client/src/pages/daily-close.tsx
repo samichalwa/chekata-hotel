@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useParams } from "wouter";
-import { ArrowLeft, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { LayoutDashboard, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -98,7 +98,7 @@ export default function DailyClosePage() {
     <div className="mx-auto max-w-4xl space-y-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Link href="/"><Button variant="ghost" size="icon" title="Back to Today" data-testid="button-daily-back"><ArrowLeft className="h-4 w-4" /></Button></Link>
+          <Link href="/dashboard"><Button variant="ghost" size="icon" title="Open the Dashboard" data-testid="button-daily-dashboard"><LayoutDashboard className="h-4 w-4" /></Button></Link>
           <div>
             <h1 className="text-xl font-semibold">Daily close report</h1>
             <p className="text-xs text-muted-foreground">View the report on screen, then share or download the PDF.</p>

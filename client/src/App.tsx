@@ -88,7 +88,10 @@ function OnlineBookingsGate() {
 function AppRouter() {
   return (
     <Switch>
-      <Route path="/" component={() => <Guarded moduleKey="dashboard" component={Dashboard} />} />
+      {/* Landing page: the Daily close report. The full Today briefing +
+          month overview (Dashboard) lives at /dashboard. */}
+      <Route path="/" component={() => <Guarded moduleKey="dashboard" component={DailyClosePage} />} />
+      <Route path="/dashboard" component={() => <Guarded moduleKey="dashboard" component={Dashboard} />} />
       {/* Unified inbox: not a module/permission — its content is filtered by each underlying module. */}
       <Route path="/approvals" component={ApprovalsPage} />
       <Route path="/daily-close/:date?" component={() => <Guarded moduleKey="dashboard" component={DailyClosePage} />} />
