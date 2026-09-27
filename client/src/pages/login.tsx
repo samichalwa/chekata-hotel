@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useLogin, useForgotPassword, useSetupStatus, type DbEnvironment } from "@/hooks/use-auth";
-import { ChaimsWordmark } from "@/components/chaims-logo";
 import chekataLogoFull from "@/assets/chekata-logo-full.jpg";
 import { InstallAppButton } from "@/components/install-app-button";
 
@@ -125,7 +124,7 @@ export default function LoginPage() {
             data-testid="img-login-logo"
           />
           <div className="flex flex-col items-center gap-1">
-            <ChaimsWordmark className="text-2xl text-foreground" />
+            <h1 className="text-2xl font-semibold text-foreground" data-testid="text-login-title">The Chekata Hotel</h1>
             <p className="text-xs uppercase tracking-[0.08em] text-muted-foreground">
               Multi-Property Hotel Management Platform
             </p>
