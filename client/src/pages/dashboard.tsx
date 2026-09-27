@@ -2,9 +2,10 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
-import { BedDouble, Wallet, TrendingUp, TrendingDown, PartyPopper, UtensilsCrossed, CalendarClock } from "lucide-react";
+import { BedDouble, Wallet, TrendingUp, TrendingDown, PartyPopper, UtensilsCrossed, CalendarClock, Clapperboard } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { OwnerToday } from "@/components/owner-today";
+import { useCurrentUser, canAccess } from "@/hooks/use-auth";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
@@ -25,6 +26,8 @@ function lastOfMonthISO(): string {
 }
 
 export default function Dashboard() {
+  const { data: user } = useCurrentUser();
+  const canMovie = canAccess(user, "movie-room");
   const { data: rooms = [] } = useQuery<Room[]>({ queryKey: ["/api/rooms"] });
   const { data: bookings = [] } = useQuery<AccommodationBooking[]>({ queryKey: ["/api/accommodation-bookings"] });
   const { data: facilities = [] } = useQuery<Facility[]>({ queryKey: ["/api/facilities"] });
@@ -65,6 +68,20 @@ export default function Dashboard() {
         .reduce((s, b) => s + b.ticketPrice, 0),
     [movieSeatBookings, movieShowById, fromDate, toDate]
   );
+  // Movie room seat bookings: upcoming shows first (soonest first), then the
+  // most recent past shows, so the latest activity is always visible here.
+  const today = todayISO();
+  const movieRows = useMemo(() => {
+    const rows = movieSeatBookings
+      .filter((b) => b.status !== "cancelled")
+      .map((b) => ({ b, show: movieShowById.get(b.showId) }))
+      .filter((r) => r.show && r.show.status !== "cancelled");
+    const key = (r: typeof rows[number]) => `${r.show!.showDate} ${r.show!.startTime ?? ""}`;
+    const up = rows.filter((r) => r.show!.showDate >= today).sort((a, z) => key(a).localeCompare(key(z)) || a.b.seatRow.localeCompare(z.b.seatRow) || a.b.seatNumber - z.b.seatNumber);
+    const past = rows.filter((r) => r.show!.showDate < today).sort((a, z) => key(z).localeCompare(key(a)));
+    return { upcoming: up.length, list: [...up, ...past].slice(0, 8), total: rows.length };
+  }, [movieSeatBookings, movieShowById, today]);
+
   const totalRevenue = accommodationRevenue + facilityRevenue + barRevenue + restaurantRevenue + movieRevenue;
 
   const monthlyPayroll = staff.filter((s) => s.status === "active").reduce((s, m) => s + m.salary, 0);
@@ -75,7 +92,6 @@ export default function Dashboard() {
   const occupiedRooms = rooms.filter((r) => r.status === "occupied").length;
   const occupancyRate = rooms.length > 0 ? Math.round((occupiedRooms / rooms.length) * 100) : 0;
 
-  const today = todayISO();
   const upcomingAccommodation = bookings
     .filter((b) => b.status === "confirmed" && b.checkIn >= today)
     .sort((a, b) => a.checkIn.localeCompare(b.checkIn))
@@ -106,7 +122,7 @@ export default function Dashboard() {
         <StatCard label="Costs (this month)" value={formatKES(totalCosts)} icon={TrendingDown} accent="warning" testId="stat-dashboard-costs" />
         <StatCard label="Net profit" value={formatKES(netProfit)} icon={Wallet} accent={netProfit >= 0 ? "success" : "warning"} testId="stat-dashboard-profit" />
         <StatCard label="Room occupancy" value={`${occupancyRate}%`} icon={BedDouble} hint={`${occupiedRooms} of ${rooms.length} rooms occupied`} testId="stat-dashboard-occupancy" />
-        <StatCard label="Upcoming bookings" value={String(upcomingAccommodation.length + upcomingFacility.length)} icon={CalendarClock} testId="stat-dashboard-upcoming" />
+        <StatCard label="Upcoming bookings" value={String(upcomingAccommodation.length + upcomingFacility.length + (canMovie ? movieRows.upcoming : 0))} icon={CalendarClock} hint={canMovie && movieRows.upcoming ? `incl. ${movieRows.upcoming} movie seat${movieRows.upcoming === 1 ? "" : "s"}` : undefined} testId="stat-dashboard-upcoming" />
         <StatCard label="Monthly payroll" value={formatKES(monthlyPayroll)} icon={Wallet} accent="muted" testId="stat-dashboard-payroll" />
       </div>
 
@@ -190,6 +206,53 @@ export default function Dashboard() {
           )}
         </Card>
       </div>
+
+      {canMovie && (
+      <Card data-testid="card-dashboard-movie-bookings">
+        <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
+          <h2 className="text-lg font-semibold flex items-center gap-2"><Clapperboard className="h-4 w-4" /> Movie room seat bookings</h2>
+          <Link href="/movie-room" className="text-xs text-primary hover:underline" data-testid="link-view-movie-room">View all ({movieRows.total})</Link>
+        </div>
+        {movieRows.list.length === 0 ? (
+          <div className="p-6 text-sm text-muted-foreground text-center">No movie seat bookings yet.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Guest</TableHead>
+                  <TableHead>Show</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Seat</TableHead>
+                  <TableHead className="text-right">Paid</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {movieRows.list.map(({ b, show }) => {
+                  const upcoming = show!.showDate >= today;
+                  const owed = Math.max(0, b.ticketPrice - (b.amountPaid ?? 0) - (b.creditedAmount ?? 0));
+                  return (
+                    <TableRow key={b.id} data-testid={`row-dashboard-movie-booking-${b.id}`}>
+                      <TableCell className="font-medium whitespace-nowrap">{b.guestName}</TableCell>
+                      <TableCell className="whitespace-nowrap">{show!.name}</TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {formatDate(show!.showDate)}{show!.startTime ? ` · ${show!.startTime}` : ""}
+                        {upcoming ? <Badge variant="secondary" className="ml-2">Upcoming</Badge> : null}
+                      </TableCell>
+                      <TableCell>{b.seatRow}{b.seatNumber}</TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">
+                        {formatKES(b.amountPaid ?? 0)}
+                        {owed > 0 ? <span className="block text-xs text-muted-foreground">{formatKES(owed)} due</span> : null}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </Card>
+      )}
     </div>
   );
 }
