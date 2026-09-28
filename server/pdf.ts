@@ -83,6 +83,57 @@ const CATEGORY_LABEL: Record<string, string> = {
   water: "Water Sales",
 };
 
+// Company identifiers printed under the hotel contact lines on invoices, receipts and
+// credit notes (Settings > Company info). Extra fields are opt-in per field.
+export function companyIdLines(settings: Settings): string[] {
+  if (settings.invoiceShowCompanyIds === 0) return [];
+  const out: string[] = [];
+  const add = (label: string, v?: string | null) => { if (v && v.trim()) out.push(`${label}: ${v.trim()}`); };
+  const legal = settings.companyLegalName?.trim();
+  if (legal && legal.toLowerCase() !== (settings.hotelName || "").trim().toLowerCase()) out.push(legal);
+  add("KRA PIN", settings.companyKraPin);
+  add("VAT No", settings.companyVatNumber);
+  add("Reg No", settings.companyRegistrationNumber);
+  add("Business permit", settings.companyBusinessPermitNumber);
+  try {
+    const extra = JSON.parse(settings.companyExtraFields || "[]") as { label?: string; value?: string; showOnInvoice?: boolean }[];
+    for (const e of Array.isArray(extra) ? extra : []) if (e?.showOnInvoice && e.label?.trim()) add(e.label.trim(), e.value);
+  } catch { /* ignore malformed JSON */ }
+  return out;
+}
+
+type PayLine = { heading: true; text: string; label?: undefined } | { heading?: false; label: string; text: string };
+
+// Payment instructions printed on invoices, from Settings > Company info (bank) + Settings > Online booking (M-Pesa).
+export function invoicePaymentLines(settings: Settings, docLabel: string): PayLine[] {
+  const out: PayLine[] = [];
+  const bankNo = settings.invoiceBankAccountNumber?.trim();
+  if (settings.invoiceShowBank !== 0 && bankNo) {
+    out.push({ heading: true, text: "Bank transfer" });
+    if (settings.invoiceBankName?.trim()) out.push({ label: "Bank", text: settings.invoiceBankName.trim() });
+    out.push({ label: "Account name", text: settings.invoiceBankAccountName?.trim() || companyDisplayName(settings) });
+    out.push({ label: "Account number", text: bankNo });
+    if (settings.invoiceBankBranch?.trim()) out.push({ label: "Branch", text: settings.invoiceBankBranch.trim() });
+    if (settings.invoiceBankSwift?.trim()) out.push({ label: "SWIFT / Bank code", text: settings.invoiceBankSwift.trim() });
+    out.push({ label: "Reference", text: docLabel });
+  }
+  const mp = settings.mpesaNumber?.trim();
+  if (settings.invoiceShowMpesa !== 0 && mp) {
+    const type = settings.mpesaPaymentType || "till";
+    out.push({ heading: true, text: "M-Pesa" });
+    if (type === "paybill") {
+      out.push({ label: "Paybill number", text: mp });
+      out.push({ label: "Account number", text: settings.mpesaAccountNumber?.trim() || docLabel });
+    } else if (type === "phone") {
+      out.push({ label: "Send money to", text: mp });
+    } else {
+      out.push({ label: "Buy Goods till", text: mp });
+    }
+    out.push({ label: "Name", text: settings.mpesaBusinessName?.trim() || companyDisplayName(settings) });
+  }
+  return out;
+}
+
 export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "A4", margin: 50 });
@@ -111,6 +162,19 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
     if (settings.hotelAddress) { doc.text(settings.hotelAddress, textX, y); y += 13; }
     if (settings.hotelPhone) { doc.text(`Tel: ${settings.hotelPhone}`, textX, y); y += 13; }
     if (settings.hotelEmail) { doc.text(settings.hotelEmail, textX, y); y += 13; }
+    const ids = companyIdLines(settings);
+    if (ids.length) {
+      // Pair two per line when they fit, otherwise one per line (never wraps).
+      const maxW = 320 - textX - 10;
+      const sep = "  \u00b7  ";
+      for (let i = 0; i < ids.length; ) {
+        const pair = i + 1 < ids.length ? ids[i] + sep + ids[i + 1] : null;
+        const line = pair && doc.widthOfString(pair) <= maxW ? pair : ids[i];
+        doc.text(line, textX, y, { width: maxW, lineBreak: false, ellipsis: true });
+        i += line === pair ? 2 : 1;
+        y += 13;
+      }
+    }
 
     // ---- Doc title box (right) ----
     const title = payload.docType === "invoice" ? "INVOICE" : payload.docType === "receipt" ? "RECEIPT" : "CREDIT NOTE";
@@ -143,16 +207,28 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
     y += 14;
 
     // ---- Line items table ----
-    const tableTop = y;
-    doc.fillColor("#ffffff").rect(50, tableTop, 495, 20).fill(accent);
-    doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold");
-    doc.text("Description", 58, tableTop + 6);
-    doc.text("Amount (KES)", 400, tableTop + 6, { width: 137, align: "right" });
-    y = tableTop + 20;
+    // Long invoices continue on a new page (table header repeated) instead of
+    // spilling past the bottom margin, which made PDFKit emit a page per line.
+    const PAGE_BOTTOM = 740;
+    const drawItemsHeader = () => {
+      doc.fillColor("#ffffff").rect(50, y, 495, 20).fill(accent);
+      doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold");
+      doc.text("Description", 58, y + 6, { lineBreak: false });
+      doc.text("Amount (KES)", 400, y + 6, { width: 137, align: "right", lineBreak: false });
+      y += 20;
+      doc.font("Helvetica").fontSize(10);
+    };
+    const ensureSpace = (h: number, repeatHeader = false) => {
+      if (y + h <= PAGE_BOTTOM) return;
+      doc.addPage();
+      y = 50;
+      if (repeatHeader) drawItemsHeader();
+    };
+    drawItemsHeader();
 
-    doc.font("Helvetica").fontSize(10);
     for (const item of payload.lineItems) {
       const rowH = item.detail ? 30 : 20;
+      ensureSpace(rowH, true);
       doc.fillColor(dark).text(item.label, 58, y + 5, { width: 330 });
       if (item.detail) {
         doc.fillColor(muted).fontSize(8).text(item.detail, 58, y + 18, { width: 330 });
@@ -168,6 +244,7 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
     // ---- Tax breakdown (prices are tax-inclusive; shown for transparency) ----
     if (payload.taxBreakdown && payload.taxBreakdown.lines.length > 0) {
       const tb = payload.taxBreakdown;
+      ensureSpace(40 + tb.lines.length * 12);
       doc.font("Helvetica").fontSize(8).fillColor(muted).text("Tax breakdown (included in total)", 50, y);
       y += 12;
       doc.font("Helvetica").fontSize(8).fillColor(muted).text(`Pre-tax amount`, 58, y, { width: 250 });
@@ -185,6 +262,7 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
 
     // ---- Totals ----
     const totalsX = 350;
+    ensureSpace(110);
     if (payload.docType === "credit_note") {
       doc.font("Helvetica").fontSize(10).fillColor(muted);
       doc.text("Credit amount", totalsX, y, { width: 90 });
@@ -233,13 +311,46 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
     }
 
     if (payload.notes) {
-      doc.font("Helvetica").fontSize(9).fillColor(muted).text(payload.notes, 50, y, { width: 495 });
-      y += 20;
+      doc.font("Helvetica").fontSize(9);
+      ensureSpace(doc.heightOfString(payload.notes, { width: 495 }) + 12);
+      doc.fillColor(muted).text(payload.notes, 50, y, { width: 495 });
+      y += doc.heightOfString(payload.notes, { width: 495 }) + 12;
+    }
+
+    // ---- How to pay (invoices only; configured in Settings > Invoice payments) ----
+    if (payload.docType === "invoice") {
+      const docLabel = payload.customDocNumber ?? `${docPrefix}-${String(payload.docNumber).padStart(5, "0")}`;
+      const lines = invoicePaymentLines(settings, docLabel);
+      if (lines.length) {
+        const boxW = 495, pad = 10, lh = 13;
+        const noteH = settings.invoicePaymentNote ? doc.font("Helvetica").fontSize(8.5).heightOfString(settings.invoicePaymentNote, { width: boxW - pad * 2 }) + 6 : 0;
+        const boxH = pad * 2 + 14 + lines.reduce((h, l) => h + (l.heading ? lh + 2 : lh), 0) + noteH;
+        ensureSpace(boxH);
+        doc.roundedRect(50, y, boxW, boxH, 4).fillAndStroke("#faf6f0", "#d9d0c4");
+        let by = y + pad;
+        doc.fillColor(accent).font("Helvetica-Bold").fontSize(10).text("How to pay", 50 + pad, by);
+        by += 14;
+        for (const l of lines) {
+          if (l.heading) {
+            by += 2;
+            doc.fillColor(dark).font("Helvetica-Bold").fontSize(9).text(l.text, 50 + pad, by, { width: boxW - pad * 2 });
+          } else {
+            doc.fillColor(muted).font("Helvetica").fontSize(9).text(l.label, 50 + pad, by, { width: 110 });
+            doc.fillColor(dark).font("Helvetica-Bold").fontSize(9).text(l.text, 50 + pad + 110, by, { width: boxW - pad * 2 - 110 });
+          }
+          by += lh;
+        }
+        if (settings.invoicePaymentNote) {
+          by += 4;
+          doc.fillColor(muted).font("Helvetica").fontSize(8.5).text(settings.invoicePaymentNote, 50 + pad, by, { width: boxW - pad * 2 });
+        }
+        y += boxH + 12;
+      }
     }
 
     // ---- Footer ----
     doc.font("Helvetica").fontSize(8).fillColor(muted)
-      .text(`Thank you for choosing ${companyDisplayName(settings)}.`, 50, 760, { width: 495, align: "center" });
+      .text(`Thank you for choosing ${companyDisplayName(settings)}.`, 50, 760, { width: 495, align: "center", lineBreak: false });
 
     doc.end();
   });

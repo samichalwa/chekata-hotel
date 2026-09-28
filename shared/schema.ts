@@ -520,6 +520,25 @@ export const settings = pgTable("settings", {
   publicRoomAdvanceDays: integer("public_room_advance_days").notNull().default(365),
   publicRoomCheckInTime: text("public_room_check_in_time").notNull().default("14:00"),
   publicRoomCheckOutTime: text("public_room_check_out_time").notNull().default("10:00"),
+  // Company info (Settings > Company info): registration & tax identifiers, plus any
+  // extra details as JSON [{label, value, showOnInvoice}]. Shown on invoices when enabled.
+  companyLegalName: text("company_legal_name"),
+  companyRegistrationNumber: text("company_registration_number"),
+  companyBusinessPermitNumber: text("company_business_permit_number"),
+  companyKraPin: text("company_kra_pin"),
+  companyVatNumber: text("company_vat_number"),
+  companyExtraFields: text("company_extra_fields"),
+  invoiceShowCompanyIds: integer("invoice_show_company_ids").notNull().default(1),
+  // Bank & payment details ("How to pay" box printed on invoice PDFs), also edited in
+  // Settings > Company info; blank bank account number = no bank section on the invoice.
+  invoiceShowBank: integer("invoice_show_bank").notNull().default(1),
+  invoiceBankName: text("invoice_bank_name"),
+  invoiceBankAccountName: text("invoice_bank_account_name"),
+  invoiceBankAccountNumber: text("invoice_bank_account_number"),
+  invoiceBankBranch: text("invoice_bank_branch"),
+  invoiceBankSwift: text("invoice_bank_swift"),
+  invoiceShowMpesa: integer("invoice_show_mpesa").notNull().default(1), // uses the M-Pesa details from Settings > Online booking
+  invoicePaymentNote: text("invoice_payment_note"),
 });
 
 export const insertSettingsSchema = createInsertSchema(settings).omit({ id: true });

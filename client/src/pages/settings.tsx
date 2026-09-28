@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Save, Send, Mail, MessageSquare, Building2, Plus, Pencil, Trash2, Percent, ShieldCheck, KeyRound, FileBarChart, Globe } from "lucide-react";
+import { Save, Send, Mail, MessageSquare, Building2, Plus, Pencil, Trash2, Percent, ShieldCheck, KeyRound, FileBarChart, Globe, Landmark } from "lucide-react";
 import { PageHeader } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -24,6 +24,7 @@ import type { Settings, Tax, SafeUser, ModuleKey, Staff } from "@shared/schema";
 import { MODULE_KEYS, MODULE_LABELS, MODULE_CATEGORY_GROUPS } from "@shared/schema";
 import { DailyReportSettingsTab } from "@/components/daily-report-settings";
 import { OnlineBookingSettingsTab } from "@/components/online-booking-settings";
+import { CompanyInfoSettingsTab } from "@/components/company-info-settings";
 
 const settingsFormSchema = z.object({
   hotelName: z.string().min(1, "Hotel name is required"),
@@ -946,14 +947,16 @@ function UsersTab() {
 
 export default function SettingsPage() {
   const { data: currentUser } = useCurrentUser();
+  const [tab, setTab] = useState("hotel");
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-4xl mx-auto">
-      <PageHeader title="Settings" description="Hotel details, taxes, email, and user access." />
+      <PageHeader title="Settings" description="Hotel and company details, taxes, email, and user access." />
 
-      <Tabs defaultValue="hotel">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="h-auto flex-wrap justify-start">
           <TabsTrigger value="hotel" data-testid="tab-hotel-email"><Building2 className="h-4 w-4 mr-1" /> Hotel &amp; Email</TabsTrigger>
+          <TabsTrigger value="company" data-testid="tab-company-info"><Landmark className="h-4 w-4 mr-1" /> Company info</TabsTrigger>
           <TabsTrigger value="taxes" data-testid="tab-taxes"><Percent className="h-4 w-4 mr-1" /> Taxes</TabsTrigger>
           {currentUser?.isAdmin && <TabsTrigger value="daily-report" data-testid="tab-daily-report"><FileBarChart className="h-4 w-4 mr-1" /> Daily report</TabsTrigger>}
           {currentUser?.isAdmin && <TabsTrigger value="online-booking" data-testid="tab-online-booking"><Globe className="h-4 w-4 mr-1" /> Online booking</TabsTrigger>}
@@ -964,6 +967,9 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="taxes" className="pt-4">
           <TaxesTab />
+        </TabsContent>
+        <TabsContent value="company" className="pt-4">
+          <CompanyInfoSettingsTab onOpenOnlineBooking={currentUser?.isAdmin ? () => setTab("online-booking") : undefined} onOpenHotel={() => setTab("hotel")} />
         </TabsContent>
         {currentUser?.isAdmin && (
           <TabsContent value="daily-report" className="pt-4">
