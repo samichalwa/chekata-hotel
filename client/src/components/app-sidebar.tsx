@@ -207,10 +207,10 @@ export function AppSidebar() {
                 )}
                 {showOnlineBookings && (
                   <SidebarMenuItem>
-                    <SidebarMenuButton asChild isActive={location === "/online-bookings"} data-testid="link-online-bookings">
+                    <SidebarMenuButton asChild isActive={location === "/online-bookings"} className="h-auto min-h-8 py-1.5" data-testid="link-online-bookings">
                       <Link href="/online-bookings" onClick={closeMobileNav}>
                         <Globe />
-                        <span>Online bookings & payments</span>
+                        <span className="leading-tight">Online bookings & payments</span>
                         {onlineCount > 0 && (
                           <span className="ml-auto min-w-5 rounded-full bg-destructive px-1.5 text-center text-[11px] font-semibold leading-5 text-destructive-foreground tabular-nums group-data-[collapsible=icon]:hidden" data-testid="badge-sidebar-online-bookings">
                             {onlineCount > 99 ? "99+" : onlineCount}

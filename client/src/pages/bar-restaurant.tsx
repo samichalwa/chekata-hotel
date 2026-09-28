@@ -22,6 +22,7 @@ import { formatKES, todayISO, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import { CreditNoteDialog } from "@/components/credit-note-dialog";
 import { BillPayLink, usePendingBillPayment } from "@/components/bill-pay-link";
+import { PayQrCodesDialog } from "@/components/pay-qr";
 import { MpesaPaste } from "@/components/public-booking-parts";
 import { parseMpesaMessage } from "@shared/mpesa";
 import { Link } from "wouter";
@@ -451,7 +452,7 @@ export default function BarRestaurant() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
-      <PageHeader title="Bar & Restaurant" description="Take orders, manage the menu, and track outlet revenue." />
+      <PageHeader title="Bar & Restaurant" description="Take orders, manage the menu, and track outlet revenue." action={<PayQrCodesDialog />} />
 
       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Bar revenue" value={formatKES(barRevenue)} icon={Wine} accent="success" testId="stat-bar-revenue" />

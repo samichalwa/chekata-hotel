@@ -94,6 +94,15 @@ export default function PublicPayPage({ token, onBack }: { token: string; onBack
                 </div>
                 <MpesaPaste value={msg} onChange={setMsg} amountDue={bill.total} mpesa={info.mpesa} />
                 {err && <p className="flex items-start gap-1 text-sm text-destructive" data-testid="text-pay-submit-error"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {err}</p>}
+                {!ready && (
+                  <p className="text-xs text-muted-foreground" data-testid="text-pay-not-ready">
+                    {!info.mpesa.number ? "M-Pesa payment isn't set up yet. Please pay at the counter or ask our staff."
+                      : name.trim().length < 2 ? "Enter your name to continue."
+                      : phone.replace(/\D/g, "").length < 9 ? "Enter your mobile number to continue."
+                      : !msg.trim() ? "Paste your M-Pesa confirmation SMS to continue."
+                      : "Check the M-Pesa SMS above — it must be the full message for at least " + formatKES(total) + "."}
+                  </p>
+                )}
                 <Button className="w-full" disabled={!ready || submit.isPending} onClick={() => submit.mutate()} data-testid="button-submit-bill-payment">
                   {submit.isPending ? "Sending…" : `Submit payment of ${formatKES(bill.total)}`}
                 </Button>
