@@ -93,6 +93,7 @@ export function MpesaPaste({ value, onChange, amountDue, mpesa }: { value: strin
           {p.account && (
             <div className="flex items-center justify-between gap-3"><span className="pl-[22px] text-muted-foreground">Account</span><span className="text-right">{p.account}</span></div>
           )}
+          <p className="text-xs text-muted-foreground pt-1" data-testid="text-mpesa-staff-check">Your booking stays pending until our staff check this payment and confirm it. You'll get an SMS when it's confirmed.</p>
           {missing.length > 0 && <p className="text-destructive flex items-start gap-1 pt-1" data-testid="text-mpesa-missing"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> Missing from the message: {missing.map((m) => MPESA_FIELD_LABELS[m]).join(", ")}. Paste the full, unedited M-PESA SMS.</p>}
           {short && <p className="text-destructive flex items-start gap-1 pt-1"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> {formatKES(amountDue)} is due.</p>}
           {wrongPayee && <p className="text-destructive flex items-start gap-1 pt-1" data-testid="text-mpesa-wrong-payee"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> This payment went to {p.recipient}, not {mpesa!.businessName}. Our office will check it before confirming.</p>}
