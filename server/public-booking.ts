@@ -176,6 +176,19 @@ async function ensureToken(table: "orders" | "tables", id: number, current: stri
   const rows = (table === "orders" ? await sql`SELECT pay_token FROM orders WHERE id = ${id}` : await sql`SELECT pay_token FROM tables WHERE id = ${id}`) as any[];
   return rows[0]?.pay_token ?? t;
 }
+// What a patron sees when picking their bill: no full names or phone numbers, just enough to recognise it.
+async function publicBillList(rows: any[]) {
+  const bills = [];
+  for (const r of rows) {
+    const id = Number(r.id);
+    const items = await storage.listOrderItems(id);
+    const summary = items.slice(0, 3).map((i) => `${i.itemName} × ${i.quantity}`).join(", ") + (items.length > 3 ? ` +${items.length - 3} more` : "");
+    const first = String(r.customer_name ?? "").trim().split(/\s+/)[0] || null;
+    bills.push({ token: await ensureToken("orders", id, r.pay_token), ref: billRef(id), outletName: outletName(r.outlet), total: Number(r.total_amount),
+      orderDate: r.order_date, createdAt: Number(r.created_at), pending: await hasPendingBillPayment(id), label: first, itemsSummary: summary });
+  }
+  return bills;
+}
 const outletName = (o: string) => (o === "bar" ? "Bar" : "Restaurant");
 const billSummary = (o: { outlet: string; reference: string | null }) => `${outletName(o.outlet)} bill${o.reference ? ` — ${o.reference}` : ""}`;
 
@@ -202,6 +215,25 @@ export function registerPublicBookingRoutes(app: Express) {
     }
   });
 
+  // Counter QR for the bar or restaurant (no login): open bills with no table, for patrons not seated.
+  app.get("/api/public/outlet-bills/:token", rateLimit(60, 15 * 60_000), async (req, res) => {
+    try {
+      const tk = String(req.params.token ?? "").trim().toLowerCase();
+      if (!TOKEN_RE.test(tk)) return res.status(404).json({ error: "This QR code is not valid. Please ask our staff." });
+      const row = (await sql`SELECT outlet FROM outlet_pay_tokens WHERE token = ${tk} LIMIT 1` as any[])[0];
+      if (!row) return res.status(404).json({ error: "This QR code is not valid. Please ask our staff." });
+      const names = (await storage.listTables()).map((t) => t.name.trim().toLowerCase());
+      const since = Date.now() - 24 * 3600_000; // today's bills only, so old open bills aren't listed
+      const rows = (await sql`SELECT id, outlet, reference, order_date, total_amount, created_at, pay_token, customer_name FROM orders
+        WHERE status = 'open' AND total_amount > 0 AND outlet = ${row.outlet} AND created_at >= ${since}
+        ORDER BY created_at DESC LIMIT 40` as any[]).filter((r) => !r.reference || !names.includes(String(r.reference).trim().toLowerCase()));
+      res.json({ tableName: outletName(row.outlet), bills: await publicBillList(rows) });
+    } catch (err: any) {
+      console.error("[public-bill] outlet lookup failed:", err);
+      res.status(500).json({ error: "Couldn't load the bills. Please try again." });
+    }
+  });
+
   // Table QR (no login): the open bill(s) for that table, so a walk-in patron can pick theirs and pay.
   app.get("/api/public/table-bills/:token", rateLimit(60, 15 * 60_000), async (req, res) => {
     try {
@@ -209,15 +241,10 @@ export function registerPublicBookingRoutes(app: Express) {
       if (!TOKEN_RE.test(tk)) return res.status(404).json({ error: "This QR code is not valid. Please ask our staff." });
       const t = (await sql`SELECT id, name, outlet FROM tables WHERE pay_token = ${tk} LIMIT 1` as any[])[0];
       if (!t) return res.status(404).json({ error: "This QR code is not valid. Please ask our staff." });
-      const rows = await sql`SELECT id, outlet, reference, order_date, total_amount, created_at, pay_token FROM orders
+      const rows = await sql`SELECT id, outlet, reference, order_date, total_amount, created_at, pay_token, customer_name FROM orders
         WHERE status = 'open' AND total_amount > 0 AND LOWER(TRIM(COALESCE(reference, ''))) = LOWER(TRIM(${t.name}))
         ORDER BY created_at DESC LIMIT 20` as any[];
-      const bills = [];
-      for (const r of rows) {
-        const pending = await hasPendingBillPayment(Number(r.id));
-        bills.push({ token: await ensureToken("orders", Number(r.id), r.pay_token), ref: billRef(Number(r.id)), outletName: outletName(r.outlet),
-          total: Number(r.total_amount), orderDate: r.order_date, createdAt: Number(r.created_at), pending });
-      }
+      const bills = await publicBillList(rows);
       res.json({ tableName: t.name, bills });
     } catch (err: any) {
       console.error("[public-bill] table lookup failed:", err);
@@ -512,6 +539,17 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
       const token = await ensureToken("orders", o.id, o.payToken);
       res.json({ token, path: `/#/pay/${token}` });
     } catch (err: any) { res.status(500).json({ error: err?.message ?? "Couldn't create the link" }); }
+  });
+
+  // Permanent counter QR for the bar or the restaurant (patrons not at a table).
+  app.post("/api/outlets/:outlet/pay-qr", requireAnyModule(["bar-restaurant", "lists"]), async (req, res) => {
+    try {
+      const outlet = String(req.params.outlet);
+      if (outlet !== "bar" && outlet !== "restaurant") return res.status(400).json({ error: "Unknown outlet" });
+      await sql`INSERT INTO outlet_pay_tokens (outlet, token) VALUES (${outlet}, ${randomBytes(12).toString("hex")}) ON CONFLICT (outlet) DO NOTHING`;
+      const token = (await sql`SELECT token FROM outlet_pay_tokens WHERE outlet = ${outlet}` as any[])[0].token;
+      res.json({ token, path: `/#/pay/o/${token}` });
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Couldn't create the QR code" }); }
   });
 
   // Permanent "scan to pay your bill" QR for a table: opens that table's open bill(s).

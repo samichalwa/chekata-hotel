@@ -50,7 +50,7 @@ export default function PublicPayPage({ token, onBack }: { token: string; onBack
       <main className="mx-auto max-w-xl space-y-4 px-4 py-5">
         {isLoading && <div className="flex justify-center p-10"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}
         {error && <Card className="p-6 text-sm text-destructive" data-testid="text-pay-error">{(error as Error).message}</Card>}
-        {onBack && <button type="button" onClick={onBack} className="text-sm text-primary underline-offset-2 hover:underline" data-testid="button-back-to-bills">← All bills at this table</button>}
+        {onBack && <button type="button" onClick={onBack} className="text-sm text-primary underline-offset-2 hover:underline" data-testid="button-back-to-bills">← Back to all bills</button>}
         {bill && (
           <>
             <Card className="p-4 space-y-3" data-testid="card-bill">
@@ -108,14 +108,14 @@ export default function PublicPayPage({ token, onBack }: { token: string; onBack
 }
 
 // Table QR (#/pay/t/<token>): shows the open bill(s) for that table so a walk-in patron can pay.
-interface TableBills { tableName: string; bills: { token: string; ref: string; outletName: string; total: number; orderDate: string; createdAt: number; pending: boolean }[] }
+interface TableBills { tableName: string; bills: { token: string; ref: string; outletName: string; total: number; orderDate: string; createdAt: number; pending: boolean; label: string | null; itemsSummary: string }[] }
 
-export function PublicTablePayPage({ token }: { token: string }) {
+export function PublicTablePayPage({ token, counter = false }: { token: string; counter?: boolean }) {
   const { data: info } = useQuery<Info>({ queryKey: ["public-booking-info"], queryFn: () => publicApi("GET", "/api/public/booking-info") });
-  const { data, isLoading, error, refetch, isFetching } = useQuery<TableBills>({ queryKey: ["public-table-bills", token], queryFn: () => publicApi("GET", `/api/public/table-bills/${encodeURIComponent(token)}`) });
+  const { data, isLoading, error, refetch, isFetching } = useQuery<TableBills>({ queryKey: ["public-table-bills", token], queryFn: () => publicApi("GET", `/api/public/${counter ? "outlet-bills" : "table-bills"}/${encodeURIComponent(token)}`) });
   const [chosen, setChosen] = useState<string | null>(null);
-  const pick = chosen ?? (data?.bills.length === 1 ? data.bills[0].token : null);
-  if (pick) return <PublicPayPage token={pick} onBack={data && data.bills.length > 1 ? () => setChosen(null) : undefined} />;
+  const pick = chosen ?? (!counter && data?.bills.length === 1 ? data.bills[0].token : null);
+  if (pick) return <PublicPayPage token={pick} onBack={data && (counter || data.bills.length > 1) ? () => setChosen(null) : undefined} />;
   const time = (ts: number) => new Date(ts).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Nairobi" });
   return (
     <div className="min-h-screen bg-background">
@@ -133,21 +133,21 @@ export function PublicTablePayPage({ token }: { token: string }) {
         {error && <Card className="p-6 text-sm text-destructive" data-testid="text-pay-error">{(error as Error).message}</Card>}
         {data && data.bills.length === 0 && (
           <Card className="p-6 space-y-3 text-center" data-testid="card-no-open-bill">
-            <h1 className="text-lg font-semibold">No open bill for {data.tableName} yet</h1>
+            <h1 className="text-lg font-semibold">No open {counter ? `${data.tableName.toLowerCase()} bill` : `bill for ${data.tableName}`} yet</h1>
             <p className="text-sm text-muted-foreground">Once our staff have entered your order, tap Refresh to see your bill and pay.</p>
             <Button variant="outline" onClick={() => refetch()} disabled={isFetching} data-testid="button-refresh-table-bills">{isFetching ? "Checking…" : "Refresh"}</Button>
           </Card>
         )}
-        {data && data.bills.length > 1 && (
+        {data && (counter ? data.bills.length > 0 : data.bills.length > 1) && (
           <Card className="p-4 space-y-3" data-testid="card-choose-bill">
             <div>
               <h1 className="text-lg font-semibold">Which bill is yours?</h1>
-              <p className="text-sm text-muted-foreground">There are {data.bills.length} open bills at {data.tableName}.</p>
+              <p className="text-sm text-muted-foreground">{counter ? `Open ${data.tableName.toLowerCase()} bills today. Pick yours by the items and time — ask our staff if you're not sure.` : `There are ${data.bills.length} open bills at ${data.tableName}.`}</p>
             </div>
             <div className="space-y-2">
               {data.bills.map((b) => (
                 <button key={b.token} type="button" onClick={() => setChosen(b.token)} className="flex w-full items-center justify-between gap-3 rounded-md border border-border p-3 text-left hover-elevate" data-testid={`button-choose-bill-${b.ref}`}>
-                  <span><span className="block font-medium">{b.outletName} bill · {b.ref}</span><span className="text-xs text-muted-foreground">Opened {time(b.createdAt)}{b.pending ? " · payment waiting for confirmation" : ""}</span></span>
+                  <span><span className="block font-medium">{b.outletName} bill · {b.ref}</span><span className="block text-sm">{b.itemsSummary}</span><span className="text-xs text-muted-foreground">{b.label ? `${b.label} · ` : ""}Opened {time(b.createdAt)}{b.pending ? " · payment waiting for confirmation" : ""}</span></span>
                   <span className="font-semibold tabular-nums">{formatKES(b.total)}</span>
                 </button>
               ))}

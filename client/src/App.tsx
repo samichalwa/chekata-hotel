@@ -166,6 +166,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   if (tablePayMatch) {
     return <PublicTablePayPage token={tablePayMatch[1]} />;
   }
+  const counterPayMatch = hash.replace(/^#\/?/, "").split("?")[0].match(/^pay\/o\/([A-Za-z0-9]+)$/);
+  if (counterPayMatch) {
+    return <PublicTablePayPage token={counterPayMatch[1]} counter />;
+  }
 
   // Password reset via an emailed link is reachable regardless of sign-in state.
   if (hash.replace(/^#\/?/, "").split("?")[0] === "reset-password") {

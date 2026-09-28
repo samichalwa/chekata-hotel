@@ -1173,6 +1173,10 @@ CREATE TABLE IF NOT EXISTS online_payments (
   review_note TEXT,
   summary TEXT,
   created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS outlet_pay_tokens (
+  outlet TEXT PRIMARY KEY,
+  token TEXT NOT NULL UNIQUE
 );`);
 
   // ---- Approval matrix wiring (Sept 2026): PR/PO/IR/leave/payment voucher routing ----

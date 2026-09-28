@@ -25,8 +25,9 @@ import { QrCode, printQrCard } from "@/components/qr-code";
 import { Dialog as QrDialog, DialogContent as QrDialogContent, DialogHeader as QrDialogHeader, DialogTitle as QrDialogTitle, DialogDescription as QrDialogDescription } from "@/components/ui/dialog";
 import { QrCode as QrIcon, Printer as PrinterIcon, Copy as CopyIcon } from "lucide-react";
 
-// Permanent "scan to pay your bill" QR for a table (print it as a table card).
-function TableQrButton({ table }: { table: TableEntity }) {
+// Permanent "scan to pay your bill" QR codes: one per table, plus one counter QR each for the bar
+// and the restaurant (patrons not seated at a table). Print once; the code never changes.
+function PayQrButton({ endpoint, name, buttonLabel, description, cardSubtitle, testId }: { endpoint: string; name: string; buttonLabel: string; description: string; cardSubtitle: string; testId: string }) {
   const { toast } = useToast();
   const [url, setUrl] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -34,26 +35,26 @@ function TableQrButton({ table }: { table: TableEntity }) {
     setOpen(true);
     if (url) return;
     try {
-      const r = await (await apiRequest("POST", `/api/tables/${table.id}/pay-qr`)).json();
+      const r = await (await apiRequest("POST", endpoint)).json();
       setUrl(`${window.location.origin}${r.path}`);
     } catch (e: any) { toast({ title: "Couldn't create the QR code", description: e?.message, variant: "destructive" }); setOpen(false); }
   };
   return (
     <>
-      <Button size="sm" variant="outline" onClick={load} data-testid={`button-table-qr-${table.id}`}><QrIcon className="h-4 w-4 mr-1" /> Pay QR</Button>
+      <Button size="sm" variant="outline" onClick={load} data-testid={testId}><QrIcon className="h-4 w-4 mr-1" /> {buttonLabel}</Button>
       <QrDialog open={open} onOpenChange={setOpen}>
         <QrDialogContent className="max-w-sm">
           <QrDialogHeader>
-            <QrDialogTitle>{table.name} — scan to pay</QrDialogTitle>
-            <QrDialogDescription>Print this and place it on the table. Patrons scan it to see the open bill for {table.name}, pay by M-Pesa and paste the SMS. Staff then confirm the payment in Online bookings & payments. The code stays the same, so print it once.</QrDialogDescription>
+            <QrDialogTitle>{name} — scan to pay</QrDialogTitle>
+            <QrDialogDescription>{description} Staff then confirm the payment in Online bookings & payments. The code stays the same, so print it once.</QrDialogDescription>
           </QrDialogHeader>
           {url ? (
             <div className="flex flex-col items-center gap-3">
-              <QrCode text={url} size={220} testId="img-table-qr" />
+              <QrCode text={url} size={220} testId="img-pay-qr" />
               <p className="text-xs text-muted-foreground break-all text-center">{url}</p>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => { navigator.clipboard?.writeText(url); toast({ title: "Link copied" }); }}><CopyIcon className="h-4 w-4 mr-1" /> Copy</Button>
-                <Button size="sm" onClick={() => printQrCard({ title: table.name, subtitle: "Scan to view and pay your bill", url, footer: "Scan, pay by M-Pesa, then paste your M-Pesa SMS on the page. Our staff confirm your payment." }) || toast({ title: "Allow pop-ups to print", variant: "destructive" })} data-testid="button-print-table-qr"><PrinterIcon className="h-4 w-4 mr-1" /> Print table card</Button>
+                <Button size="sm" onClick={() => printQrCard({ title: name, subtitle: cardSubtitle, url, footer: "Scan, pay by M-Pesa, then paste your M-Pesa SMS on the page. Our staff confirm your payment." }) || toast({ title: "Allow pop-ups to print", variant: "destructive" })} data-testid="button-print-pay-qr"><PrinterIcon className="h-4 w-4 mr-1" /> Print card</Button>
               </div>
             </div>
           ) : <p className="py-8 text-center text-sm text-muted-foreground">Creating QR code…</p>}
@@ -63,7 +64,12 @@ function TableQrButton({ table }: { table: TableEntity }) {
   );
 }
 
-// ---------------------------------------------------------------------------
+function TableQrButton({ table }: { table: TableEntity }) {
+  return <PayQrButton endpoint={`/api/tables/${table.id}/pay-qr`} name={table.name} buttonLabel="Pay QR" testId={`button-table-qr-${table.id}`}
+    cardSubtitle="Scan to view and pay your bill"
+    description={`Print this and place it on the table. Patrons scan it to see the open bill for ${table.name}, pay by M-Pesa and paste the SMS.`} />;
+}
+
 // Tables list
 // ---------------------------------------------------------------------------
 
@@ -173,6 +179,13 @@ function TablesTab({ canManage }: { canManage: boolean }) {
       <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
         <div>
           <h2 className="text-lg font-semibold">Tables</h2>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">Counter QR (patrons not at a table):</span>
+            <PayQrButton endpoint="/api/outlets/bar/pay-qr" name="Bar" buttonLabel="Bar QR" testId="button-bar-counter-qr" cardSubtitle="Not at a table? Scan to find and pay your bar bill"
+              description="Place this at the bar counter. Patrons not seated at a table scan it, pick their open bar bill from today's list (shown by items and time), pay by M-Pesa and paste the SMS." />
+            <PayQrButton endpoint="/api/outlets/restaurant/pay-qr" name="Restaurant" buttonLabel="Restaurant QR" testId="button-restaurant-counter-qr" cardSubtitle="Not at a table? Scan to find and pay your restaurant bill"
+              description="Place this at the restaurant counter or till. Patrons not seated at a table scan it, pick their open restaurant bill from today's list (shown by items and time), pay by M-Pesa and paste the SMS." />
+          </div>
           {!canManage && <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1"><Lock className="h-3 w-3" /> View-only — ask an administrator for edit rights.</p>}
         </div>
         {canManage && <TableFormDialog trigger={<Button size="sm" data-testid="button-new-table"><Plus className="h-4 w-4 mr-1" /> Add table</Button>} />}
