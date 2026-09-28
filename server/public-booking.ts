@@ -65,6 +65,8 @@ async function checkMpesa(raw: unknown, amountDue: number): Promise<Check> {
   const p = parseMpesaMessage(message);
   if (!p.code) return { ok: false, error: "We couldn't find an M-Pesa transaction code in that message. Paste the full SMS from M-PESA." };
   if (p.amount == null) return { ok: false, error: "We couldn't read the amount paid in that message. Paste the full SMS from M-PESA." };
+  if (!p.recipient) return { ok: false, error: "We couldn't read who was paid in that message. Paste the full, unedited SMS from M-PESA." };
+  if (p.paidAt == null) return { ok: false, error: "We couldn't read the payment date and time in that message. Paste the full, unedited SMS from M-PESA." };
   if (p.direction === "received") return { ok: false, error: "That looks like a message received by the business. Paste the confirmation SMS on the phone that paid." };
   if (p.amount + 0.5 < amountDue) return { ok: false, error: `The message shows ${kes(p.amount)} but ${kes(amountDue)} is due. Please contact reception to settle the balance.` };
   const settings = await storage.getSettings();

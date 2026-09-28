@@ -23,8 +23,10 @@ export interface ParsedMpesa {
 
 const CODE_RE = /\b([A-Z0-9]{10})\b(?=\s*(?:Confirmed|confirmed|CONFIRMED))/;
 const CODE_FALLBACK_RE = /^\s*([A-Z0-9]{10})\b/;
-const AMOUNT_RE = /Ksh\s?([\d,]+(?:\.\d{1,2})?)/i;
-const DATE_RE = /\bon\s+(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s+at\s+(\d{1,2}):(\d{2})\s*([AP]M)?/i;
+// "Ksh1,000.00", "Ksh 1,000", "Kshs.1,000", "KES 1,000.00"
+const AMOUNT_RE = /(?:Kshs?\.?|KES)\s?([\d,]+(?:\.\d{1,2})?)/i;
+// "on 27/9/26 at 10:15 AM", "on 27-09-2026 at 22:15", "on 27/9/26 at 10:15AM"
+const DATE_RE = /\bon\s+(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\s*(?:at\s*)?(\d{1,2}):(\d{2})\s*([AP]\.?M\.?)?/i;
 
 export function parseMpesaMessage(raw: string): ParsedMpesa {
   const text = (raw ?? "").replace(/\s+/g, " ").trim();
@@ -52,7 +54,7 @@ export function parseMpesaMessage(raw: string): ParsedMpesa {
     if (year < 100) year += 2000;
     let hour = Number(hh);
     if (ap) {
-      const pm = ap.toUpperCase() === "PM";
+      const pm = ap.toUpperCase().startsWith("P");
       if (pm && hour < 12) hour += 12;
       if (!pm && hour === 12) hour = 0;
     }
@@ -71,7 +73,9 @@ export function parseMpesaMessage(raw: string): ParsedMpesa {
     return out;
   }
 
-  const paid = text.match(/(?:paid to|sent to)\s+(.+?)(?:\s+for account\s+(\S+?))?(?:\.|\s)+on\s+\d/i);
+  const paid = text.match(/(?:paid to|sent to)\s+(.+?)(?:\s+for account\s+(\S+?))?(?:\.|\s)+on\s+\d/i)
+    // "You have paid Ksh… to X on …" style
+    ?? text.match(/paid\s+(?:Kshs?\.?|KES)\s?[\d,]+(?:\.\d{1,2})?\s+to\s+(.+?)(?:\s+for account\s+(\S+?))?(?:\.|\s)+on\s+\d/i);
   if (paid) {
     out.direction = "sent";
     let who = paid[1].trim();
@@ -102,3 +106,14 @@ export function recipientMatches(parsed: ParsedMpesa, businessName?: string | nu
 }
 
 export const MPESA_CODE_RE = /^[A-Z0-9]{10}$/;
+
+/** The details a guest's M-Pesa message must contain before a booking can be submitted. */
+export const REQUIRED_MPESA_FIELDS = ["code", "amount", "recipient", "paidAt"] as const;
+export type RequiredMpesaField = (typeof REQUIRED_MPESA_FIELDS)[number];
+export const MPESA_FIELD_LABELS: Record<RequiredMpesaField, string> = {
+  code: "Transaction code", amount: "Amount paid", recipient: "Paid to", paidAt: "Date & time",
+};
+/** Required fields that could not be read from the message. */
+export function missingMpesaFields(p: ParsedMpesa): RequiredMpesaField[] {
+  return REQUIRED_MPESA_FIELDS.filter((k) => p[k] == null || p[k] === "");
+}

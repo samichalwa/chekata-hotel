@@ -1,13 +1,13 @@
 // Shared building blocks for the public booking page (#/book).
 import { useMemo } from "react";
-import { CheckCircle2, Smartphone, AlertCircle } from "lucide-react";
+import { CheckCircle2, Smartphone, AlertCircle, XCircle, ClipboardPaste } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatKES } from "@/lib/format";
-import { parseMpesaMessage } from "@shared/mpesa";
+import { parseMpesaMessage, missingMpesaFields, recipientMatches, MPESA_FIELD_LABELS, REQUIRED_MPESA_FIELDS } from "@shared/mpesa";
 
 export interface Info {
   hotelName: string; hotelPhone: string | null; hotelEmail: string | null;
@@ -51,30 +51,61 @@ export function PayInstructions({ info, amount }: { info: Info; amount: number }
   );
 }
 
-export function MpesaPaste({ value, onChange, amountDue }: { value: string; onChange: (v: string) => void; amountDue: number }) {
+export function MpesaPaste({ value, onChange, amountDue, mpesa }: { value: string; onChange: (v: string) => void; amountDue: number; mpesa?: Info["mpesa"] }) {
   const p = useMemo(() => parseMpesaMessage(value), [value]);
+  const missing = missingMpesaFields(p);
   const short = p.amount != null && p.amount + 0.5 < amountDue;
+  const wrongPayee = !!mpesa && !!p.recipient && !recipientMatches(p, mpesa.businessName, mpesa.number);
+  const canPaste = typeof navigator !== "undefined" && !!navigator.clipboard?.readText;
+  const pasteFromClipboard = async () => {
+    try { const t = await navigator.clipboard.readText(); if (t) onChange(t); } catch { /* permission refused: guest can long-press and paste */ }
+  };
+  const shown: Record<string, string | null> = {
+    code: p.code,
+    amount: p.amount != null ? formatKES(p.amount) : null,
+    recipient: p.recipient,
+    paidAt: p.paidAtText,
+  };
   return (
     <div className="space-y-2">
-      <Label htmlFor="mpesa-message">M-Pesa confirmation message</Label>
+      <div className="flex items-end justify-between gap-2">
+        <Label htmlFor="mpesa-message">Your M-Pesa confirmation SMS</Label>
+        {canPaste && <Button type="button" variant="outline" size="sm" onClick={pasteFromClipboard} data-testid="button-paste-mpesa"><ClipboardPaste className="h-4 w-4 mr-1" /> Paste</Button>}
+      </div>
       <Textarea id="mpesa-message" rows={4} value={value} onChange={(e) => onChange(e.target.value)} placeholder="e.g. SJR7AB12CD Confirmed. Ksh1,000.00 paid to THE CHEKATA. on 27/9/26 at 10:15 AM…" data-testid="input-mpesa-message" />
+      <p className="text-xs text-muted-foreground">Copy the whole SMS from M-PESA and paste it here. We read the details automatically; you don't need to type them.</p>
       {value.trim() && (
-        <div className="rounded-md border border-border p-3 text-sm grid grid-cols-2 gap-x-4 gap-y-1" data-testid="box-mpesa-preview">
-          <span className="text-muted-foreground">Transaction code</span><span className="text-right font-medium">{p.code ?? "—"}</span>
-          <span className="text-muted-foreground">Amount</span><span className={`text-right font-medium tabular-nums ${short ? "text-destructive" : ""}`}>{p.amount != null ? formatKES(p.amount) : "—"}</span>
-          <span className="text-muted-foreground">Paid to</span><span className="text-right">{p.recipient ?? "—"}</span>
-          <span className="text-muted-foreground">Date</span><span className="text-right tabular-nums">{p.paidAtText ?? "—"}</span>
-          {(!p.code || p.amount == null) && <p className="col-span-2 text-destructive flex items-center gap-1 pt-1"><AlertCircle className="h-4 w-4 shrink-0" /> We can't read this message yet. Paste the full M-PESA SMS.</p>}
-          {short && <p className="col-span-2 text-destructive flex items-center gap-1 pt-1"><AlertCircle className="h-4 w-4 shrink-0" /> {formatKES(amountDue)} is due.</p>}
+        <div className="rounded-md border border-border p-3 text-sm space-y-1.5" data-testid="box-mpesa-preview">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Details read from your message</p>
+          {REQUIRED_MPESA_FIELDS.map((k) => {
+            const v = shown[k];
+            const bad = !v || (k === "amount" && short) || (k === "recipient" && wrongPayee);
+            return (
+              <div key={k} className="flex items-center justify-between gap-3" data-testid={`row-mpesa-${k}`}>
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  {v && !bad ? <CheckCircle2 className="h-4 w-4 text-primary shrink-0" /> : <XCircle className="h-4 w-4 text-destructive shrink-0" />}
+                  {MPESA_FIELD_LABELS[k]}
+                </span>
+                <span className={`text-right font-medium tabular-nums break-all ${bad ? "text-destructive" : ""}`} data-testid={`text-mpesa-${k}`}>{v ?? "Not found"}</span>
+              </div>
+            );
+          })}
+          {p.account && (
+            <div className="flex items-center justify-between gap-3"><span className="pl-[22px] text-muted-foreground">Account</span><span className="text-right">{p.account}</span></div>
+          )}
+          {missing.length > 0 && <p className="text-destructive flex items-start gap-1 pt-1" data-testid="text-mpesa-missing"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> Missing from the message: {missing.map((m) => MPESA_FIELD_LABELS[m]).join(", ")}. Paste the full, unedited M-PESA SMS.</p>}
+          {short && <p className="text-destructive flex items-start gap-1 pt-1"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> {formatKES(amountDue)} is due.</p>}
+          {wrongPayee && <p className="text-destructive flex items-start gap-1 pt-1" data-testid="text-mpesa-wrong-payee"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> This payment went to {p.recipient}, not {mpesa!.businessName}. Our office will check it before confirming.</p>}
         </div>
       )}
     </div>
   );
 }
 
+/** A booking can be submitted only when every required detail was read and the amount covers what is due. */
 export function mpesaReady(msg: string, due: number) {
   const p = parseMpesaMessage(msg);
-  return !!p.code && p.amount != null && p.amount + 0.5 >= due;
+  return missingMpesaFields(p).length === 0 && p.direction !== "received" && (p.amount ?? 0) + 0.5 >= due;
 }
 
 export type Guest = { name: string; phone: string; email: string };

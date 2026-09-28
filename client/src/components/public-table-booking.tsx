@@ -50,7 +50,7 @@ export function TableTab({ info }: { info: Info }) {
         <>
           <PayInstructions info={info} amount={deposit} />
           <p className="text-xs text-muted-foreground">The {formatKES(deposit)} deposit secures your table and is deducted from your bill.</p>
-          <MpesaPaste value={msg} onChange={setMsg} amountDue={deposit} />
+          <MpesaPaste value={msg} onChange={setMsg} amountDue={deposit} mpesa={info.mpesa} />
         </>
       )}
       {err && <p className="text-sm text-destructive flex items-start gap-1" data-testid="text-reservation-error"><AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />{err}</p>}

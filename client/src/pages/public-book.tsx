@@ -85,7 +85,7 @@ function MovieTab({ info }: { info: Info }) {
         <Card className="p-4 space-y-4">
           <GuestFields g={g} set={(k, v) => setG((x) => ({ ...x, [k]: v }))} />
           <PayInstructions info={info} amount={total} />
-          <MpesaPaste value={msg} onChange={setMsg} amountDue={total} />
+          <MpesaPaste value={msg} onChange={setMsg} amountDue={total} mpesa={info.mpesa} />
           {err && <p className="text-sm text-destructive flex items-start gap-1" data-testid="text-booking-error"><AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />{err}</p>}
           <Button className="w-full" disabled={!ready || submit.isPending} onClick={() => submit.mutate()} data-testid="button-submit-movie-booking">
             {submit.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Submit booking

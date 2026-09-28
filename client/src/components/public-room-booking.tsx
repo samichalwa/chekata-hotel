@@ -70,7 +70,7 @@ export function RoomTab({ info }: { info: Info }) {
           <GuestFields g={g} set={(k, v) => setG((x) => ({ ...x, [k]: v }))} />
           <div className="space-y-1.5"><Label htmlFor="r-notes">Special requests (optional)</Label><Input id="r-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. late arrival, extra pillow" data-testid="input-room-notes" /></div>
           <PayInstructions info={info} amount={pick.payNow} />
-          <MpesaPaste value={msg} onChange={setMsg} amountDue={pick.payNow} />
+          <MpesaPaste value={msg} onChange={setMsg} amountDue={pick.payNow} mpesa={info.mpesa} />
           {err && <p className="text-sm text-destructive flex items-start gap-1" data-testid="text-room-error"><AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />{err}</p>}
           <Button className="w-full" disabled={!ready || submit.isPending} onClick={() => submit.mutate()} data-testid="button-submit-room-booking">
             {submit.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Submit booking
