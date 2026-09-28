@@ -196,9 +196,10 @@ export const orders = pgTable("orders", {
   notes: text("notes"),
   creditedAmount: real("credited_amount").notNull().default(0), // total issued against this order's receipt via credit notes
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  payToken: text("pay_token"), // secret for the guest's "pay this bill by M-Pesa" link (#/pay/<token>); set by the server only
 });
 
-export const insertOrderSchema = createInsertSchema(orders).omit({ id: true });
+export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, payToken: true });
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 export type Order = typeof orders.$inferSelect;
 
@@ -1592,10 +1593,11 @@ export interface TableReservation {
 }
 
 // A pasted M-Pesa confirmation awaiting the office's check. kind=movie → targetRef is the
-// seat bookingRef; kind=table → targetRef is the reservationRef.
+// seat bookingRef; kind=table → targetRef is the reservationRef; kind=room → the accommodation
+// bookingRef; kind=bill → "ORD-<order id>" (a bar/restaurant bill paid from the guest pay link).
 export interface OnlinePayment {
   id: number;
-  kind: "movie" | "table" | "room";
+  kind: "movie" | "table" | "room" | "bill";
   targetRef: string;
   guestName: string;
   guestPhone: string;

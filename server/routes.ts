@@ -1,5 +1,5 @@
 import { paymentReferenceGuard } from "./payment-refs";
-import { registerPublicBookingRoutes, registerOnlineBookingStaffRoutes } from "./public-booking";
+import { registerPublicBookingRoutes, registerOnlineBookingStaffRoutes, hasPendingBillPayment } from "./public-booking";
 import type { Express } from "express";
 import { z } from "zod";
 import { createServer } from 'node:http';
@@ -35,6 +35,7 @@ import {
   insertTemporaryLaborRequisitionSchema, insertTemporaryLaborRequisitionLineSchema, TLR_DURATION_UNITS,
 } from "@shared/schema";
 import { issueDocument, issueCreditNote } from "./documents";
+import { issueOrderReceipt } from "./order-receipt";
 import { buildDocumentPdf, buildMaintenanceReportPdf, buildPayslipPdf } from "./pdf";
 import { emailPayslipsForRun } from "./payroll-pdf-email";
 import { sendTransactionalEmail } from "./email";
@@ -1137,27 +1138,14 @@ export async function registerRoutes(
       const before = await storage.getOrder(id);
       if (!before) return res.status(404).json({ error: "Order not found" });
       const data = insertOrderSchema.partial().parse(req.body);
+      if (before.status === "open" && data.status && data.status !== "open" && await hasPendingBillPayment(id)) {
+        return res.status(409).json({ error: "The guest has paid this bill by M-Pesa and it is waiting in Online bookings. Verify or reject that payment first." });
+      }
       const updated = await storage.updateOrder(id, data);
       if (!updated) return res.status(404).json({ error: "Order not found" });
       let docResult: any = null;
       if (updated.status === "paid" && before.status !== "paid") {
-        const items = await storage.listOrderItems(updated.id);
-        const doc = await issueDocument(storage, {
-          docType: "receipt",
-          category: updated.outlet === "bar" ? "bar" : "restaurant",
-          sourceId: updated.id,
-          recipientName: updated.customerName || "Guest",
-          recipientEmail: updated.customerEmail,
-          issueDate: formatDate(),
-          lineItems: items.map((i) => ({ label: `${i.itemName} x${i.quantity}`, amount: i.subtotal })),
-          totalAmount: updated.totalAmount,
-          amountPaid: updated.totalAmount,
-          balance: 0,
-          paymentAmount: updated.totalAmount,
-          paymentMethod: updated.paymentMethod,
-          paymentReference: updated.paymentReference,
-        });
-        docResult = { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken };
+        docResult = await issueOrderReceipt(storage, updated);
       }
       res.json({ ...updated, _document: docResult });
     } catch (err) { handleZodError(res, err); }

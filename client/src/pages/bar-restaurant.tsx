@@ -21,6 +21,9 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, todayISO, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import { CreditNoteDialog } from "@/components/credit-note-dialog";
+import { BillPayLink, usePendingBillPayment } from "@/components/bill-pay-link";
+import { MpesaPaste } from "@/components/public-booking-parts";
+import { parseMpesaMessage } from "@shared/mpesa";
 import { Link } from "wouter";
 import type { MenuItem, Order, OrderItem, TableRow as TableEntity } from "@shared/schema";
 
@@ -190,6 +193,13 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
   const [closePaymentMethod, setClosePaymentMethod] = useState(order.paymentMethod ?? "");
   const [closePaymentReference, setClosePaymentReference] = useState(order.paymentReference ?? "");
   const isOpen = order.status === "open";
+  const pendingOnline = usePendingBillPayment(order.id);
+  const [smsText, setSmsText] = useState("");
+  const onSms = (v: string) => {
+    setSmsText(v);
+    const code = parseMpesaMessage(v).code;
+    if (code) setClosePaymentReference(code);
+  };
 
   const updateOrder = useMutation({
     mutationFn: async (data: Partial<Order>) => {
@@ -349,6 +359,8 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
             </div>
           </div>
 
+          {isOpen && <BillPayLink order={order} phone={customerPhone} name={customerName} />}
+
           {isOpen ? (
             <div className="space-y-2 rounded-md border border-border p-3">
               <label className="text-xs font-medium text-muted-foreground">Payment method (required to close)</label>
@@ -361,6 +373,9 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
                   <SelectItem value="room_charge">Room charge</SelectItem>
                 </SelectContent>
               </Select>
+              {closePaymentMethod === "mpesa" && (
+                <MpesaPaste staff value={smsText} onChange={onSms} amountDue={order.totalAmount} />
+              )}
               <label className="text-xs font-medium text-muted-foreground">Payment reference (optional)</label>
               <Input
                 placeholder="M-Pesa code, slip #, etc."
@@ -370,13 +385,14 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
               />
               <Button
                 className="w-full"
-                disabled={!closePaymentMethod || items.length === 0 || closeOrder.isPending}
+                disabled={!closePaymentMethod || items.length === 0 || closeOrder.isPending || !!pendingOnline}
                 onClick={() => closeOrder.mutate()}
                 data-testid="button-close-and-receipt"
               >
                 <CheckCircle2 className="h-4 w-4 mr-1.5" /> {closeOrder.isPending ? "Closing..." : "Close & Generate Receipt"}
               </Button>
               {items.length === 0 && <p className="text-xs text-muted-foreground">Add at least one item before closing.</p>}
+              {pendingOnline && <p className="text-xs text-muted-foreground">The guest's M-Pesa payment is waiting in Online bookings. Verify it there to close this bill.</p>}
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button variant="ghost" size="sm" className="w-full text-destructive" data-testid="button-cancel-order-inline">Cancel this order instead</Button>

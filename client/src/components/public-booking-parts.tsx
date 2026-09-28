@@ -51,7 +51,7 @@ export function PayInstructions({ info, amount }: { info: Info; amount: number }
   );
 }
 
-export function MpesaPaste({ value, onChange, amountDue, mpesa }: { value: string; onChange: (v: string) => void; amountDue: number; mpesa?: Info["mpesa"] }) {
+export function MpesaPaste({ value, onChange, amountDue, mpesa, staff = false }: { value: string; onChange: (v: string) => void; amountDue: number; mpesa?: Info["mpesa"]; staff?: boolean }) {
   const p = useMemo(() => parseMpesaMessage(value), [value]);
   const missing = missingMpesaFields(p);
   const short = p.amount != null && p.amount + 0.5 < amountDue;
@@ -69,14 +69,14 @@ export function MpesaPaste({ value, onChange, amountDue, mpesa }: { value: strin
   return (
     <div className="space-y-2">
       <div className="flex items-end justify-between gap-2">
-        <Label htmlFor="mpesa-message">Your M-Pesa confirmation SMS</Label>
+        <Label htmlFor="mpesa-message">{staff ? "Guest's M-Pesa SMS (optional)" : "Your M-Pesa confirmation SMS"}</Label>
         {canPaste && <Button type="button" variant="outline" size="sm" onClick={pasteFromClipboard} data-testid="button-paste-mpesa"><ClipboardPaste className="h-4 w-4 mr-1" /> Paste</Button>}
       </div>
       <Textarea id="mpesa-message" rows={4} value={value} onChange={(e) => onChange(e.target.value)} placeholder="e.g. SJR7AB12CD Confirmed. Ksh1,000.00 paid to THE CHEKATA. on 27/9/26 at 10:15 AM…" data-testid="input-mpesa-message" />
-      <p className="text-xs text-muted-foreground">Copy the whole SMS from M-PESA and paste it here. We read the details automatically; you don't need to type them.</p>
+      {!staff && <p className="text-xs text-muted-foreground">Copy the whole SMS from M-PESA and paste it here. We read the details automatically; you don't need to type them.</p>}
       {value.trim() && (
         <div className="rounded-md border border-border p-3 text-sm space-y-1.5" data-testid="box-mpesa-preview">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Details read from your message</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{staff ? "Details read from the message" : "Details read from your message"}</p>
           {REQUIRED_MPESA_FIELDS.map((k) => {
             const v = shown[k];
             const bad = !v || (k === "amount" && short) || (k === "recipient" && wrongPayee);
@@ -93,7 +93,7 @@ export function MpesaPaste({ value, onChange, amountDue, mpesa }: { value: strin
           {p.account && (
             <div className="flex items-center justify-between gap-3"><span className="pl-[22px] text-muted-foreground">Account</span><span className="text-right">{p.account}</span></div>
           )}
-          <p className="text-xs text-muted-foreground pt-1" data-testid="text-mpesa-staff-check">Your booking stays pending until our staff check this payment and confirm it. You'll get an SMS when it's confirmed.</p>
+          {!staff && <p className="text-xs text-muted-foreground pt-1" data-testid="text-mpesa-staff-check">Your payment stays pending until our staff check it and confirm it. You'll get an SMS when it's confirmed.</p>}
           {missing.length > 0 && <p className="text-destructive flex items-start gap-1 pt-1" data-testid="text-mpesa-missing"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> Missing from the message: {missing.map((m) => MPESA_FIELD_LABELS[m]).join(", ")}. Paste the full, unedited M-PESA SMS.</p>}
           {short && <p className="text-destructive flex items-start gap-1 pt-1"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> {formatKES(amountDue)} is due.</p>}
           {wrongPayee && <p className="text-destructive flex items-start gap-1 pt-1" data-testid="text-mpesa-wrong-payee"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> This payment went to {p.recipient}, not {mpesa!.businessName}. Our office will check it before confirming.</p>}
