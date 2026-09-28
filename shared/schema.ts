@@ -224,9 +224,10 @@ export const tables = pgTable("tables", {
   outlet: text("outlet").notNull().default("both"), // bar | restaurant | both
   capacity: integer("capacity"),
   active: integer("active").notNull().default(1),
+  payToken: text("pay_token"), // secret for the table's "scan to pay your bill" QR (#/pay/t/<token>); set by the server only
 });
 
-export const insertTableSchema = createInsertSchema(tables).omit({ id: true });
+export const insertTableSchema = createInsertSchema(tables).omit({ id: true, payToken: true });
 export type InsertTableRow = z.infer<typeof insertTableSchema>;
 export type TableRow = typeof tables.$inferSelect;
 

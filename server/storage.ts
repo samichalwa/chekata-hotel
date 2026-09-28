@@ -1103,6 +1103,7 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await ensureColumn("settings", "mpesa_business_name", "TEXT");
   await ensureColumn("settings", "mpesa_message_max_age_hours", "INTEGER NOT NULL DEFAULT 24");
   await ensureColumn("orders", "pay_token", "TEXT");
+  await ensureColumn("tables", "pay_token", "TEXT");
   await ensureColumn("settings", "company_legal_name", "TEXT");
   await ensureColumn("settings", "company_registration_number", "TEXT");
   await ensureColumn("settings", "company_business_permit_number", "TEXT");

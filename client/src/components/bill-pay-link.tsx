@@ -3,7 +3,8 @@
 // bill stays open until staff verify the payment under Online bookings.
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Link2, Copy, MessageCircle, Clock, ExternalLink } from "lucide-react";
+import { Link2, Copy, MessageCircle, Clock, ExternalLink, Printer } from "lucide-react";
+import { QrCode, printQrCard } from "@/components/qr-code";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +21,7 @@ export function usePendingBillPayment(orderId: number) {
   return data.find((p) => p.kind === "bill" && p.targetRef === `ORD-${orderId}` && p.status === "pending") ?? null;
 }
 
-export function BillPayLink({ order, phone, name }: { order: Order; phone: string; name: string }) {
+export function BillPayLink({ order, phone, name, items = [] }: { order: Order; phone: string; name: string; items?: { itemName: string; quantity: number; subtotal: number }[] }) {
   const { toast } = useToast();
   const { data: currentUser } = useCurrentUser();
   const [url, setUrl] = useState<string | null>(order.payToken ? `${window.location.origin}/#/pay/${order.payToken}` : null);
@@ -51,18 +52,28 @@ export function BillPayLink({ order, phone, name }: { order: Order; phone: strin
   return (
     <div className="space-y-2 rounded-md border border-border p-3" data-testid="box-bill-pay-link">
       <div>
-        <p className="text-sm font-medium">Guest pays by M-Pesa on their phone</p>
-        <p className="text-xs text-muted-foreground">Send the guest a link to this bill. They pay by M-Pesa and paste the SMS; you then verify it in Online bookings, which closes the bill and issues the receipt.</p>
+        <p className="text-sm font-medium">Patron pays by M-Pesa on their phone</p>
+        <p className="text-xs text-muted-foreground">The patron scans the QR code (on screen or on the printed bill) or opens the WhatsApp link, pays by M-Pesa and pastes the SMS. You then confirm it in Online bookings, which closes the bill and issues the receipt. No booking needed.</p>
       </div>
       {!url ? (
         <Button type="button" variant="outline" size="sm" onClick={() => make.mutate()} disabled={make.isPending || order.totalAmount <= 0} data-testid="button-create-pay-link">
-          <Link2 className="h-4 w-4 mr-1.5" /> {make.isPending ? "Creating…" : "Create payment link"}
+          <Link2 className="h-4 w-4 mr-1.5" /> {make.isPending ? "Creating…" : "Show payment QR code & link"}
         </Button>
       ) : (
         <div className="space-y-2">
+          <div className="flex flex-col items-center gap-1 py-1">
+            <QrCode text={url} size={176} testId="img-bill-qr" />
+            <p className="text-xs text-muted-foreground">Patron scans this with the phone camera · {formatKES(order.totalAmount)}</p>
+          </div>
           <Input readOnly value={url} onFocus={(e) => e.currentTarget.select()} data-testid="input-pay-link" />
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => { navigator.clipboard?.writeText(url); toast({ title: "Link copied" }); }} data-testid="button-copy-pay-link"><Copy className="h-4 w-4 mr-1.5" /> Copy</Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => printQrCard({
+              title: `${titleCase(order.outlet)} bill${order.reference ? ` · ${order.reference}` : ""}`,
+              subtitle: `Ref ORD-${order.id} · ${order.orderDate}`,
+              lines: items.map((i) => ({ label: `${i.itemName} × ${i.quantity}`, amount: formatKES(i.subtotal) })),
+              total: formatKES(order.totalAmount), url,
+            }) || toast({ title: "Allow pop-ups to print", variant: "destructive" })} data-testid="button-print-bill-qr"><Printer className="h-4 w-4 mr-1.5" /> Print bill with QR</Button>
             <Button type="button" variant="outline" size="sm" disabled={!wa} onClick={() => wa && window.open(wa, "_blank")} data-testid="button-whatsapp-pay-link"><MessageCircle className="h-4 w-4 mr-1.5" /> WhatsApp</Button>
           </div>
           {!wa && <p className="text-xs text-muted-foreground">Add the guest's phone above to send it by WhatsApp.</p>}

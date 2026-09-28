@@ -359,7 +359,7 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
             </div>
           </div>
 
-          {isOpen && <BillPayLink order={order} phone={customerPhone} name={customerName} />}
+          {isOpen && <BillPayLink order={order} phone={customerPhone} name={customerName} items={items} />}
 
           {isOpen ? (
             <div className="space-y-2 rounded-md border border-border p-3">

@@ -16,7 +16,7 @@ import DailyClosePage from "@/pages/daily-close";
 import AllBookingsPage from "@/pages/all-bookings";
 import OnlineBookingsPage from "@/pages/online-bookings";
 import PublicBookPage from "@/pages/public-book";
-import PublicPayPage from "@/pages/public-pay";
+import PublicPayPage, { PublicTablePayPage } from "@/pages/public-pay";
 import { Loader2, ShieldOff, Home } from "lucide-react";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
@@ -161,6 +161,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const payMatch = hash.replace(/^#\/?/, "").split("?")[0].match(/^pay\/([A-Za-z0-9]+)$/);
   if (payMatch) {
     return <PublicPayPage token={payMatch[1]} />;
+  }
+  const tablePayMatch = hash.replace(/^#\/?/, "").split("?")[0].match(/^pay\/t\/([A-Za-z0-9]+)$/);
+  if (tablePayMatch) {
+    return <PublicTablePayPage token={tablePayMatch[1]} />;
   }
 
   // Password reset via an emailed link is reachable regardless of sign-in state.
