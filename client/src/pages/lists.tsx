@@ -45,7 +45,7 @@ function TableQrButton({ table }: { table: TableEntity }) {
         <QrDialogContent className="max-w-sm">
           <QrDialogHeader>
             <QrDialogTitle>{table.name} — scan to pay</QrDialogTitle>
-            <QrDialogDescription>Print this and place it on the table. Patrons scan it to see the open bill for {table.name}, pay by M-Pesa and paste the SMS. Staff then confirm the payment in Online bookings. The code stays the same, so print it once.</QrDialogDescription>
+            <QrDialogDescription>Print this and place it on the table. Patrons scan it to see the open bill for {table.name}, pay by M-Pesa and paste the SMS. Staff then confirm the payment in Online bookings & payments. The code stays the same, so print it once.</QrDialogDescription>
           </QrDialogHeader>
           {url ? (
             <div className="flex flex-col items-center gap-3">

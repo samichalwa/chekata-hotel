@@ -1,5 +1,5 @@
 // Receipt for a bar/restaurant order once it is marked paid — shared by the staff "Close &
-// Generate Receipt" action and by verifying a guest's M-Pesa bill payment (Online bookings).
+// Generate Receipt" action and by verifying a guest's M-Pesa bill payment (Online bookings & payments).
 import type { Order } from "@shared/schema";
 import type { IStorage } from "./storage";
 import { issueDocument } from "./documents";

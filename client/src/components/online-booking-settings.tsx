@@ -59,7 +59,7 @@ export function OnlineBookingSettingsTab() {
     <div className="space-y-4 max-w-3xl">
       <Card className="p-4 space-y-2">
         <h3 className="font-semibold">Public booking link</h3>
-        <p className="text-sm text-muted-foreground">Share this link (website, WhatsApp, QR code). Guests can book rooms, view scheduled shows, pick movie seats and reserve tables. Nothing is held until they paste a valid M-Pesa message; your office then verifies it under Online bookings.</p>
+        <p className="text-sm text-muted-foreground">Share this link (website, WhatsApp, QR code). Guests can book rooms, view scheduled shows, pick movie seats and reserve tables. Nothing is held until they paste a valid M-Pesa message; your office then verifies it under Online bookings & payments.</p>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Input readOnly value={url} data-testid="input-public-booking-url" />
           <div className="flex gap-2">

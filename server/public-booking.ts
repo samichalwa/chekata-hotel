@@ -250,7 +250,7 @@ export function registerPublicBookingRoutes(app: Express) {
       if (!o.customerPhone || !o.customerName) {
         await storage.updateOrder(o.id, { customerPhone: o.customerPhone || guestPhone, customerName: o.customerName || guestName } as any);
       }
-      void notifyModuleUsers("bar-restaurant", { category: "booking", title: `Bill paid by M-Pesa — verify ${c.code}`, body: `${guestName}: ${summary}, ${kes(c.amount)} of ${kes(o.totalAmount)}. Verify it under Online bookings.`, linkPath: "/online-bookings" });
+      void notifyModuleUsers("bar-restaurant", { category: "booking", title: `Bill paid by M-Pesa — verify ${c.code}`, body: `${guestName}: ${summary}, ${kes(c.amount)} of ${kes(o.totalAmount)}. Verify it under Online bookings & payments.`, linkPath: "/online-bookings" });
       const s = await storage.getSettings();
       void sendSms({ settings: s, to: guestPhone, message: `Hi ${guestName}, we received your M-Pesa ${c.code} for ${summary} (${kes(c.amount)}). Our staff will confirm it shortly. - ${s.hotelName}` }).catch(() => {});
       res.status(201).json({ ref, status: "pending", summary, amount: c.amount, mpesaCode: c.code });
@@ -677,7 +677,7 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
       const status = b.status ?? cur.status;
       if (!(TABLE_RESERVATION_STATUSES as readonly string[]).includes(status)) return res.status(400).json({ error: "Invalid status" });
       if (cur.status === "awaiting_verification" && status !== cur.status && status !== "cancelled") {
-        return res.status(400).json({ error: "Verify the M-Pesa deposit in Online bookings before confirming this reservation." });
+        return res.status(400).json({ error: "Verify the M-Pesa deposit in Online bookings & payments before confirming this reservation." });
       }
       if (cur.status === "cancelled" && status !== "cancelled" && cur.depositAmount > 0 && cur.depositPaid + 0.5 < cur.depositAmount) {
         return res.status(400).json({ error: "This reservation was cancelled without a verified deposit. Ask the guest to book again." });

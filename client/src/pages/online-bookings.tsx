@@ -1,4 +1,4 @@
-// Online bookings — a shortcut view (NOT a module). Staff verify the M-Pesa messages guests
+// Online bookings & payments — a shortcut view (NOT a module). Staff verify the M-Pesa messages guests
 // pasted on the public page (#/book) and manage table reservations. Movie payments need the
 // movie-room module, table payments / reservations need bar-restaurant, room payments need accommodation
 // (enforced server-side).
@@ -192,7 +192,7 @@ export default function OnlineBookingsPage() {
   const publicUrl = `${window.location.origin}/#/book`;
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-6xl mx-auto">
-      <PageHeader title="Online bookings" description="Verify M-Pesa payments pasted by guests for rooms, movie seats, tables and bar & restaurant bills, and manage table reservations." />
+      <PageHeader title="Online bookings & payments" description="Verify M-Pesa payments pasted by guests for rooms, movie seats, tables and bar & restaurant bills, and manage table reservations." />
       <Card className="p-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm"><span className="text-muted-foreground">Public booking link: </span><span className="font-medium break-all" data-testid="text-public-link">{publicUrl}</span></div>
         <div className="flex gap-2">

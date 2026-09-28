@@ -97,7 +97,7 @@ function AppRouter() {
       <Route path="/approvals" component={ApprovalsPage} />
       <Route path="/daily-close/:date?" component={() => <Guarded moduleKey="dashboard" component={DailyClosePage} />} />
       <Route path="/bookings" component={AllBookingsPage} />
-      {/* Online bookings: shortcut view (not a module) for movie-room / bar-restaurant holders. */}
+      {/* Online bookings & payments: shortcut view (not a module) for movie-room / bar-restaurant holders. */}
       <Route path="/online-bookings" component={OnlineBookingsGate} />
       <Route path="/accommodation" component={() => <Guarded moduleKey="accommodation" component={Accommodation} />} />
       <Route path="/facilities" component={() => <Guarded moduleKey="facilities" component={Facilities} />} />

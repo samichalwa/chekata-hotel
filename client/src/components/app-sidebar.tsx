@@ -112,7 +112,7 @@ export function AppSidebar() {
   const showApprovals = hasAnyApprovalModule(user);
   // "All bookings" is likewise a shortcut view (rooms + events + movie seats), not a module.
   const showAllBookings = (["accommodation", "facilities", "movie-room"] as const).some((m) => canAccess(user, m));
-  // "Online bookings" is a shortcut view (public-page M-Pesa verification), not a module.
+  // "Online bookings & payments" is a shortcut view (public-page M-Pesa verification), not a module.
   const showOnlineBookings = canAccess(user, "movie-room") || canAccess(user, "bar-restaurant") || canAccess(user, "accommodation");
   // "Daily close report" is a shortcut view (same gate as the Today briefing it
   // comes from), not a module — figures inside are filtered per module access.
@@ -210,7 +210,7 @@ export function AppSidebar() {
                     <SidebarMenuButton asChild isActive={location === "/online-bookings"} data-testid="link-online-bookings">
                       <Link href="/online-bookings" onClick={closeMobileNav}>
                         <Globe />
-                        <span>Online bookings</span>
+                        <span>Online bookings & payments</span>
                         {onlineCount > 0 && (
                           <span className="ml-auto min-w-5 rounded-full bg-destructive px-1.5 text-center text-[11px] font-semibold leading-5 text-destructive-foreground tabular-nums group-data-[collapsible=icon]:hidden" data-testid="badge-sidebar-online-bookings">
                             {onlineCount > 99 ? "99+" : onlineCount}

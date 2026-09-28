@@ -1139,7 +1139,7 @@ export async function registerRoutes(
       if (!before) return res.status(404).json({ error: "Order not found" });
       const data = insertOrderSchema.partial().parse(req.body);
       if (before.status === "open" && data.status && data.status !== "open" && await hasPendingBillPayment(id)) {
-        return res.status(409).json({ error: "The guest has paid this bill by M-Pesa and it is waiting in Online bookings. Verify or reject that payment first." });
+        return res.status(409).json({ error: "The guest has paid this bill by M-Pesa and it is waiting in Online bookings & payments. Verify or reject that payment first." });
       }
       const updated = await storage.updateOrder(id, data);
       if (!updated) return res.status(404).json({ error: "Order not found" });

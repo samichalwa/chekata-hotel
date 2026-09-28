@@ -1,6 +1,6 @@
 // Public "pay your bill" page (no login): https://hms.thechekata.com/#/pay/<token>
 // Staff share the link from a bar/restaurant bill. The guest pays by M-Pesa, pastes the SMS,
-// and the bill stays open until staff verify the payment under Online bookings.
+// and the bill stays open until staff verify the payment under Online bookings & payments.
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Loader2, AlertCircle, CheckCircle2, Clock } from "lucide-react";

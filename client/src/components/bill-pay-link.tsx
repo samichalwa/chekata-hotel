@@ -1,6 +1,6 @@
 // Bar & Restaurant: let the guest pay an open bill by M-Pesa from their own phone.
 // Staff share a secret link (#/pay/<token>); the guest pastes the M-Pesa SMS there, and the
-// bill stays open until staff verify the payment under Online bookings.
+// bill stays open until staff verify the payment under Online bookings & payments.
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link2, Copy, MessageCircle, Clock, ExternalLink, Printer } from "lucide-react";
@@ -43,7 +43,7 @@ export function BillPayLink({ order, phone, name, items = [] }: { order: Order; 
         <div className="space-y-1">
           <p className="font-medium">Guest paid by M-Pesa — waiting for verification</p>
           <p className="text-muted-foreground">{pending.guestName} · M-Pesa <span className="font-medium text-foreground tabular-nums">{pending.mpesaCode}</span> · {formatKES(pending.amount)}</p>
-          <Link href="/online-bookings" className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline" data-testid="link-verify-bill-payment"><ExternalLink className="h-3.5 w-3.5" /> Verify in Online bookings</Link>
+          <Link href="/online-bookings" className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline" data-testid="link-verify-bill-payment"><ExternalLink className="h-3.5 w-3.5" /> Verify in Online bookings & payments</Link>
         </div>
       </div>
     );
@@ -53,7 +53,7 @@ export function BillPayLink({ order, phone, name, items = [] }: { order: Order; 
     <div className="space-y-2 rounded-md border border-border p-3" data-testid="box-bill-pay-link">
       <div>
         <p className="text-sm font-medium">Patron pays by M-Pesa on their phone</p>
-        <p className="text-xs text-muted-foreground">The patron scans the QR code (on screen or on the printed bill) or opens the WhatsApp link, pays by M-Pesa and pastes the SMS. You then confirm it in Online bookings, which closes the bill and issues the receipt. No booking needed.</p>
+        <p className="text-xs text-muted-foreground">The patron scans the QR code (on screen or on the printed bill) or opens the WhatsApp link, pays by M-Pesa and pastes the SMS. You then confirm it in Online bookings & payments, which closes the bill and issues the receipt. No booking needed.</p>
       </div>
       {!url ? (
         <Button type="button" variant="outline" size="sm" onClick={() => make.mutate()} disabled={make.isPending || order.totalAmount <= 0} data-testid="button-create-pay-link">

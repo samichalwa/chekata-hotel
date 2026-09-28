@@ -392,7 +392,7 @@ function OrderManagerDialog({ order, menuItems, trigger }: { order: Order; menuI
                 <CheckCircle2 className="h-4 w-4 mr-1.5" /> {closeOrder.isPending ? "Closing..." : "Close & Generate Receipt"}
               </Button>
               {items.length === 0 && <p className="text-xs text-muted-foreground">Add at least one item before closing.</p>}
-              {pendingOnline && <p className="text-xs text-muted-foreground">The guest's M-Pesa payment is waiting in Online bookings. Verify it there to close this bill.</p>}
+              {pendingOnline && <p className="text-xs text-muted-foreground">The guest's M-Pesa payment is waiting in Online bookings & payments. Verify it there to close this bill.</p>}
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button variant="ghost" size="sm" className="w-full text-destructive" data-testid="button-cancel-order-inline">Cancel this order instead</Button>
