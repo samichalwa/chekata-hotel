@@ -49,7 +49,7 @@ function ReportTable({ cols, rows, total, testId }: { cols: Col[]; rows: React.R
       <thead>
         <tr className="border-b border-border">
           {cols.map((c, i) => (
-            <th key={i} className={`py-1.5 px-1 text-[11px] font-semibold text-muted-foreground ${c.align === "right" ? "text-right" : "text-left"} ${c.hideOnMobile ? "hidden sm:table-cell" : ""} ${c.className ?? ""}`}>{c.label}</th>
+            <th key={i} className={`py-1.5 px-0.5 sm:px-1 text-[11px] font-semibold text-muted-foreground ${c.align === "right" ? "text-right" : "text-left"} ${c.hideOnMobile ? "hidden sm:table-cell" : ""} ${c.className ?? ""}`}>{c.label}</th>
           ))}
         </tr>
       </thead>
@@ -57,9 +57,9 @@ function ReportTable({ cols, rows, total, testId }: { cols: Col[]; rows: React.R
         {rows.map((r, ri) => {
           const isTotal = total && ri === rows.length - 1;
           return (
-            <tr key={ri} className={isTotal ? "border-t-2 border-foreground/70 font-semibold" : "border-b border-border/50 last:border-0"}>
+            <tr key={ri} className={isTotal ? "border-t-2 border-foreground/70 font-semibold text-[12px] sm:text-sm" : "border-b border-border/50 last:border-0"}>
               {r.map((cell, ci) => (
-                <td key={ci} className={`py-1.5 px-1 align-top tabular-nums ${cols[ci].align === "right" ? "text-right whitespace-nowrap" : "text-left [overflow-wrap:anywhere]"} ${cols[ci].hideOnMobile ? "hidden sm:table-cell" : ""}`}>{cell}</td>
+                <td key={ci} className={`py-1.5 px-0.5 sm:px-1 align-top tabular-nums ${cols[ci].align === "right" ? "text-right sm:whitespace-nowrap" : "text-left [overflow-wrap:anywhere]"} ${cols[ci].hideOnMobile ? "hidden sm:table-cell" : ""}`}>{cell}</td>
               ))}
             </tr>
           );
@@ -69,13 +69,20 @@ function ReportTable({ cols, rows, total, testId }: { cols: Col[]; rows: React.R
   );
 }
 
-// On phones the Yesterday / Txns columns fold under the stream name so the
-// table fits a 375px screen without sideways scrolling.
-function StreamCell({ label, count, yesterday }: { label: string; count?: number; yesterday: number }) {
+// On phones the Txns column folds under the stream name so Today / Yesterday /
+// Month to date all fit a 375px screen without sideways scrolling.
+// Phones: drop the repeated "KES" prefix in the stream table (the heading says KES) so
+// Today / Yesterday / Month to date sit on one line each.
+function Amt({ v }: { v: number }) {
+  const t = kes(v);
+  return <><span className="hidden sm:inline">{t.replace(/[\d,.\-]+$/, "")}</span>{t.replace(/^[^\d\-]+/, "")}</>;
+}
+
+function StreamCell({ label, count }: { label: string; count?: number }) {
   return (
     <div>
       <div>{label}</div>
-      <div className="text-[11px] font-normal text-muted-foreground sm:hidden">{count ? `${count} txn${count === 1 ? "" : "s"} · ` : ""}Yest. {kes(yesterday)}</div>
+      {!!count && <div className="text-[11px] font-normal text-muted-foreground sm:hidden">{count} txn{count === 1 ? "" : "s"}</div>}
     </div>
   );
 }
@@ -201,14 +208,14 @@ function ReportBody({ data }: { data: ReportData }) {
         ))}
       </div>
 
-      <Heading>Income today by stream</Heading>
+      <Heading>Income today by stream<span className="font-normal normal-case tracking-normal text-muted-foreground sm:hidden"> · KES</span></Heading>
       <ReportTable
         testId="table-daily-income"
         total
-        cols={[{ label: "Stream", className: "w-[42%] sm:w-[34%]" }, { label: "Txns", align: "right", hideOnMobile: true, className: "w-[9%]" }, { label: "Today", align: "right" }, { label: "Yesterday", align: "right", hideOnMobile: true }, { label: "Month to date", align: "right" }]}
+        cols={[{ label: "Stream", className: "w-[34%]" }, { label: "Txns", align: "right", hideOnMobile: true, className: "w-[9%]" }, { label: "Today", align: "right" }, { label: "Yesterday", align: "right" }, { label: "Month to date", align: "right" }]}
         rows={[
-          ...streams.map((st) => [<StreamCell label={st.label} count={st.todayCount} yesterday={st.yesterday} />, st.todayCount || "—", kes(st.today), kes(st.yesterday), kes(st.mtd)]),
-          [<StreamCell label="Total" yesterday={s.income.totalYesterday} />, "", kes(s.income.totalToday), kes(s.income.totalYesterday), kes(s.income.totalMtd)],
+          ...streams.map((st) => [<StreamCell label={st.label} count={st.todayCount} />, st.todayCount || "—", <Amt v={st.today} />, <Amt v={st.yesterday} />, <Amt v={st.mtd} />]),
+          [<StreamCell label="Total" />, "", <Amt v={s.income.totalToday} />, <Amt v={s.income.totalYesterday} />, <Amt v={s.income.totalMtd} />],
         ]}
       />
       <p className="mt-1 text-[11px] text-muted-foreground">Recognised on check-in, event, show and sale dates; rent on payment date. Net of credit notes.</p>
