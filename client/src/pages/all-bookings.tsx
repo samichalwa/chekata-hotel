@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatKES, formatDate } from "@/lib/format";
 import { useCurrentUser, canAccess } from "@/hooks/use-auth";
 import { hotelTodayClient } from "@/lib/director";
+import { RecordPaymentButton, usePendingOnlinePayments } from "@/components/record-payment-button";
 
 // "All bookings" is a shortcut view, NOT a module: each section is shown only
 // when the user holds that module (accommodation / facilities / movie-room),
@@ -30,6 +31,7 @@ interface UnifiedBooking {
   status: string;
   createdAt: number;
   href: string;
+  pay?: { endpoint: string; ref?: string | null; summary: string; invalidate: string[][]; extraBody?: Record<string, unknown> };
 }
 
 const KIND_META: Record<Kind, { label: string; icon: typeof BedDouble; module: "accommodation" | "facilities" | "movie-room"; href: string }> = {
@@ -51,6 +53,8 @@ export default function AllBookingsPage() {
   const canRooms = canAccess(user, "accommodation");
   const canEvents = canAccess(user, "facilities");
   const canMovie = canAccess(user, "movie-room");
+  const canEditMovie = Boolean(user?.isAdmin || (user as any)?.canEditMovieBookings);
+  const pendingOnline = usePendingOnlinePayments(canRooms || canMovie);
 
   const rooms = useQuery<Room[]>({ queryKey: ["/api/rooms"], enabled: canRooms });
   const roomBookings = useQuery<AccommodationBooking[]>({ queryKey: ["/api/accommodation-bookings"], enabled: canRooms });
@@ -78,6 +82,7 @@ export default function AllBookingsPage() {
           detail: `${roomById.get(b.roomId)?.name ?? "Room"}${b.numberOfGuests > 1 ? ` · ${b.numberOfGuests} guests` : ""}`,
           date: b.checkIn, endDate: b.checkOut, amount, due: Math.max(0, amount - b.amountPaid), status: b.status,
           createdAt: b.createdAt, href: "/accommodation",
+          pay: b.status === "cancelled" ? undefined : { endpoint: `/api/accommodation-bookings/${b.id}/record-payment`, ref: b.bookingRef, summary: `${roomById.get(b.roomId)?.name ?? "Room"} · ${formatDate(b.checkIn)} → ${formatDate(b.checkOut)}`, invalidate: [["/api/accommodation-bookings"]] },
         });
       }
     }
@@ -89,6 +94,7 @@ export default function AllBookingsPage() {
           key: `event-${b.id}`, kind: "event", name: b.clientName, detail: facById.get(b.facilityId)?.name ?? "Facility",
           date: b.eventDate, time: [b.startTime, b.endTime].filter(Boolean).join("–") || null,
           amount, due: Math.max(0, amount - b.amountPaid), status: b.status, createdAt: b.createdAt, href: "/facilities",
+          pay: b.status === "cancelled" ? undefined : { endpoint: `/api/facility-bookings/${b.id}/record-payment`, summary: `${facById.get(b.facilityId)?.name ?? "Facility"} · ${formatDate(b.eventDate)}`, invalidate: [["/api/facility-bookings"]] },
         });
       }
     }
@@ -113,11 +119,12 @@ export default function AllBookingsPage() {
           date: show?.showDate ?? "", time: show?.startTime ?? null,
           amount, due: live.length ? Math.max(0, amount - paid) : 0, status: live.length ? "booked" : "cancelled",
           createdAt: Math.max(...use.map((b) => b.createdAt)), href: "/movie-room?tab=bookings",
+          pay: live.length && canEditMovie ? { endpoint: `/api/movie-seat-bookings/${live[0].id}/record-payment`, ref: live[0].bookingRef, summary: `${show?.name ?? "Show"} · Seat${live.length > 1 ? "s" : ""} ${seatsLabel}`, invalidate: [["/api/movie-seat-bookings"]], extraBody: { seatIds: live.map((b) => b.id) } } : undefined,
         });
       });
     }
     return out;
-  }, [canRooms, canEvents, canMovie, rooms.data, roomBookings.data, facilities.data, facilityBookings.data, shows.data, seats.data]);
+  }, [canRooms, canEvents, canMovie, canEditMovie, rooms.data, roomBookings.data, facilities.data, facilityBookings.data, shows.data, seats.data]);
 
   const inRange = (b: UnifiedBooking) => {
     const last = b.endDate ?? b.date;
@@ -201,6 +208,12 @@ export default function AllBookingsPage() {
                           <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                         </div>
                       </Link>
+                      {b.pay && (b.due > 0.5 || (b.pay.ref && pendingOnline.has(b.pay.ref))) && (
+                        <div className="flex justify-end px-4 pb-3 -mt-1">
+                          <RecordPaymentButton endpoint={b.pay.endpoint} due={b.due} guestName={b.name} summary={b.pay.summary} invalidate={b.pay.invalidate}
+                            extraBody={b.pay.extraBody} pending={b.pay.ref ? pendingOnline.get(b.pay.ref) : null} testId={b.key} compact />
+                        </div>
+                      )}
                     </li>
                   );
                 })}

@@ -21,6 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, formatDate, nightsBetween, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
+import { RecordPaymentButton, usePendingOnlinePayments } from "@/components/record-payment-button";
 import { CreditNoteDialog } from "@/components/credit-note-dialog";
 import { ConfirmOverrideDialog } from "@/components/confirm-override-dialog";
 import { CameraCapture } from "@/components/camera-capture";
@@ -590,6 +591,7 @@ export default function Accommodation() {
 
   const occupied = rooms.filter((r) => r.status === "occupied").length;
   const activeBookings = bookings.filter((b) => b.status === "confirmed" || b.status === "checked_in" || b.status === "pending_payment");
+  const pendingOnline = usePendingOnlinePayments();
   const outstanding = bookings.reduce((s, b) => s + Math.max(0, b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0)), 0);
   const totalRevenue = bookings.filter((b) => b.status !== "cancelled").reduce((s, b) => s + b.totalAmount - (b.creditedAmount ?? 0), 0);
 
@@ -597,7 +599,12 @@ export default function Accommodation() {
   const sortedRooms = [...rooms].sort((a, b) => a.name.localeCompare(b.name));
 
   const renderActions = (b: (typeof sortedBookings)[number], align: "start" | "end") => (
-    <div className={`flex gap-1 ${align === "end" ? "justify-end" : "flex-wrap"}`}>
+    <div className={`flex gap-1 ${align === "end" ? "flex-wrap justify-end ml-auto max-w-[236px]" : "flex-wrap"}`}>
+  {b.status !== "cancelled" && (
+    <RecordPaymentButton endpoint={`/api/accommodation-bookings/${b.id}/record-payment`} due={b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0)}
+      guestName={b.guestName} summary={`${roomById.get(b.roomId)?.name ?? "Room"} · ${formatDate(b.checkIn)} → ${formatDate(b.checkOut)}`}
+      testId={`booking-${b.id}`} invalidate={[["/api/accommodation-bookings"]]} pending={b.bookingRef ? pendingOnline.get(b.bookingRef) : null} compact />
+  )}
   {b.status === "pending_payment" && (
     <ConfirmOverrideDialog
       endpoint={`/api/accommodation-bookings/${b.id}/confirm-override`}

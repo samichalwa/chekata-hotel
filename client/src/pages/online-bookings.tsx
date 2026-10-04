@@ -23,11 +23,11 @@ import { useToast } from "@/hooks/use-toast";
 import { formatKES } from "@/lib/format";
 import { useCurrentUser, canAccess } from "@/hooks/use-auth";
 
-type Row = OnlinePayment & { recipientOk: boolean; amountOk: boolean };
+export type Row = OnlinePayment & { recipientOk: boolean; amountOk: boolean };
 const RES_LABEL: Record<string, string> = { confirmed: "Confirmed", seated: "Seated", completed: "Completed", no_show: "No-show", cancelled: "Cancelled" };
 const when = (ms: number | null) => ms ? new Date(ms).toLocaleString("en-GB", { timeZone: "Africa/Nairobi", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 
-function ReviewDialog({ row, onClose }: { row: Row; onClose: () => void }) {
+export function ReviewDialog({ row, onClose }: { row: Row; onClose: () => void }) {
   const { toast } = useToast();
   const [office, setOffice] = useState("");
   const [reason, setReason] = useState("");
@@ -43,6 +43,7 @@ function ReviewDialog({ row, onClose }: { row: Row; onClose: () => void }) {
       queryClient.invalidateQueries({ queryKey: ["/api/movie-seat-bookings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/accommodation-bookings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/director/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/documents"] });
       toast({ title: mode === "verify" ? (row.kind === "bill" ? "Payment verified — bill closed and receipt issued" : "Payment verified — booking confirmed") : (row.kind === "bill" ? "Payment rejected — the bill stays open" : "Payment rejected — booking released") });
       onClose();
@@ -125,7 +126,7 @@ function PaymentsList({ rows, onReview }: { rows: Row[]; onReview: (r: Row) => v
   );
 }
 
-function ReservationsList() {
+function ReservationsList({ pendingByRef, onReview }: { pendingByRef: Map<string, Row>; onReview: (r: Row) => void }) {
   const { toast } = useToast();
   const { data: rows = [], isLoading } = useQuery<TableReservation[]>({ queryKey: ["/api/table-reservations"] });
   const { data: tables = [] } = useQuery<TableEntity[]>({ queryKey: ["/api/tables"] });
@@ -164,7 +165,9 @@ function ReservationsList() {
                       </Select>
                     </TableCell>
                     <TableCell>
-                      {r.status === "awaiting_verification" || (r.status === "cancelled" && r.depositAmount > 0 && r.depositPaid + 0.5 < r.depositAmount) ? statusBadge(r.status) : (
+                      {r.status === "awaiting_verification" && pendingByRef.get(r.reservationRef) ? (
+                        <Button size="sm" variant="outline" className="h-8 px-2" onClick={() => onReview(pendingByRef.get(r.reservationRef)!)} data-testid={`button-confirm-deposit-${r.id}`}><Check className="h-4 w-4 mr-1" /> Confirm deposit</Button>
+                      ) : r.status === "awaiting_verification" || (r.status === "cancelled" && r.depositAmount > 0 && r.depositPaid + 0.5 < r.depositAmount) ? statusBadge(r.status) : (
                         <Select value={r.status} onValueChange={(v) => patch.mutate({ id: r.id, body: { status: v } })}>
                           <SelectTrigger className="h-8 w-36" aria-label="Reservation status" data-testid={`select-reservation-status-${r.id}`}><SelectValue /></SelectTrigger>
                           <SelectContent>{Object.entries(RES_LABEL).map(([s, l]) => <SelectItem key={s} value={s}>{l}</SelectItem>)}</SelectContent>
@@ -207,7 +210,7 @@ export default function OnlineBookingsPage() {
           <TabsTrigger value="history" data-testid="tab-history">History</TabsTrigger>
         </TabsList>
         <TabsContent value="verify" className="mt-4">{isLoading ? <Skeleton className="h-40 w-full" /> : <PaymentsList rows={pending} onReview={setReview} />}</TabsContent>
-        {canTables && <TabsContent value="reservations" className="mt-4"><ReservationsList /></TabsContent>}
+        {canTables && <TabsContent value="reservations" className="mt-4"><ReservationsList pendingByRef={new Map(pending.filter((p) => p.kind === "table").map((p) => [p.targetRef, p]))} onReview={setReview} /></TabsContent>}
         <TabsContent value="history" className="mt-4">{isLoading ? <Skeleton className="h-40 w-full" /> : <PaymentsList rows={rows.filter((r) => r.status !== "pending")} onReview={setReview} />}</TabsContent>
       </Tabs>
       {review && <ReviewDialog row={review} onClose={() => setReview(null)} />}

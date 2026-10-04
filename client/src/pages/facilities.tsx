@@ -22,6 +22,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, formatDate, hoursBetween, nowTs, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import { CreditNoteDialog } from "@/components/credit-note-dialog";
+import { RecordPaymentButton } from "@/components/record-payment-button";
 import { ConfirmOverrideDialog } from "@/components/confirm-override-dialog";
 import type { Facility, FacilityBooking } from "@shared/schema";
 
@@ -437,6 +438,7 @@ export default function Facilities() {
                       <TableHead>Date</TableHead>
                       <TableHead>Time</TableHead>
                       <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-right">Balance</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
@@ -451,9 +453,15 @@ export default function Facilities() {
                           <TableCell>{formatDate(b.eventDate)}</TableCell>
                           <TableCell>{b.startTime && b.endTime ? `${b.startTime}–${b.endTime}` : "—"}</TableCell>
                           <TableCell className="text-right tabular-nums">{formatKES(b.totalAmount)}</TableCell>
+                          <TableCell className="text-right tabular-nums" data-testid={`text-facility-balance-${b.id}`}>{(() => { const bal = b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0); return bal > 0.5 ? formatKES(bal) : "Paid"; })()}</TableCell>
                           <TableCell><Badge variant={statusVariant[b.status]}>{titleCase(b.status)}</Badge></TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-1">
+                              {b.status !== "cancelled" && (
+                                <RecordPaymentButton endpoint={`/api/facility-bookings/${b.id}/record-payment`} due={b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0)}
+                                  guestName={b.clientName} summary={`${f?.name ?? "Facility"} · ${formatDate(b.eventDate)}${b.startTime && b.endTime ? ` · ${b.startTime}–${b.endTime}` : ""}`}
+                                  testId={`facility-${b.id}`} invalidate={[["/api/facility-bookings"]]} compact />
+                              )}
                               {b.status === "pending_payment" && (
                                 <ConfirmOverrideDialog
                                   endpoint={`/api/facility-bookings/${b.id}/confirm-override`}

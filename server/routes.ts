@@ -1034,6 +1034,100 @@ export async function registerRoutes(
     } catch (err) { handleZodError(res, err); }
   });
 
+
+  // ---- "Record payment" buttons (accommodation, conference/facility, movie seats) ----
+  // Validates a staff-received payment: positive amount, not above the balance, a known method,
+  // an M-Pesa code for M-Pesa, the code not used anywhere else, and no guest M-Pesa submission
+  // still waiting in Online bookings & payments for this booking (that one is verified there).
+  async function checkRecordPayment(body: any, due: number, opts: { targetRef?: string | null; movieBookingRef?: string } = {}) {
+    const amount = Math.round(Number(body?.amount) * 100) / 100;
+    const method = String(body?.paymentMethod ?? "").trim();
+    const reference = String(body?.paymentReference ?? "").trim().toUpperCase() || null;
+    if (!(due > 0.004)) return { error: "This booking is already fully paid.", status: 409 } as const;
+    if (!(amount > 0)) return { error: "Enter the amount received.", status: 400 } as const;
+    if (amount > due + 0.5) return { error: `That is more than the balance of KES ${Math.round(due).toLocaleString("en-KE")}.`, status: 400 } as const;
+    if (!["cash", "mpesa", "card", "bank_transfer"].includes(method)) return { error: "Choose how the guest paid.", status: 400 } as const;
+    if (method === "mpesa" && !reference) return { error: "Enter the M-Pesa code.", status: 400 } as const;
+    if (opts.targetRef) {
+      const pend = await sql`SELECT mpesa_code FROM online_payments WHERE target_ref = ${opts.targetRef} AND status = 'pending' LIMIT 1` as any[];
+      if (pend[0]) return { error: `The guest already submitted M-Pesa ${pend[0].mpesa_code} for this booking. Confirm or reject it in Online bookings & payments first.`, status: 409 } as const;
+    }
+    let lock: string | null = null;
+    if (reference) {
+      const key = normalizeRef(reference);
+      if (isRealRef(key)) {
+        if (inFlight.has(key)) return { error: duplicateRefMessage(reference, "another payment being saved right now"), status: 409 } as const;
+        const used = await findReferenceUse(reference, opts.movieBookingRef ? { movieBookingRef: opts.movieBookingRef } : {});
+        if (used) return { error: duplicateRefMessage(reference, used), status: 409 } as const;
+        lock = key; inFlight.add(key);
+      }
+    }
+    return { amount, method, reference, lock } as const;
+  }
+  const paidSms = (name: string, what: string, amount: number, reference: string | null, balance: number) =>
+    `Hi ${name}, payment received for your ${what} at The Chekata: KES ${amount.toLocaleString("en-KE")}${reference ? ` (${reference})` : ""}. ${balance > 0.5 ? `Balance: KES ${Math.round(balance).toLocaleString("en-KE")}.` : "Paid in full."} Thank you!`;
+
+  app.post("/api/accommodation-bookings/:id/record-payment", requireModule("accommodation"), async (req, res) => {
+    let lock: string | null = null;
+    try {
+      const b = await storage.getAccommodationBooking(Number(req.params.id));
+      if (!b) return res.status(404).json({ error: "Booking not found" });
+      if (b.status === "cancelled") return res.status(409).json({ error: "This booking is cancelled." });
+      const due = b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0);
+      const c = await checkRecordPayment(req.body, due, { targetRef: b.bookingRef });
+      if ("error" in c) return res.status(c.status ?? 400).json({ error: c.error });
+      lock = c.lock;
+      // A payment confirms a booking that was waiting for one (same rule as the edit form).
+      const updated = await storage.updateAccommodationBooking(b.id, {
+        amountPaid: b.amountPaid + c.amount, paymentMethod: c.method, paymentReference: c.reference ?? b.paymentReference,
+        ...(b.status === "pending_payment" ? { status: "confirmed" } : {}),
+      });
+      if (!updated) return res.status(404).json({ error: "Booking not found" });
+      const room = await storage.getRoom(updated.roomId);
+      const balance = updated.totalAmount - updated.amountPaid - (updated.creditedAmount ?? 0);
+      const doc = await issueDocument(storage, {
+        docType: "receipt", category: "accommodation", sourceId: updated.id,
+        recipientName: updated.guestName, recipientEmail: updated.guestEmail, issueDate: formatDate(),
+        lineItems: [{ label: `${room?.name ?? "Room"} \u2014 payment received`, amount: c.amount }],
+        totalAmount: updated.totalAmount, amountPaid: updated.amountPaid, balance: updated.totalAmount - updated.amountPaid,
+        paymentAmount: c.amount, paymentMethod: c.method, paymentReference: c.reference,
+      });
+      if (updated.guestPhone) void sendSms({ settings: await storage.getSettings(), to: updated.guestPhone, message: paidSms(updated.guestName, "room booking", c.amount, c.reference, balance) }).catch(() => {});
+      res.json({ ok: true, amount: c.amount, balance, status: updated.status, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
+    } catch (err) { handleZodError(res, err); }
+    finally { if (lock) inFlight.delete(lock); }
+  });
+
+  app.post("/api/facility-bookings/:id/record-payment", requireModule("facilities"), async (req, res) => {
+    let lock: string | null = null;
+    try {
+      const b = await storage.getFacilityBooking(Number(req.params.id));
+      if (!b) return res.status(404).json({ error: "Booking not found" });
+      if (b.status === "cancelled") return res.status(409).json({ error: "This booking is cancelled." });
+      const due = b.totalAmount - b.amountPaid - (b.creditedAmount ?? 0);
+      const c = await checkRecordPayment(req.body, due);
+      if ("error" in c) return res.status(c.status ?? 400).json({ error: c.error });
+      lock = c.lock;
+      const updated = await storage.updateFacilityBooking(b.id, {
+        amountPaid: b.amountPaid + c.amount, paymentMethod: c.method, paymentReference: c.reference ?? b.paymentReference,
+        ...(b.status === "pending_payment" ? { status: "confirmed" } : {}),
+      });
+      if (!updated) return res.status(404).json({ error: "Booking not found" });
+      const facility = await storage.getFacility(updated.facilityId);
+      const balance = updated.totalAmount - updated.amountPaid - (updated.creditedAmount ?? 0);
+      const doc = await issueDocument(storage, {
+        docType: "receipt", category: "facility", sourceId: updated.id,
+        recipientName: updated.clientName, recipientEmail: updated.clientEmail, issueDate: formatDate(),
+        lineItems: [{ label: `${facility?.name ?? "Facility"} \u2014 payment received`, amount: c.amount }],
+        totalAmount: updated.totalAmount, amountPaid: updated.amountPaid, balance: updated.totalAmount - updated.amountPaid,
+        paymentAmount: c.amount, paymentMethod: c.method, paymentReference: c.reference,
+      });
+      if (updated.clientPhone) void sendSms({ settings: await storage.getSettings(), to: updated.clientPhone, message: paidSms(updated.clientName, `${facility?.name ?? "booking"} booking`, c.amount, c.reference, balance) }).catch(() => {});
+      res.json({ ok: true, amount: c.amount, balance, status: updated.status, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
+    } catch (err) { handleZodError(res, err); }
+    finally { if (lock) inFlight.delete(lock); }
+  });
+
   // "Record payment" button: receive money against a seat booking (all seats bought together
   // share one bookingRef and get ONE receipt). Never changes the booking status.
   app.post("/api/movie-seat-bookings/:id/record-payment", requireModule("movie-room"), requireCanEditMovieBookings, async (req, res) => {
@@ -1041,25 +1135,14 @@ export async function registerRoutes(
     try {
       const b = await storage.getMovieSeatBooking(Number(req.params.id));
       if (!b) return res.status(404).json({ error: "Booking not found" });
-      const group = (await storage.listMovieSeatBookings()).filter((x) => x.bookingRef === b.bookingRef && x.status !== "cancelled").sort((x, y) => x.id - y.id);
+      // Optional seatIds narrows the payment to some seats of the purchase (e.g. one of two shows).
+      const only = Array.isArray(req.body?.seatIds) ? new Set((req.body.seatIds as unknown[]).map(Number)) : null;
+      const group = (await storage.listMovieSeatBookings()).filter((x) => x.bookingRef === b.bookingRef && x.status !== "cancelled" && (!only || only.has(x.id))).sort((x, y) => x.id - y.id);
       const due = group.reduce((t, x) => t + Math.max(0, x.ticketPrice - x.amountPaid), 0);
-      const amount = Math.round(Number(req.body?.amount) * 100) / 100;
-      const method = String(req.body?.paymentMethod ?? "").trim();
-      const reference = String(req.body?.paymentReference ?? "").trim() || null;
-      if (!(due > 0.004)) return res.status(409).json({ error: "This booking is already fully paid." });
-      if (!(amount > 0)) return res.status(400).json({ error: "Enter the amount received." });
-      if (amount > due + 0.5) return res.status(400).json({ error: `That is more than the balance of KES ${Math.round(due).toLocaleString("en-KE")}.` });
-      if (!["cash", "mpesa", "card", "bank_transfer"].includes(method)) return res.status(400).json({ error: "Choose how the guest paid." });
-      if (method === "mpesa" && !reference) return res.status(400).json({ error: "Enter the M-Pesa code." });
-      if (reference) {
-        const key = normalizeRef(reference);
-        if (isRealRef(key)) {
-          if (inFlight.has(key)) return res.status(409).json({ error: duplicateRefMessage(reference, "another payment being saved right now") });
-          const used = await findReferenceUse(reference, { movieBookingRef: b.bookingRef });
-          if (used) return res.status(409).json({ error: duplicateRefMessage(reference, used) });
-          lock = key; inFlight.add(key);
-        }
-      }
+      const c = await checkRecordPayment(req.body, due, { targetRef: b.bookingRef, movieBookingRef: b.bookingRef });
+      if ("error" in c) return res.status(c.status ?? 400).json({ error: c.error });
+      lock = c.lock;
+      const { amount, method, reference } = c;
       let left = amount;
       const paidLines: { label: string; detail?: string; amount: number }[] = [];
       let last = b;
