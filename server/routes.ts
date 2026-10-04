@@ -1,4 +1,4 @@
-import { paymentReferenceGuard } from "./payment-refs";
+import { paymentReferenceGuard, normalizeRef, isRealRef, inFlight, duplicateRefMessage, findReferenceUse } from "./payment-refs";
 import { registerPublicBookingRoutes, registerOnlineBookingStaffRoutes, hasPendingBillPayment } from "./public-booking";
 import type { Express } from "express";
 import { z } from "zod";
@@ -1032,6 +1032,65 @@ export async function registerRoutes(
       }
       res.json({ ...updated, _document: docResult });
     } catch (err) { handleZodError(res, err); }
+  });
+
+  // "Record payment" button: receive money against a seat booking (all seats bought together
+  // share one bookingRef and get ONE receipt). Never changes the booking status.
+  app.post("/api/movie-seat-bookings/:id/record-payment", requireModule("movie-room"), requireCanEditMovieBookings, async (req, res) => {
+    let lock: string | null = null;
+    try {
+      const b = await storage.getMovieSeatBooking(Number(req.params.id));
+      if (!b) return res.status(404).json({ error: "Booking not found" });
+      const group = (await storage.listMovieSeatBookings()).filter((x) => x.bookingRef === b.bookingRef && x.status !== "cancelled").sort((x, y) => x.id - y.id);
+      const due = group.reduce((t, x) => t + Math.max(0, x.ticketPrice - x.amountPaid), 0);
+      const amount = Math.round(Number(req.body?.amount) * 100) / 100;
+      const method = String(req.body?.paymentMethod ?? "").trim();
+      const reference = String(req.body?.paymentReference ?? "").trim() || null;
+      if (!(due > 0.004)) return res.status(409).json({ error: "This booking is already fully paid." });
+      if (!(amount > 0)) return res.status(400).json({ error: "Enter the amount received." });
+      if (amount > due + 0.5) return res.status(400).json({ error: `That is more than the balance of KES ${Math.round(due).toLocaleString("en-KE")}.` });
+      if (!["cash", "mpesa", "card", "bank_transfer"].includes(method)) return res.status(400).json({ error: "Choose how the guest paid." });
+      if (method === "mpesa" && !reference) return res.status(400).json({ error: "Enter the M-Pesa code." });
+      if (reference) {
+        const key = normalizeRef(reference);
+        if (isRealRef(key)) {
+          if (inFlight.has(key)) return res.status(409).json({ error: duplicateRefMessage(reference, "another payment being saved right now") });
+          const used = await findReferenceUse(reference, { movieBookingRef: b.bookingRef });
+          if (used) return res.status(409).json({ error: duplicateRefMessage(reference, used) });
+          lock = key; inFlight.add(key);
+        }
+      }
+      let left = amount;
+      const paidLines: { label: string; detail?: string; amount: number }[] = [];
+      let last = b;
+      for (const x of group) {
+        const owe = Math.max(0, x.ticketPrice - x.amountPaid);
+        if (owe <= 0 || left <= 0) continue;
+        const part = Math.min(owe, left);
+        left = Math.round((left - part) * 100) / 100;
+        const u = await storage.updateMovieSeatBooking(x.id, { amountPaid: x.amountPaid + part, paymentMethod: method, paymentReference: reference ?? x.paymentReference });
+        if (u) last = u;
+        const show = await storage.getMovieShow(x.showId);
+        paidLines.push({ label: `${show?.name ?? "Movie Room"} \u2014 Seat ${x.seatRow}${x.seatNumber} \u2014 payment received`, detail: show ? `${show.showDate} ${show.startTime}${show.endTime ? `-${show.endTime}` : ""}` : undefined, amount: part });
+      }
+      const after = (await storage.listMovieSeatBookings()).filter((x) => x.bookingRef === b.bookingRef && x.status !== "cancelled");
+      const total = after.reduce((t, x) => t + x.ticketPrice, 0);
+      const paid = after.reduce((t, x) => t + x.amountPaid, 0);
+      const primary = after.sort((x, y) => x.id - y.id)[0] ?? last;
+      const doc = await issueDocument(storage, {
+        docType: "receipt", category: "movie", sourceId: primary.id,
+        recipientName: primary.guestName, recipientEmail: primary.guestEmail, issueDate: formatDate(),
+        lineItems: paidLines, totalAmount: total, amountPaid: paid, balance: total - paid,
+        paymentAmount: amount, paymentMethod: method, paymentReference: reference,
+      });
+      if (primary.guestPhone) {
+        const bal = total - paid;
+        const msg = `Hi ${primary.guestName}, payment received for your Movie Room booking at The Chekata: KES ${amount.toLocaleString("en-KE")}${reference ? ` (${reference})` : ""}. ${bal > 0.5 ? `Balance: KES ${Math.round(bal).toLocaleString("en-KE")}.` : "Paid in full."} Thank you!`;
+        void sendSms({ settings: await storage.getSettings(), to: primary.guestPhone, message: msg }).catch(() => {});
+      }
+      res.json({ ok: true, amount, balance: total - paid, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
+    } catch (err) { handleZodError(res, err); }
+    finally { if (lock) inFlight.delete(lock); }
   });
 
   app.delete("/api/movie-seat-bookings/:id", requireModule("movie-room"), requireCanEditMovieBookings, async (req, res) => {

@@ -3,7 +3,9 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Pencil, Trash2, Clapperboard, Armchair, MessageCircle, Ticket, CalendarCheck, Undo2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Clapperboard, Armchair, MessageCircle, Ticket, CalendarCheck, Undo2, Banknote } from "lucide-react";
+import { MpesaPaste } from "@/components/public-booking-parts";
+import { parseMpesaMessage } from "@shared/mpesa";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -482,6 +484,74 @@ const editBookingSchema = z.object({
   notes: z.string().optional().nullable(),
 });
 
+// "Record payment" — receive money for a seat booking (all seats bought together) without
+// opening the edit form or touching the booking status. One receipt is issued for the payment.
+function RecordPaymentDialog({ booking, due, seats, showName }: { booking: MovieSeatBooking; due: number; seats: string; showName: string }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState(String(Math.round(due)));
+  const [method, setMethod] = useState("");
+  const [reference, setReference] = useState("");
+  const [sms, setSms] = useState("");
+  useEffect(() => { if (open) { setAmount(String(Math.round(due))); setMethod(""); setReference(""); setSms(""); } }, [open, due]);
+  const amt = Number(amount);
+  const valid = amt > 0 && amt <= due + 0.5 && !!method && (method !== "mpesa" || reference.trim().length > 0);
+  const save = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/movie-seat-bookings/${booking.id}/record-payment`, { amount: amt, paymentMethod: method, paymentReference: reference.trim() || null })).json(),
+    onSuccess: (r: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/movie-seat-bookings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/director/summary"] });
+      toast({ title: "Payment recorded — receipt issued", description: r.balance > 0.5 ? `Balance still due: ${formatKES(r.balance)}` : "Paid in full." });
+      setOpen(false);
+    },
+    onError: (e: any) => toast({ title: "Couldn't record the payment", description: e?.message, variant: "destructive" }),
+  });
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" data-testid={`button-record-payment-${booking.id}`}><Banknote className="h-4 w-4 mr-1" /> Record payment</Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Record payment</DialogTitle></DialogHeader>
+        <div className="rounded-md bg-muted p-3 text-sm space-y-0.5">
+          <div className="font-medium">{booking.guestName}</div>
+          <div className="text-muted-foreground">{showName} · Seat{seats.includes(",") ? "s" : ""} {seats}</div>
+          <div className="flex justify-between pt-1"><span className="text-muted-foreground">Balance due</span><span className="font-semibold tabular-nums" data-testid="text-record-payment-due">{formatKES(due)}</span></div>
+        </div>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="rp-amount">Amount received (KES)</Label>
+            <Input id="rp-amount" type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-record-payment-amount" />
+            {amt > due + 0.5 && <p className="text-xs text-destructive">More than the balance due.</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label>Payment method</Label>
+            <Select value={method} onValueChange={setMethod}>
+              <SelectTrigger data-testid="select-record-payment-method"><SelectValue placeholder="How did the guest pay?" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cash">Cash</SelectItem>
+                <SelectItem value="mpesa">M-Pesa</SelectItem>
+                <SelectItem value="card">Card</SelectItem>
+                <SelectItem value="bank_transfer">Bank transfer</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {method === "mpesa" && <MpesaPaste staff value={sms} onChange={(v) => { setSms(v); const p = parseMpesaMessage(v); if (p.code) setReference(p.code); if (p.amount && !sms) setAmount(String(Math.min(p.amount, Math.round(due)))); }} amountDue={amt || due} />}
+          <div className="space-y-1.5">
+            <Label htmlFor="rp-ref">{method === "mpesa" ? "M-Pesa code" : "Payment reference (optional)"}</Label>
+            <Input id="rp-ref" value={reference} onChange={(e) => setReference(e.target.value.toUpperCase())} placeholder={method === "mpesa" ? "e.g. SJR7AB12CD" : "Slip #, bank ref…"} data-testid="input-record-payment-reference" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button disabled={!valid || save.isPending} onClick={() => save.mutate()} data-testid="button-confirm-record-payment">{save.isPending ? "Saving…" : `Confirm payment${amt > 0 ? ` of ${formatKES(amt)}` : ""}`}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function EditBookingDialog({ booking, show, trigger }: { booking: MovieSeatBooking; show?: MovieShow; trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
@@ -647,6 +717,12 @@ export default function MovieRoom() {
   const filteredBookings = bookingsShowFilter === "all"
     ? sortedBookings
     : sortedBookings.filter((b) => String(b.showId) === bookingsShowFilter);
+  // One "Record payment" button per transaction (bookingRef): on the first visible, non-cancelled
+  // seat of a group that still has a balance.
+  const groupDue = new Map<string, number>();
+  for (const b of bookings) if (b.status !== "cancelled") groupDue.set(b.bookingRef, (groupDue.get(b.bookingRef) ?? 0) + Math.max(0, b.ticketPrice - b.amountPaid));
+  const payRowId = new Map<string, number>();
+  for (const b of filteredBookings) if (b.status !== "cancelled" && (groupDue.get(b.bookingRef) ?? 0) > 0.5 && !payRowId.has(b.bookingRef)) payRowId.set(b.bookingRef, b.id);
 
   // Invoices/credit notes are issued once per multi-seat group (bookingRef), tracked on the
   // lowest-id "primary" seat — mirrors the grouping logic in the credit-note backend route.
@@ -744,6 +820,10 @@ export default function MovieRoom() {
                           <TableCell><Badge variant={bookingStatusVariant[b.status] ?? "secondary"}>{titleCase(b.status)}</Badge></TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-1">
+                              {canEdit && b.status !== "cancelled" && payRowId.get(b.bookingRef) === b.id && (
+                                <RecordPaymentDialog booking={b} due={groupDue.get(b.bookingRef) ?? 0} showName={show?.name ?? "Movie Room"}
+                                  seats={group.filter((x) => x.status !== "cancelled").map((x) => `${x.seatRow}${x.seatNumber}`).join(", ")} />
+                              )}
                               {canEdit && (
                                 <>
                                   <EditBookingDialog booking={b} show={show} trigger={
