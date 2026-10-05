@@ -1,3 +1,4 @@
+import { postReceiptToFinance, receivedOn } from "./receipt-posting";
 import { paymentReferenceGuard, normalizeRef, isRealRef, inFlight, duplicateRefMessage, findReferenceUse } from "./payment-refs";
 import { registerPublicBookingRoutes, registerOnlineBookingStaffRoutes, hasPendingBillPayment } from "./public-booking";
 import type { Express } from "express";
@@ -40,7 +41,7 @@ import { buildDocumentPdf, buildMaintenanceReportPdf, buildPayslipPdf } from "./
 import { emailPayslipsForRun } from "./payroll-pdf-email";
 import { sendTransactionalEmail } from "./email";
 import { notifyApproversOfSubmission, notifyRequesterOfDecision, buildOriginFromRequest } from "./approvals";
-import { registerDirectorRoutes, notifyModuleUsers, kesText } from "./director";
+import { registerDirectorRoutes, notifyModuleUsers, kesText, hotelToday } from "./director";
 import { registerPushRoutes } from "./push";
 import { registerDailyReportRoutes, registerPublicDailyReportRoute } from "./daily-report";
 import ExcelJS from "exceljs";
@@ -1673,6 +1674,40 @@ export async function registerRoutes(
   });
 
   // ---------- Bank Accounts ----------
+  // ---- Receipts → Finance: review and catch-up posting (Settings → Receipts to Finance) ----
+  app.get("/api/finance/receipt-posting/pending", requireModule("finance"), async (req, res) => {
+    try {
+      const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from)) ? String(req.query.from) : hotelToday();
+      const fromMs = Date.parse(`${from}T00:00:00+03:00`);
+      const rows = await sql`SELECT d.id, d.doc_type, d.category, d.source_id, d.recipient_name, d.amount, d.payload_json, d.created_at
+        FROM documents d WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs}
+          AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.source_module = 'receipts' AND je.source_id = d.id AND je.status = 'posted')
+        ORDER BY d.created_at` as any[];
+      const out = rows.map((r) => ({ id: r.id, docType: r.doc_type, category: r.category, recipientName: r.recipient_name, createdAt: Number(r.created_at), ...receivedOn({ docType: r.doc_type, amount: Number(r.amount), payloadJson: r.payload_json }) }))
+        .filter((r) => r.amount > 0);
+      res.json({ from, count: out.length, total: out.reduce((t, r) => t + r.amount, 0), items: out });
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed" }); }
+  });
+  app.post("/api/finance/receipt-posting/post", requireModule("finance"), requireAdminUsername, async (req, res) => {
+    try {
+      const from = String(req.body?.from ?? "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return res.status(400).json({ error: "Choose the date to post from." });
+      const fromMs = Date.parse(`${from}T00:00:00+03:00`);
+      const rows = await sql`SELECT id, doc_type, category, source_id, recipient_name, payload_json, created_at FROM documents
+        WHERE doc_type IN ('receipt','invoice') AND created_at >= ${fromMs} ORDER BY created_at` as any[];
+      const by = (req as any).user?.fullName ?? "admin";
+      let posted = 0, amount = 0; const failed: { id: number; reason: string }[] = [];
+      for (const r of rows) {
+        const doc = { id: r.id, docType: r.doc_type, category: r.category, sourceId: r.source_id, recipientName: r.recipient_name, payloadJson: r.payload_json, createdAt: Number(r.created_at) };
+        const result = await postReceiptToFinance(storage, doc, { force: true, by });
+        if (result.status === "posted") { posted++; amount += receivedOn(doc).amount; }
+        else if (result.status === "failed") failed.push({ id: r.id, reason: result.reason ?? "Failed" });
+        else if (result.reason === "Receipt posting is off") return res.status(409).json({ error: "Turn on receipt posting and save first." });
+      }
+      res.json({ posted, amount, failed });
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed" }); }
+  });
+
   app.get("/api/finance/bank-accounts", requireModule("finance"), async (_req, res) => {
     res.json(await storage.listBankAccounts());
   });

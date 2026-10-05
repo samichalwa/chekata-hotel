@@ -209,7 +209,7 @@ export function buildDailyReportPdf(settings: Settings, s: Summary): Promise<Buf
         const rows = c.methods.map((m) => [m.label, String(m.todayCount || "—"), kes(m.today), kes(m.yesterday), kes(m.mtd)]);
         rows.push(["Total received", "", kes(c.totalToday), kes(c.totalYesterday), kes(c.totalMtd)]);
         table([["Money received by method", W * 0.34, "left"], ["Txns", W * 0.1, "right"], ["Today", W * 0.19, "right"], ["Yesterday", W * 0.18, "right"], ["Month to date", W * 0.19, "right"]], rows, { totalRow: true });
-        doc.fillColor(muted).font("Helvetica").fontSize(8).text("From receipts issued (payment date). Cash = cash drawer; M-Pesa = Paybill/Till; Card and Bank transfer = bank account.", L, y - 6, { width: W });
+        doc.fillColor(muted).font("Helvetica").fontSize(8).text("From receipts issued (payment date), showing where each payment landed.", L, y - 6, { width: W });
         y += 10;
       }
       if (s.cash) {

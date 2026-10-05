@@ -23,6 +23,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import type { Settings, Tax, SafeUser, ModuleKey, Staff } from "@shared/schema";
 import { MODULE_KEYS, MODULE_LABELS, MODULE_CATEGORY_GROUPS } from "@shared/schema";
 import { DailyReportSettingsTab } from "@/components/daily-report-settings";
+import { ReceiptPostingSettingsTab } from "@/components/receipt-posting-settings";
 import { OnlineBookingSettingsTab } from "@/components/online-booking-settings";
 import { CompanyInfoSettingsTab } from "@/components/company-info-settings";
 
@@ -959,6 +960,7 @@ export default function SettingsPage() {
           <TabsTrigger value="company" data-testid="tab-company-info"><Landmark className="h-4 w-4 mr-1" /> Company info</TabsTrigger>
           <TabsTrigger value="taxes" data-testid="tab-taxes"><Percent className="h-4 w-4 mr-1" /> Taxes</TabsTrigger>
           {currentUser?.isAdmin && <TabsTrigger value="daily-report" data-testid="tab-daily-report"><FileBarChart className="h-4 w-4 mr-1" /> Daily report</TabsTrigger>}
+          {currentUser?.isAdmin && <TabsTrigger value="receipt-posting" data-testid="tab-receipt-posting"><Landmark className="h-4 w-4 mr-1" /> Receipts to Finance</TabsTrigger>}
           {currentUser?.isAdmin && <TabsTrigger value="online-booking" data-testid="tab-online-booking"><Globe className="h-4 w-4 mr-1" /> Online booking</TabsTrigger>}
           {currentUser?.isAdmin && <TabsTrigger value="users" data-testid="tab-users"><KeyRound className="h-4 w-4 mr-1" /> Users &amp; Access</TabsTrigger>}
         </TabsList>
@@ -975,6 +977,9 @@ export default function SettingsPage() {
           <TabsContent value="daily-report" className="pt-4">
             <DailyReportSettingsTab />
           </TabsContent>
+        )}
+        {currentUser?.isAdmin && (
+          <TabsContent value="receipt-posting" className="pt-4"><ReceiptPostingSettingsTab /></TabsContent>
         )}
         {currentUser?.isAdmin && (
           <TabsContent value="online-booking" className="pt-4">

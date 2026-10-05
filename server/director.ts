@@ -9,6 +9,8 @@
 // module they haven't been granted.
 import type { Express, Request } from "express";
 import { sql, storage } from "./storage";
+import { parseReceiptPosting } from "@shared/receipt-posting";
+import { receivedOn } from "./receipt-posting";
 import { parsePermissions } from "./auth";
 import type { ModuleKey } from "@shared/schema";
 import { sendPushToUsers } from "./push";
@@ -402,7 +404,9 @@ export async function buildDirectorSummary(user: any, date?: string) {
     const rows = await sql`SELECT doc_type, amount, payload_json, created_at FROM documents
       WHERE doc_type IN ('receipt','invoice') AND category IN ${sql(cats)}
         AND created_at >= ${Math.min(mStart, yStart)} AND created_at < ${end}` as any[];
-    const LABEL: Record<string, string> = { cash: "Cash", mpesa: "M-Pesa", card: "Card", bank_transfer: "Bank transfer", other: "Not recorded" };
+    const st = await storage.getSettings();
+    const mpesaLabel = st.mpesaPaymentType === "paybill" ? "M-Pesa Paybill (to bank)" : st.mpesaPaymentType === "phone" ? "M-Pesa (phone)" : "M-Pesa Till";
+    const LABEL: Record<string, string> = { cash: "Cash (drawer)", mpesa: mpesaLabel, card: "Card (to bank)", bank_transfer: "Bank transfer", other: "Method not recorded" };
     const agg = new Map<string, { today: number; todayCount: number; yesterday: number; mtd: number }>();
     for (const r of rows) {
       let p: any = {};
@@ -426,6 +430,19 @@ export async function buildDirectorSummary(user: any, date?: string) {
       totalYesterday: methods.reduce((t, x) => t + x.yesterday, 0),
       totalMtd: methods.reduce((t, x) => t + x.mtd, 0),
     };
+  }
+
+  // Receipts → Finance: flag payments that should have posted but didn't (closed period, missing account…).
+  if (can("finance")) {
+    const cfg = parseReceiptPosting((await storage.getSettings() as any).receiptPosting);
+    if (cfg.enabled) {
+      const fromMs = Date.parse(`${cfg.startDate || today}T00:00:00+03:00`);
+      const rows = await sql`SELECT d.doc_type, d.amount, d.payload_json FROM documents d
+        WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs}
+          AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.source_module = 'receipts' AND je.source_id = d.id AND je.status = 'posted')` as any[];
+      const unposted = rows.map((r) => receivedOn({ docType: r.doc_type, amount: n(r.amount), payloadJson: r.payload_json }).amount).filter((a) => a > 0);
+      if (unposted.length) alerts.push({ id: "receipts-unposted", severity: "warning", title: `${unposted.length} receipt${unposted.length === 1 ? "" : "s"} not posted to Finance`, detail: `${kesText(unposted.reduce((t, a) => t + a, 0))} — check the accounting period is open and accounts are chosen in Settings → Receipts to Finance.`, link: "/settings" });
+    }
   }
 
   const rank = { critical: 0, warning: 1, info: 2 } as const;

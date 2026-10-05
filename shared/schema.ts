@@ -510,6 +510,8 @@ export const settings = pgTable("settings", {
   mpesaAccountNumber: text("mpesa_account_number"), // paybill account (blank = use the booking reference)
   mpesaBusinessName: text("mpesa_business_name"), // name as it appears on the guest's M-Pesa message
   mpesaMessageMaxAgeHours: integer("mpesa_message_max_age_hours").notNull().default(24),
+  // Receipts → Finance auto-posting (JSON, see shared/receipt-posting.ts). Null/disabled = off.
+  receiptPosting: text("receipt_posting"),
   publicTableDeposit: real("public_table_deposit").notNull().default(1000), // KES per reservation, credited to the bill
   publicTableMaxParty: integer("public_table_max_party").notNull().default(12),
   publicTableOpenTime: text("public_table_open_time").notNull().default("07:00"),

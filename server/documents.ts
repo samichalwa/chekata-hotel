@@ -1,3 +1,4 @@
+import { postReceiptToFinance } from "./receipt-posting";
 import { randomBytes } from "node:crypto";
 import type { IStorage } from "./storage";
 import { buildDocumentPdf, type DocLineItem } from "./pdf";
@@ -41,6 +42,18 @@ export interface IssueDocumentInput {
 // Generates a PDF, attempts to email it, and always logs the outcome to the
 // documents table so it shows up in the Invoices & Receipts page.
 export async function issueDocument(storage: IStorage, input: IssueDocumentInput): Promise<DocumentRecord> {
+  const doc = await issueDocumentCore(storage, input);
+  // Receipts → Finance (Settings). Never blocks or fails the receipt itself.
+  if (doc && (input.docType === "receipt" || input.docType === "invoice")) {
+    try {
+      const r = await postReceiptToFinance(storage, doc as any);
+      if (r.status === "failed") console.warn(`[receipt-posting] document ${doc.id}: ${r.reason}`);
+    } catch (e: any) { console.warn(`[receipt-posting] document ${doc.id}: ${e?.message ?? e}`); }
+  }
+  return doc;
+}
+
+async function issueDocumentCore(storage: IStorage, input: IssueDocumentInput): Promise<DocumentRecord> {
   const settings = await storage.getSettings();
 
   // Compute the tax breakdown once up front and bake it into the stored
