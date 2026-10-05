@@ -66,7 +66,16 @@ export function dailyReportText(s: Summary, hotelName: string): string {
     if (st.today > 0) lines.push(`• ${st.label}: ${kes(st.today)}`);
   }
   if (s.rooms) lines.push(`Occupancy ${s.rooms.occupancyPct}% (${s.rooms.inHouse}/${s.rooms.total}) · ${s.rooms.arrivals} arrivals · ${s.rooms.departures} departures`);
-  if (s.cash) lines.push(`Cash & bank: ${kes(s.cash.total)}`);
+  if (s.collections) {
+    const c = s.collections;
+    const split = (f: "today" | "yesterday") => c.methods.filter((m) => m[f] > 0).map((m) => `${m.label} ${kes(m[f])}`).join(", ");
+    lines.push(`Money received today: ${kes(c.totalToday)}${c.totalToday > 0 ? ` (${split("today")})` : ""}`);
+    if (c.totalYesterday > 0) lines.push(`Received yesterday: ${kes(c.totalYesterday)} (${split("yesterday")})`);
+  }
+  if (s.cash) {
+    lines.push(`Cash & bank (Finance ledger): ${kes(s.cash.total)}`);
+    for (const a of s.cash.accounts) lines.push(`• ${a.name}: ${kes(a.balance)}`);
+  }
   if (s.expenses) lines.push(`Expenses today: ${kes(s.expenses.today)}`);
   if (s.approvals.total > 0) lines.push(`Awaiting approval: ${s.approvals.total}`);
   const urgent = s.alerts.filter((a) => a.severity !== "info").length;
@@ -195,10 +204,20 @@ export function buildDailyReportPdf(settings: Settings, s: Summary): Promise<Buf
     // ---- Money position ----
     if (s.cash || s.receivables.length || s.expenses || s.budget) {
       heading("Money position");
+      if (s.collections && s.collections.methods.length) {
+        const c = s.collections;
+        const rows = c.methods.map((m) => [m.label, String(m.todayCount || "—"), kes(m.today), kes(m.yesterday), kes(m.mtd)]);
+        rows.push(["Total received", "", kes(c.totalToday), kes(c.totalYesterday), kes(c.totalMtd)]);
+        table([["Money received by method", W * 0.34, "left"], ["Txns", W * 0.1, "right"], ["Today", W * 0.19, "right"], ["Yesterday", W * 0.18, "right"], ["Month to date", W * 0.19, "right"]], rows, { totalRow: true });
+        doc.fillColor(muted).font("Helvetica").fontSize(8).text("From receipts issued (payment date). Cash = cash drawer; M-Pesa = Paybill/Till; Card and Bank transfer = bank account.", L, y - 6, { width: W });
+        y += 10;
+      }
       if (s.cash) {
         const rows = s.cash.accounts.map((a) => [a.name, kes(a.balance)]);
         rows.push(["Total cash & bank", kes(s.cash.total)]);
-        table([["Account", W * 0.62, "left"], ["Balance", W * 0.38, "right"]], rows, { totalRow: true });
+        table([["Cash & bank account (Finance ledger)", W * 0.62, "left"], ["Balance", W * 0.38, "right"]], rows, { totalRow: true });
+        doc.fillColor(muted).font("Helvetica").fontSize(8).text("Balances from entries posted in Finance; receipts above appear here once banked/posted in Finance.", L, y - 6, { width: W });
+        y += 10;
       }
       if (s.receivables.length) {
         const rows = s.receivables.map((r) => [r.label, String(r.count), kes(r.amount)]);

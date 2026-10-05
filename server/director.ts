@@ -382,6 +382,52 @@ export async function buildDirectorSummary(user: any, date?: string) {
   if (people && people.onLeaveToday > 0) {
     alerts.push({ id: "leave-today", severity: "info", title: `${people.onLeaveToday} staff on leave today`, detail: people.names.slice(0, 4).join(", ") + (people.names.length > 4 ? "…" : ""), link: "/leave" });
   }
+  // ---- Money received, by where it went (cash drawer, M-Pesa, card, bank) ----
+  // Read from the receipts/invoices actually issued: receipts carry the payment amount and method,
+  // and an invoice issued with a payment already on it (paid at booking) carries its amountPaid.
+  const CAT_MODULE: Record<string, ModuleKey> = {
+    accommodation: "accommodation", facility: "facilities", movie: "movie-room", bar: "bar-restaurant",
+    restaurant: "bar-restaurant", water: "water-sales", tenancy: "tenants",
+  };
+  const cats = Object.keys(CAT_MODULE).filter((c) => can(CAT_MODULE[c]));
+  let collections: null | {
+    methods: { key: string; label: string; today: number; todayCount: number; yesterday: number; mtd: number }[];
+    totalToday: number; totalYesterday: number; totalMtd: number;
+  } = null;
+  if (cats.length) {
+    const dayStart = Date.parse(`${today}T00:00:00+03:00`);
+    const yStart = dayStart - 86_400_000;
+    const mStart = Date.parse(`${monthStart}T00:00:00+03:00`);
+    const end = dayStart + 86_400_000;
+    const rows = await sql`SELECT doc_type, amount, payload_json, created_at FROM documents
+      WHERE doc_type IN ('receipt','invoice') AND category IN ${sql(cats)}
+        AND created_at >= ${Math.min(mStart, yStart)} AND created_at < ${end}` as any[];
+    const LABEL: Record<string, string> = { cash: "Cash", mpesa: "M-Pesa", card: "Card", bank_transfer: "Bank transfer", other: "Not recorded" };
+    const agg = new Map<string, { today: number; todayCount: number; yesterday: number; mtd: number }>();
+    for (const r of rows) {
+      let p: any = {};
+      try { p = JSON.parse(r.payload_json || "{}"); } catch { /* old row */ }
+      const amt = r.doc_type === "receipt" ? n(p.paymentAmount ?? r.amount) : n(p.amountPaid);
+      if (!(amt > 0)) continue;
+      const m = String(p.paymentMethod || "").toLowerCase().replace(/[\s-]+/g, "_");
+      const key = m === "m_pesa" ? "mpesa" : m === "bank" ? "bank_transfer" : (LABEL[m] ? m : "other");
+      const a = agg.get(key) ?? { today: 0, todayCount: 0, yesterday: 0, mtd: 0 };
+      const at = n(r.created_at);
+      if (at >= dayStart) { a.today += amt; a.todayCount += 1; }
+      else if (at >= yStart) a.yesterday += amt;
+      if (at >= mStart) a.mtd += amt;
+      agg.set(key, a);
+    }
+    const order = ["cash", "mpesa", "card", "bank_transfer", "other"];
+    const methods = order.filter((k) => agg.has(k)).map((k) => ({ key: k, label: LABEL[k], ...agg.get(k)! }));
+    collections = {
+      methods,
+      totalToday: methods.reduce((t, x) => t + x.today, 0),
+      totalYesterday: methods.reduce((t, x) => t + x.yesterday, 0),
+      totalMtd: methods.reduce((t, x) => t + x.mtd, 0),
+    };
+  }
+
   const rank = { critical: 0, warning: 1, info: 2 } as const;
   alerts.sort((a, b) => rank[a.severity] - rank[b.severity]);
 
@@ -395,6 +441,7 @@ export async function buildDirectorSummary(user: any, date?: string) {
     shows,
     movie,
     cash,
+    collections,
     receivables,
     expenses,
     budget,

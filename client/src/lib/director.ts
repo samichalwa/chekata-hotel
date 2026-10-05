@@ -25,6 +25,7 @@ export interface DirectorSummary {
   shows: MovieShowSummary[];
   movie?: null | { bookedToday: { count: number; amount: number }; unpaid: { count: number; amount: number }; upcoming: MovieShowSummary[]; recent?: MovieRecentBooking[]; totalBookings?: number };
   cash: null | { total: number; accounts: { id: number; name: string; balance: number }[] };
+  collections?: null | { methods: { key: string; label: string; today: number; todayCount: number; yesterday: number; mtd: number }[]; totalToday: number; totalYesterday: number; totalMtd: number };
   receivables: { key: string; label: string; amount: number; count: number; link: string }[];
   expenses: null | { today: number; mtd: number };
   budget: null | { month: string; budgeted: number; actual: number; proRataBudget: number; pctOfBudget: number };

@@ -245,8 +245,16 @@ function ReportBody({ data }: { data: ReportData }) {
         <>
           <Heading>Money position</Heading>
           <div className="space-y-4">
+            {s.collections && s.collections.methods.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-semibold sm:hidden">Money received by method · KES</p>
+                <ReportTable testId="table-daily-collections" total cols={[{ label: "Received by", className: "w-[34%]" }, { label: "Today", align: "right" }, { label: "Yesterday", align: "right" }, { label: "Month to date", align: "right" }]}
+                  rows={[...s.collections.methods.map((m) => [<StreamCell label={m.label} count={m.todayCount} />, <Amt v={m.today} />, <Amt v={m.yesterday} />, <Amt v={m.mtd} />]), [<StreamCell label="Total received" />, <Amt v={s.collections.totalToday} />, <Amt v={s.collections.totalYesterday} />, <Amt v={s.collections.totalMtd} />]]} />
+                <p className="text-[11px] text-muted-foreground">From receipts issued. Cash = cash drawer · M-Pesa = Paybill/Till · Card &amp; Bank transfer = bank account.</p>
+              </div>
+            )}
             {s.cash && (
-              <ReportTable testId="table-daily-cash" total cols={[{ label: "Account", className: "w-[55%]" }, { label: "Balance", align: "right" }]}
+              <ReportTable testId="table-daily-cash" total cols={[{ label: "Cash & bank (Finance ledger)", className: "w-[55%]" }, { label: "Balance", align: "right" }]}
                 rows={[...s.cash.accounts.map((a) => [a.name, kes(a.balance)]), ["Total cash & bank", kes(s.cash.total)]]} />
             )}
             {s.receivables.length > 0 && (
