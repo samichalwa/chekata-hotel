@@ -6,6 +6,8 @@
 //   "SJR7AB12CD Confirmed. Ksh1,000.00 paid to THE CHEKATA. on 27/9/26 at 10:15 AM.New M-PESA balance is Ksh2,340.00. Transaction cost, Ksh0.00."
 //   "SJR7AB12CD Confirmed. Ksh1,000.00 sent to THE CHEKATA for account MOV123 on 27/9/26 at 10:15 AM New M-PESA balance is ..."
 //   "SJR7AB12CD Confirmed. Ksh500.00 sent to JOHN DOE 0712345678 on 27/9/26 at 10:15 AM. New M-PESA balance ..."
+//   Bank-paybill style (sent by the receiving bank to the payer):
+//   "Dear Esther, Your transaction of Ksh. 50.00 to THE CHEKATA HOTEL Account ****9914 has been received with M-Pesa Ref Number UJ5AI9DBBU. 05/10/26 14:27:55."
 // Typical business-side (office) message:
 //   "SJR7AB12CD Confirmed. Ksh1,000.00 received from JANE WANJIKU 254712345678 on 27/9/26 at 10:15 AM ..."
 
@@ -23,10 +25,14 @@ export interface ParsedMpesa {
 
 const CODE_RE = /\b([A-Z0-9]{10})\b(?=\s*(?:Confirmed|confirmed|CONFIRMED))/;
 const CODE_FALLBACK_RE = /^\s*([A-Z0-9]{10})\b/;
+// "M-Pesa Ref Number UJ5AI9DBBU", "Ref No. UJ5AI9DBBU", "Reference: UJ5AI9DBBU", "Transaction ID UJ5AI9DBBU"
+const CODE_REF_RE = /\b(?:REF(?:ERENCE)?|RECEIPT|TRANSACTION\s+ID|TRANS\.?\s+ID)(?:\s+(?:NUMBER|NO\.?|CODE))?\s*[:.#-]?\s*([A-Z0-9]{10})\b/;
 // "Ksh1,000.00", "Ksh 1,000", "Kshs.1,000", "KES 1,000.00"
 const AMOUNT_RE = /(?:Kshs?\.?|KES)\s?([\d,]+(?:\.\d{1,2})?)/i;
 // "on 27/9/26 at 10:15 AM", "on 27-09-2026 at 22:15", "on 27/9/26 at 10:15AM"
 const DATE_RE = /\bon\s+(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\s*(?:at\s*)?(\d{1,2}):(\d{2})\s*([AP]\.?M\.?)?/i;
+// Bank-style "05/10/26 14:27:55" with no "on" in front.
+const DATE_BARE_RE = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*(?:at\s*)?(\d{1,2}):(\d{2})(?::\d{2})?\s*([AP]\.?M\.?)?/i;
 
 export function parseMpesaMessage(raw: string): ParsedMpesa {
   const text = (raw ?? "").replace(/\s+/g, " ").trim();
@@ -37,7 +43,7 @@ export function parseMpesaMessage(raw: string): ParsedMpesa {
   if (!text) return out;
 
   const upper = text.toUpperCase();
-  const codeMatch = upper.match(CODE_RE) ?? upper.match(CODE_FALLBACK_RE);
+  const codeMatch = upper.match(CODE_RE) ?? upper.match(CODE_FALLBACK_RE) ?? upper.match(CODE_REF_RE);
   // A real code mixes letters and digits; reject all-letter words like "CONFIRMED".
   if (codeMatch && /\d/.test(codeMatch[1]) && /[A-Z]/.test(codeMatch[1])) out.code = codeMatch[1];
 
@@ -47,7 +53,7 @@ export function parseMpesaMessage(raw: string): ParsedMpesa {
     if (Number.isFinite(n) && n > 0) out.amount = n;
   }
 
-  const d = text.match(DATE_RE);
+  const d = text.match(DATE_RE) ?? text.match(DATE_BARE_RE);
   if (d) {
     let [, dd, mm, yy, hh, mi, ap] = d;
     let year = Number(yy);
@@ -76,6 +82,15 @@ export function parseMpesaMessage(raw: string): ParsedMpesa {
   const paid = text.match(/(?:paid to|sent to)\s+(.+?)(?:\s+for account\s+(\S+?))?(?:\.|\s)+on\s+\d/i)
     // "You have paid Ksh… to X on …" style
     ?? text.match(/paid\s+(?:Kshs?\.?|KES)\s?[\d,]+(?:\.\d{1,2})?\s+to\s+(.+?)(?:\s+for account\s+(\S+?))?(?:\.|\s)+on\s+\d/i);
+  // Bank-paybill style: "Your transaction of Ksh. 50.00 to THE CHEKATA HOTEL Account ****9914 has been received"
+  const bank = !paid ? text.match(/transaction\s+of\s+(?:Kshs?\.?|KES)\s?[\d,]+(?:\.\d{1,2})?\s+to\s+(.+?)\s+(?:Account|A\/C|Acc(?:t|ount)?\s*No\.?)\s*:?\s*(\S+?)[.,]?\s+(?:has been|was)\s+(?:received|successful|completed)/i) : null;
+  if (bank) {
+    out.direction = "sent";
+    out.recipient = bank[1].replace(/[.,]+$/, "").trim();
+    out.counterpartyName = out.recipient;
+    out.account = bank[2].replace(/[.,]+$/, "");
+    return out;
+  }
   if (paid) {
     out.direction = "sent";
     let who = paid[1].trim();
