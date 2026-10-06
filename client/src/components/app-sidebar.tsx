@@ -20,7 +20,7 @@ import {
   Wrench,
   ClipboardList,
   Wallet,
-  ShieldCheck,
+  ShieldCheck, ListChecks,
   Package,
   ShoppingCart,
   ClipboardCheck,
@@ -82,6 +82,7 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Internal Requisitions", url: "/internal-requisitions", icon: ClipboardCheck, key: "internal-requisitions" },
   { title: "Temporary Labor Requisitions", url: "/temporary-labor-requisitions", icon: UserCog, key: "hr" },
   { title: "System Administration", url: "/system-admin", icon: ShieldCheck, key: "system-admin" },
+  { title: "Integrity Checks", url: "/integrity", icon: ListChecks, key: "integrity" },
   { title: "Settings", url: "/settings", icon: SettingsIcon, key: "settings" },
 ];
 

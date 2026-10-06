@@ -6,7 +6,7 @@ import { sendTransactionalEmail } from "./email";
 import { computeInclusiveTaxBreakdown } from "./tax";
 import type { DocumentRecord, TaxCategory } from "@shared/schema";
 
-const DOC_CATEGORY_TO_TAX_CATEGORY: Record<string, TaxCategory> = {
+export const DOC_CATEGORY_TO_TAX_CATEGORY: Record<string, TaxCategory> = {
   accommodation: "accommodation",
   facility: "facilities",
   bar: "bar",
@@ -32,6 +32,7 @@ export interface IssueDocumentInput {
   paymentMethod?: string | null;
   paymentReference?: string | null;
   notes?: string;
+  resendOf?: number; // set on resent copies so they are never counted or posted twice
   // Credit notes only: the invoice/receipt document being credited, its display number
   // (for the PDF's "Against invoice" line), and the reason given for the credit.
   relatedDocumentId?: number;

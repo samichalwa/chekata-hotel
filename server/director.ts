@@ -10,7 +10,7 @@
 import type { Express, Request } from "express";
 import { sql, storage } from "./storage";
 import { parseReceiptPosting } from "@shared/receipt-posting";
-import { receivedOn } from "./receipt-posting";
+import { receivedOn, ORIGINAL_DOC } from "./receipt-posting";
 import { parsePermissions } from "./auth";
 import type { ModuleKey } from "@shared/schema";
 import { sendPushToUsers } from "./push";
@@ -401,9 +401,9 @@ export async function buildDirectorSummary(user: any, date?: string) {
     const yStart = dayStart - 86_400_000;
     const mStart = Date.parse(`${monthStart}T00:00:00+03:00`);
     const end = dayStart + 86_400_000;
-    const rows = await sql`SELECT doc_type, amount, payload_json, created_at FROM documents
-      WHERE doc_type IN ('receipt','invoice') AND category IN ${sql(cats)}
-        AND created_at >= ${Math.min(mStart, yStart)} AND created_at < ${end}` as any[];
+    const rows = await sql`SELECT d.doc_type, d.amount, d.payload_json, d.created_at FROM documents d
+      WHERE d.doc_type IN ('receipt','invoice') AND d.category IN ${sql(cats)} AND ${ORIGINAL_DOC("d")}
+        AND d.created_at >= ${Math.min(mStart, yStart)} AND d.created_at < ${end}` as any[];
     const st = await storage.getSettings();
     const mpesaLabel = st.mpesaPaymentType === "paybill" ? "M-Pesa Paybill (to bank)" : st.mpesaPaymentType === "phone" ? "M-Pesa (phone)" : "M-Pesa Till";
     const LABEL: Record<string, string> = { cash: "Cash (drawer)", mpesa: mpesaLabel, card: "Card (to bank)", bank_transfer: "Bank transfer", other: "Method not recorded" };
@@ -438,10 +438,20 @@ export async function buildDirectorSummary(user: any, date?: string) {
     if (cfg.enabled) {
       const fromMs = Date.parse(`${cfg.startDate || today}T00:00:00+03:00`);
       const rows = await sql`SELECT d.doc_type, d.amount, d.payload_json FROM documents d
-        WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs}
+        WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs} AND ${ORIGINAL_DOC("d")}
           AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.source_module = 'receipts' AND je.source_id = d.id AND je.status = 'posted')` as any[];
       const unposted = rows.map((r) => receivedOn({ docType: r.doc_type, amount: n(r.amount), payloadJson: r.payload_json }).amount).filter((a) => a > 0);
       if (unposted.length) alerts.push({ id: "receipts-unposted", severity: "warning", title: `${unposted.length} receipt${unposted.length === 1 ? "" : "s"} not posted to Finance`, detail: `${kesText(unposted.reduce((t, a) => t + a, 0))} — check the accounting period is open and accounts are chosen in Settings → Receipts to Finance.`, link: "/settings" });
+    }
+  }
+
+  // Integrity checks: surface the latest failures (daily checks and the monthly tax check).
+  if (can("integrity")) {
+    const runs = await sql`SELECT DISTINCT ON (kind) kind, period, fails, warns FROM integrity_runs ORDER BY kind, id DESC` as any[];
+    for (const r of runs) {
+      if (Number(r.fails) > 0) alerts.push({ id: `integrity-${r.kind}`, severity: r.kind === "daily" ? "critical" : "warning",
+        title: r.kind === "daily" ? `Integrity checks: ${r.fails} failed` : `Tax check ${r.period}: ${r.fails} failed`,
+        detail: `${r.fails} failed, ${r.warns} warning${Number(r.warns) === 1 ? "" : "s"} — open Integrity checks to see each record.`, link: r.kind === "daily" ? "/integrity" : "/integrity" });
     }
   }
 

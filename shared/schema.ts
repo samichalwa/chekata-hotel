@@ -512,6 +512,8 @@ export const settings = pgTable("settings", {
   mpesaMessageMaxAgeHours: integer("mpesa_message_max_age_hours").notNull().default(24),
   // Receipts → Finance auto-posting (JSON, see shared/receipt-posting.ts). Null/disabled = off.
   receiptPosting: text("receipt_posting"),
+  integrityCheckTime: text("integrity_check_time").notNull().default("02:00"), // nightly integrity checks (Nairobi time)
+  integrityTaxDay: integer("integrity_tax_day").notNull().default(1), // day of month the previous month's tax check runs
   publicTableDeposit: real("public_table_deposit").notNull().default(1000), // KES per reservation, credited to the bill
   publicTableMaxParty: integer("public_table_max_party").notNull().default(12),
   publicTableOpenTime: text("public_table_open_time").notNull().default("07:00"),
@@ -604,6 +606,7 @@ export const MODULE_KEYS = [
   "assets",
   "water-sales",
   "hr",
+  "integrity",
 ] as const;
 export type ModuleKey = typeof MODULE_KEYS[number];
 
@@ -634,20 +637,21 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   assets: "Assets",
   "water-sales": "Water Sales",
   hr: "HR: Temporary Labor Requisitions",
+  integrity: "Integrity Checks",
 };
 
 // Cosmetic grouping used both by the Settings > Users module-access checkboxes
 // and by the main sidebar navigation, so the two stay in sync automatically.
 // Every module key except "settings" (which is never permission-assignable
 // and always sits outside these categories) must appear in exactly one
-// group here — all 24 operational modules, covered exactly once.
+// group here — all 25 operational modules, covered exactly once.
 export const MODULE_CATEGORY_GROUPS: { label: string; keys: ModuleKey[] }[] = [
   { label: "Operations", keys: ["dashboard", "accommodation", "maintenance"] },
   { label: "Facilities", keys: ["facilities", "movie-room", "bar-restaurant", "fnb-costing", "water-sales"] },
   { label: "Finance & Accounting", keys: ["finance", "budgeting", "documents", "expenses"] },
   { label: "HR", keys: ["staff", "attendance", "leave", "payroll", "hr"] },
   { label: "Supply", keys: ["purchasing", "internal-requisitions", "inventory", "assets"] },
-  { label: "Administration", keys: ["lists", "reports", "tenants", "system-admin"] },
+  { label: "Administration", keys: ["lists", "reports", "tenants", "system-admin", "integrity"] },
 ];
 
 // Tables that can be individually write-restricted per user via the System

@@ -1,4 +1,5 @@
-import { postReceiptToFinance, receivedOn } from "./receipt-posting";
+import { postReceiptToFinance, receivedOn, ORIGINAL_DOC } from "./receipt-posting";
+import { runDailyChecks, runTaxCheck, latestRun, runHistory, previousMonth, integrityWorkbook } from "./integrity";
 import { paymentReferenceGuard, normalizeRef, isRealRef, inFlight, duplicateRefMessage, findReferenceUse } from "./payment-refs";
 import { registerPublicBookingRoutes, registerOnlineBookingStaffRoutes, hasPendingBillPayment } from "./public-booking";
 import type { Express } from "express";
@@ -1555,6 +1556,7 @@ export async function registerRoutes(
       const overrideEmail = (req.body as { email?: string })?.email;
       const newDoc = await issueDocument(storage, {
         ...payload,
+        resendOf: payload.resendOf ?? doc.id,
         recipientEmail: overrideEmail || payload.recipientEmail || doc.recipientEmail,
       });
       res.status(201).json(newDoc);
@@ -1674,13 +1676,50 @@ export async function registerRoutes(
   });
 
   // ---------- Bank Accounts ----------
+  // ---- Integrity checks (read-only reports; see server/integrity.ts) ----
+  app.get("/api/integrity/latest", requireModule("integrity"), async (req, res) => {
+    try {
+      const kind = req.query.kind === "tax" ? "tax" : "daily";
+      const period = typeof req.query.period === "string" && req.query.period ? req.query.period : undefined;
+      res.json({ run: await latestRun(kind, period), history: await runHistory(kind), previousMonth: previousMonth() });
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed" }); }
+  });
+  app.get("/api/integrity/runs/:id", requireModule("integrity"), async (req, res) => {
+    const rows = await sql`SELECT result_json FROM integrity_runs WHERE id = ${Number(req.params.id)}` as any[];
+    if (!rows[0]) return res.status(404).json({ error: "Run not found" });
+    res.json({ ...JSON.parse(rows[0].result_json), id: Number(req.params.id) });
+  });
+  app.post("/api/integrity/run", requireModule("integrity"), async (req, res) => {
+    try {
+      const by = (req as any).user?.fullName ?? (req as any).user?.username ?? "staff";
+      if (req.body?.kind === "tax") {
+        const month = String(req.body?.month ?? "");
+        if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).json({ error: "Choose a month (YYYY-MM)." });
+        return res.json(await runTaxCheck(month, by));
+      }
+      res.json(await runDailyChecks(by));
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed" }); }
+  });
+  app.get("/api/integrity/runs/:id/excel", requireModule("integrity"), async (req, res) => {
+    try {
+      const rows = await sql`SELECT result_json FROM integrity_runs WHERE id = ${Number(req.params.id)}` as any[];
+      if (!rows[0]) return res.status(404).json({ error: "Run not found" });
+      const run = JSON.parse(rows[0].result_json);
+      const settings = await storage.getSettings();
+      const buf = await integrityWorkbook(run, settings.hotelName || "The Chekata");
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="integrity-${run.kind}-${run.period}.xlsx"`);
+      res.send(buf);
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed" }); }
+  });
+
   // ---- Receipts → Finance: review and catch-up posting (Settings → Receipts to Finance) ----
   app.get("/api/finance/receipt-posting/pending", requireModule("finance"), async (req, res) => {
     try {
       const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from)) ? String(req.query.from) : hotelToday();
       const fromMs = Date.parse(`${from}T00:00:00+03:00`);
       const rows = await sql`SELECT d.id, d.doc_type, d.category, d.source_id, d.recipient_name, d.amount, d.payload_json, d.created_at
-        FROM documents d WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs}
+        FROM documents d WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs} AND ${ORIGINAL_DOC("d")}
           AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.source_module = 'receipts' AND je.source_id = d.id AND je.status = 'posted')
         ORDER BY d.created_at` as any[];
       const out = rows.map((r) => ({ id: r.id, docType: r.doc_type, category: r.category, recipientName: r.recipient_name, createdAt: Number(r.created_at), ...receivedOn({ docType: r.doc_type, amount: Number(r.amount), payloadJson: r.payload_json }) }))

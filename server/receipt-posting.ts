@@ -5,6 +5,13 @@ import { parseReceiptPosting, normalizeMethod } from "@shared/receipt-posting";
 
 export interface PostableDoc { id: number; docType: string; category: string; sourceId: number; recipientName: string; createdAt: number; payloadJson?: string | null }
 
+// A resent invoice/receipt is stored as a new documents row with the same payload. Only the
+// original counts as money received / gets posted. Resends made from now on carry `resendOf`;
+// older resends are recognised by an identical payload on the same record.
+export const ORIGINAL_DOC = (alias: string) => sql.unsafe(`(COALESCE(${alias}.payload_json::jsonb ->> 'resendOf', '') = '' AND NOT EXISTS (
+  SELECT 1 FROM documents o WHERE o.doc_type = ${alias}.doc_type AND o.category = ${alias}.category AND o.source_id = ${alias}.source_id AND o.id < ${alias}.id
+    AND (o.payload_json::jsonb - 'recipientEmail' - 'resendOf' - 'taxBreakdown') = (${alias}.payload_json::jsonb - 'recipientEmail' - 'resendOf' - 'taxBreakdown')))`);
+
 const nairobiDate = (ms: number) => new Date(ms + 3 * 3600_000).toISOString().slice(0, 10);
 
 /** Amount actually received on this document, and how. */
@@ -25,6 +32,8 @@ export async function postReceiptToFinance(storage: IStorage, doc: PostableDoc, 
   if (!(r.amount > 0)) return { status: "skipped", reason: "No payment on this document" };
   const date = nairobiDate(doc.createdAt);
   if (!opts.force && cfg.startDate && date < cfg.startDate) return { status: "skipped", reason: "Before the posting start date" };
+  const orig = await sql`SELECT ${ORIGINAL_DOC("d")} AS ok FROM documents d WHERE d.id = ${doc.id}` as any[];
+  if (orig[0] && !orig[0].ok) return { status: "skipped", reason: "Resent copy of an earlier document" };
   const already = await sql`SELECT id FROM journal_entries WHERE source_module = 'receipts' AND source_id = ${doc.id} AND status = 'posted' LIMIT 1` as any[];
   if (already[0]) return { status: "skipped", reason: "Already posted", entryId: already[0].id };
   if (!r.method) return { status: "failed", reason: "Payment method not recorded on the receipt" };

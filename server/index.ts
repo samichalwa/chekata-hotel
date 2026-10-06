@@ -9,6 +9,7 @@ import { schemaReady, storage } from "./storage";
 import { runTenantBillingCycle } from "./billing";
 import { startTestMessageLogPurgeSchedule } from "./test-environment";
 import { startDailyReportSchedule } from "./daily-report";
+import { startIntegritySchedule } from "./integrity";
 
 const app = express();
 const httpServer = createServer(app);
@@ -128,6 +129,7 @@ app.use((req, res, next) => {
 
   // Owner/director daily close report (email PDF + SMS link + push) at the time set in Settings.
   startDailyReportSchedule(log);
+  startIntegritySchedule(log);
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
   // Other ports are firewalled. Default to 5000 if not specified.

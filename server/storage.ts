@@ -1103,6 +1103,8 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await ensureColumn("settings", "mpesa_business_name", "TEXT");
   await ensureColumn("settings", "mpesa_message_max_age_hours", "INTEGER NOT NULL DEFAULT 24");
   await ensureColumn("settings", "receipt_posting", "TEXT");
+  await ensureColumn("settings", "integrity_check_time", "TEXT NOT NULL DEFAULT '02:00'");
+  await ensureColumn("settings", "integrity_tax_day", "INTEGER NOT NULL DEFAULT 1");
   await ensureColumn("orders", "pay_token", "TEXT");
   await ensureColumn("tables", "pay_token", "TEXT");
   await ensureColumn("settings", "company_legal_name", "TEXT");
@@ -1174,6 +1176,16 @@ CREATE TABLE IF NOT EXISTS online_payments (
   review_note TEXT,
   summary TEXT,
   created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS integrity_runs (
+  id SERIAL PRIMARY KEY,
+  kind TEXT NOT NULL,
+  period TEXT NOT NULL,
+  ran_at BIGINT NOT NULL,
+  ran_by TEXT NOT NULL,
+  fails INTEGER NOT NULL DEFAULT 0,
+  warns INTEGER NOT NULL DEFAULT 0,
+  result_json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS outlet_pay_tokens (
   outlet TEXT PRIMARY KEY,
