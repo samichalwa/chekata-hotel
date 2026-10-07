@@ -127,7 +127,7 @@ export function AppSidebar() {
 
   const visibleItems = items.filter((item) => canAccess(user, item.key));
   const visibleKeys = new Set(visibleItems.map((item) => item.key));
-  // Same 6-category grouping as Settings > Users, applied to the actual
+  // Same category grouping as Settings > Users, applied to the actual
   // navigation menu. A category header is only shown if at least one of its
   // items is visible to this user; "Settings" always renders in its own
   // trailing group since it sits outside every category.

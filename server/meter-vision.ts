@@ -31,7 +31,7 @@ export async function readMeterPhoto(opts: { provider: string; apiKey: string; m
   const timer = setTimeout(() => ctrl.abort(), 45_000);
   try {
     if (opts.provider === "gemini") {
-      const model = opts.model?.trim() || "gemini-2.5-flash";
+      const model = opts.model?.trim() || "gemini-3.5-flash";
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: "POST", signal: ctrl.signal,
         headers: { "content-type": "application/json", "x-goog-api-key": opts.apiKey },

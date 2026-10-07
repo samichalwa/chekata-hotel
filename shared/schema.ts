@@ -652,7 +652,8 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
 // group here — all 25 operational modules, covered exactly once.
 export const MODULE_CATEGORY_GROUPS: { label: string; keys: ModuleKey[] }[] = [
   { label: "Operations", keys: ["dashboard", "accommodation", "maintenance"] },
-  { label: "Facilities", keys: ["facilities", "movie-room", "bar-restaurant", "fnb-costing", "water-sales"] },
+  { label: "Facilities", keys: ["facilities", "movie-room", "bar-restaurant", "fnb-costing"] },
+  { label: "Water", keys: ["water-sales"] },
   { label: "Finance & Accounting", keys: ["finance", "budgeting", "documents", "expenses"] },
   { label: "HR", keys: ["staff", "attendance", "leave", "payroll", "hr"] },
   { label: "Supply", keys: ["purchasing", "internal-requisitions", "inventory", "assets"] },
