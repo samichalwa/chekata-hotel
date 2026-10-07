@@ -1260,6 +1260,39 @@ CREATE TABLE IF NOT EXISTS water_sales (
   created_at BIGINT NOT NULL
 )`;
   await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('water_sale', 'WS', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
+  // ---- Metered water billing (server/water-billing.ts) ----
+  await sql.unsafe(`
+CREATE TABLE IF NOT EXISTS water_tariffs (
+  id SERIAL PRIMARY KEY, name TEXT NOT NULL, bands_json TEXT NOT NULL DEFAULT '[]', service_charge REAL NOT NULL DEFAULT 0,
+  minimum_charge REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, notes TEXT, created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS water_customers (
+  id SERIAL PRIMARY KEY, account_no TEXT NOT NULL UNIQUE, name TEXT NOT NULL, phone TEXT, email TEXT, location TEXT,
+  meter_number TEXT, tariff_id INTEGER NOT NULL, opening_reading REAL NOT NULL DEFAULT 0, connection_date TEXT,
+  status TEXT NOT NULL DEFAULT 'active', deposit_amount REAL NOT NULL DEFAULT 0, deposit_reference TEXT, deposit_date TEXT,
+  notes TEXT, created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS water_readings (
+  id SERIAL PRIMARY KEY, customer_id INTEGER NOT NULL, period_month TEXT NOT NULL, previous_reading REAL NOT NULL,
+  current_reading REAL NOT NULL, meter_replaced INTEGER NOT NULL DEFAULT 0, old_meter_final REAL, new_meter_start REAL,
+  consumption REAL NOT NULL, reading_date TEXT NOT NULL, bill_id INTEGER, recorded_by TEXT NOT NULL, created_at BIGINT NOT NULL,
+  UNIQUE (customer_id, period_month)
+);
+CREATE TABLE IF NOT EXISTS water_bills (
+  id SERIAL PRIMARY KEY, bill_number TEXT NOT NULL UNIQUE, customer_id INTEGER NOT NULL, period_month TEXT NOT NULL,
+  reading_id INTEGER NOT NULL, previous_reading REAL NOT NULL, current_reading REAL NOT NULL, consumption REAL NOT NULL,
+  tariff_name TEXT NOT NULL, charge_json TEXT NOT NULL, current_charges REAL NOT NULL, balance_brought_forward REAL NOT NULL DEFAULT 0,
+  total_due REAL NOT NULL, amount_paid REAL NOT NULL DEFAULT 0, bill_date TEXT NOT NULL, due_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'unpaid', cancel_reason TEXT, sms_status TEXT, created_by TEXT NOT NULL, created_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS water_bill_payments (
+  id SERIAL PRIMARY KEY, customer_id INTEGER NOT NULL, bill_id INTEGER, amount REAL NOT NULL, payment_method TEXT NOT NULL,
+  payment_reference TEXT, allocation_json TEXT NOT NULL DEFAULT '[]', paid_at BIGINT NOT NULL, recorded_by TEXT NOT NULL
+);`);
+  await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('water_bill', 'WB', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
+  await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('water_customer', 'WC', 1, 4) ON CONFLICT (sequence_key) DO NOTHING`;
+  await ensureColumn("settings", "water_bill_due_days", "INTEGER NOT NULL DEFAULT 14");
+  await ensureColumn("settings", "water_bill_sms", "INTEGER NOT NULL DEFAULT 1");
   // In-app notifications (Owner/Director briefing + bell). One row per recipient.
   await sql`
 CREATE TABLE IF NOT EXISTS notifications (

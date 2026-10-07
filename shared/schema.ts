@@ -514,6 +514,8 @@ export const settings = pgTable("settings", {
   receiptPosting: text("receipt_posting"),
   integrityCheckTime: text("integrity_check_time").notNull().default("02:00"), // nightly integrity checks (Nairobi time)
   integrityTaxDay: integer("integrity_tax_day").notNull().default(1), // day of month the previous month's tax check runs
+  waterBillDueDays: integer("water_bill_due_days").notNull().default(14), // metered water bills: days from bill date to due date
+  waterBillSms: integer("water_bill_sms").notNull().default(1), // send an SMS with each metered water bill
   publicTableDeposit: real("public_table_deposit").notNull().default(1000), // KES per reservation, credited to the bill
   publicTableMaxParty: integer("public_table_max_party").notNull().default(12),
   publicTableOpenTime: text("public_table_open_time").notNull().default("07:00"),

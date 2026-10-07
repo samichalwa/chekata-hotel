@@ -1,4 +1,5 @@
-import { postReceiptToFinance, receivedOn, ORIGINAL_DOC } from "./receipt-posting";
+import { registerWaterBillingRoutes } from "./water-billing";
+import { postReceiptToFinance, receivedOn, ORIGINAL_DOC, NOT_SELF_POSTED } from "./receipt-posting";
 import { runDailyChecks, runTaxCheck, latestRun, runHistory, previousMonth, integrityWorkbook } from "./integrity";
 import { paymentReferenceGuard, normalizeRef, isRealRef, inFlight, duplicateRefMessage, findReferenceUse } from "./payment-refs";
 import { registerPublicBookingRoutes, registerOnlineBookingStaffRoutes, hasPendingBillPayment } from "./public-booking";
@@ -1719,7 +1720,7 @@ export async function registerRoutes(
       const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from)) ? String(req.query.from) : hotelToday();
       const fromMs = Date.parse(`${from}T00:00:00+03:00`);
       const rows = await sql`SELECT d.id, d.doc_type, d.category, d.source_id, d.recipient_name, d.amount, d.payload_json, d.created_at
-        FROM documents d WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs} AND ${ORIGINAL_DOC("d")}
+        FROM documents d WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs} AND ${ORIGINAL_DOC("d")} AND ${NOT_SELF_POSTED("d")}
           AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.source_module = 'receipts' AND je.source_id = d.id AND je.status = 'posted')
         ORDER BY d.created_at` as any[];
       const out = rows.map((r) => ({ id: r.id, docType: r.doc_type, category: r.category, recipientName: r.recipient_name, createdAt: Number(r.created_at), ...receivedOn({ docType: r.doc_type, amount: Number(r.amount), payloadJson: r.payload_json }) }))
@@ -3361,6 +3362,7 @@ export async function registerRoutes(
   });
 
   // ---------- Owner / Director briefing + in-app notifications ----------
+  registerWaterBillingRoutes(app);
   registerDirectorRoutes(app);
   registerPushRoutes(app);
   registerDailyReportRoutes(app, requireAdmin);

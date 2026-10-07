@@ -23,6 +23,7 @@ import { formatKES, todayISO } from "@/lib/format";
 import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import { WATER_SALE_TYPES } from "@shared/schema";
 import type { WaterBucketPrice, WaterSale } from "@shared/schema";
+import { MeteredWater } from "@/components/metered-water";
 
 function extractErrorMessage(raw: string): string {
   const match = raw.match(/^\d+:\s*([\s\S]*)$/);
@@ -405,7 +406,7 @@ export default function WaterSales() {
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader
         title="Water Sales"
-        description="Standalone bulk and bucket water sales, recorded as paid transactions with a receipt on every sale."
+        description="Bulk and bucket water sales with a receipt on every sale, plus monthly billing for metered customers."
         action={<NewSaleDialog bucketPrices={bucketPrices} />}
       />
 
@@ -417,10 +418,11 @@ export default function WaterSales() {
       </div>
 
       <Tabs defaultValue="history" className="w-full">
-        <TabsList>
+        <div className="overflow-x-auto -mx-1 px-1"><TabsList>
           <TabsTrigger value="history" data-testid="tab-water-history">Sales History</TabsTrigger>
           <TabsTrigger value="pricing" data-testid="tab-water-pricing">Bucket Pricing</TabsTrigger>
-        </TabsList>
+          <TabsTrigger value="metered" data-testid="tab-water-metered">Metered customers</TabsTrigger>
+        </TabsList></div>
 
         <TabsContent value="history" className="space-y-4 mt-4">
           <Card>
@@ -536,6 +538,10 @@ export default function WaterSales() {
               </div>
             )}
           </Card>
+        </TabsContent>
+
+        <TabsContent value="metered" className="mt-4">
+          <MeteredWater />
         </TabsContent>
       </Tabs>
     </div>

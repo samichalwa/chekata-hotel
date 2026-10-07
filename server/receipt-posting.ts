@@ -12,6 +12,11 @@ export const ORIGINAL_DOC = (alias: string) => sql.unsafe(`(COALESCE(${alias}.pa
   SELECT 1 FROM documents o WHERE o.doc_type = ${alias}.doc_type AND o.category = ${alias}.category AND o.source_id = ${alias}.source_id AND o.id < ${alias}.id
     AND (o.payload_json::jsonb - 'recipientEmail' - 'resendOf' - 'taxBreakdown') = (${alias}.payload_json::jsonb - 'recipientEmail' - 'resendOf' - 'taxBreakdown')))`);
 
+// Shop-rent payments on a lease with a receivable account already post their own journal
+// (Dr bank, Cr receivable) in the Tenants module — never post those receipts a second time.
+export const NOT_SELF_POSTED = (alias: string) => sql.unsafe(`NOT (${alias}.category = 'tenancy' AND ${alias}.doc_type = 'receipt' AND EXISTS (
+  SELECT 1 FROM journal_entries j WHERE j.source_module = 'tenants' AND j.source_id = ${alias}.source_id AND j.status = 'posted' AND j.description LIKE 'Payment received%'))`);
+
 const nairobiDate = (ms: number) => new Date(ms + 3 * 3600_000).toISOString().slice(0, 10);
 
 /** Amount actually received on this document, and how. */
@@ -34,6 +39,8 @@ export async function postReceiptToFinance(storage: IStorage, doc: PostableDoc, 
   if (!opts.force && cfg.startDate && date < cfg.startDate) return { status: "skipped", reason: "Before the posting start date" };
   const orig = await sql`SELECT ${ORIGINAL_DOC("d")} AS ok FROM documents d WHERE d.id = ${doc.id}` as any[];
   if (orig[0] && !orig[0].ok) return { status: "skipped", reason: "Resent copy of an earlier document" };
+  const own = await sql`SELECT ${NOT_SELF_POSTED("d")} AS ok FROM documents d WHERE d.id = ${doc.id}` as any[];
+  if (own[0] && !own[0].ok) return { status: "skipped", reason: "Already posted by the Tenants module (rent receivable)" };
   const already = await sql`SELECT id FROM journal_entries WHERE source_module = 'receipts' AND source_id = ${doc.id} AND status = 'posted' LIMIT 1` as any[];
   if (already[0]) return { status: "skipped", reason: "Already posted", entryId: already[0].id };
   if (!r.method) return { status: "failed", reason: "Payment method not recorded on the receipt" };

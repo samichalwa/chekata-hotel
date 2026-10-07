@@ -14,11 +14,12 @@ export const DOC_CATEGORY_TO_TAX_CATEGORY: Record<string, TaxCategory> = {
   movie: "facilities",
   tenancy: "tenancy",
   water: "water",
+  water_bill: "water",
 };
 
 export interface IssueDocumentInput {
   docType: "invoice" | "receipt" | "credit_note";
-  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy" | "water";
+  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy" | "water" | "water_bill";
   sourceId: number;
   customDocNumber?: string; // e.g. a module's own sequence number like RENT-000012
   recipientName: string;
@@ -32,6 +33,7 @@ export interface IssueDocumentInput {
   paymentMethod?: string | null;
   paymentReference?: string | null;
   notes?: string;
+  broughtForward?: number; // metered water bills: arrears/credit carried onto the bill (display only)
   resendOf?: number; // set on resent copies so they are never counted or posted twice
   // Credit notes only: the invoice/receipt document being credited, its display number
   // (for the PDF's "Against invoice" line), and the reason given for the credit.
@@ -130,6 +132,7 @@ async function issueDocumentCore(storage: IStorage, input: IssueDocumentInput): 
       totalAmount: input.totalAmount,
       amountPaid: input.amountPaid,
       balance: input.balance,
+      broughtForward: input.broughtForward,
       paymentAmount: input.paymentAmount,
       paymentMethod: input.paymentMethod,
       paymentReference: input.paymentReference,
@@ -213,7 +216,7 @@ function formatDate(): string {
 }
 
 export interface IssueCreditNoteParams {
-  category: "accommodation" | "facility" | "movie" | "bar" | "restaurant" | "water";
+  category: "accommodation" | "facility" | "movie" | "bar" | "restaurant" | "water" | "water_bill";
   sourceId: number;
   requestedAmount: number;
   reason?: string;

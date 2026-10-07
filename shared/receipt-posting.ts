@@ -14,6 +14,7 @@ export const RECEIPT_CATEGORIES = [
   { key: "bar", label: "Bar" },
   { key: "restaurant", label: "Restaurant" },
   { key: "water", label: "Water sales" },
+  { key: "water_bill", label: "Metered water bills" },
   { key: "tenancy", label: "Shop rent & electricity" },
 ] as const;
 

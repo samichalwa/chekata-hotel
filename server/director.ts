@@ -108,6 +108,14 @@ const STREAMS: StreamDef[] = [
     },
   },
   {
+    key: "water_bills", label: "Metered Water Bills", module: "water-sales", link: "/water-sales",
+    query: async ({ from, to }) => {
+      const [r] = await sql`SELECT COALESCE(SUM(current_charges),0) AS amount, COUNT(*)::int AS count
+        FROM water_bills WHERE status <> 'cancelled' AND bill_date BETWEEN ${from} AND ${to}`;
+      return { amount: n(r.amount), count: n(r.count) };
+    },
+  },
+  {
     key: "rent", label: "Shop Rent & Electricity", module: "tenants", link: "/tenants",
     query: async ({ from, to }) => {
       const [a, b] = dayBoundsMs(from, to);
@@ -302,6 +310,11 @@ export async function buildDirectorSummary(user: any, date?: string) {
     receivables.push({ key: "rent", label: "Unpaid rent", amount: n(r.amount), count: n(r.count), link: "/tenants" });
     overdueRent = { amount: n(r.overdue_amount), count: n(r.overdue_count) };
   }
+  if (can("water-sales")) {
+    const [w] = await sql`SELECT COALESCE(SUM(current_charges - amount_paid),0) AS amount, COUNT(DISTINCT customer_id)::int AS count
+      FROM water_bills WHERE status IN ('unpaid','partially_paid')`;
+    if (n(w.amount) > 0.5) receivables.push({ key: "water_bills", label: "Unpaid water bills", amount: n(w.amount), count: n(w.count), link: "/water-sales" });
+  }
   let expenses: null | { today: number; mtd: number } = null;
   if (can("expenses")) {
     const [r] = await sql`SELECT COALESCE(SUM(amount) FILTER (WHERE date = ${today}),0) AS today,
@@ -389,7 +402,7 @@ export async function buildDirectorSummary(user: any, date?: string) {
   // and an invoice issued with a payment already on it (paid at booking) carries its amountPaid.
   const CAT_MODULE: Record<string, ModuleKey> = {
     accommodation: "accommodation", facility: "facilities", movie: "movie-room", bar: "bar-restaurant",
-    restaurant: "bar-restaurant", water: "water-sales", tenancy: "tenants",
+    restaurant: "bar-restaurant", water: "water-sales", water_bill: "water-sales", tenancy: "tenants",
   };
   const cats = Object.keys(CAT_MODULE).filter((c) => can(CAT_MODULE[c]));
   let collections: null | {

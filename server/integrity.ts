@@ -5,7 +5,7 @@
 import { sql, storage } from "./storage";
 import { runWithEnvironment } from "./db-context";
 import { parseReceiptPosting } from "@shared/receipt-posting";
-import { receivedOn, ORIGINAL_DOC } from "./receipt-posting";
+import { receivedOn, ORIGINAL_DOC, NOT_SELF_POSTED } from "./receipt-posting";
 import { normalizeRef, isRealRef } from "./payment-refs";
 import { computeInclusiveTaxBreakdown } from "./tax";
 import { DOC_CATEGORY_TO_TAX_CATEGORY } from "./documents";
@@ -25,8 +25,8 @@ const TZ = 3 * 3600_000;
 const nairobiDate = (ms: number) => new Date(ms + TZ).toISOString().slice(0, 10);
 export const nairobiToday = () => nairobiDate(Date.now());
 const parse = (j: unknown): any => { try { return JSON.parse(String(j || "{}")); } catch { return {}; } };
-const LINK: Record<string, string> = { accommodation: "/accommodation", facility: "/facilities", movie: "/movie-room", bar: "/bar-restaurant", restaurant: "/bar-restaurant", tenancy: "/tenants", water: "/water-sales" };
-const STREAM: Record<string, string> = { accommodation: "Accommodation", facility: "Conference & facilities", movie: "Movie room", bar: "Bar", restaurant: "Restaurant", tenancy: "Shop rent & electricity", water: "Water sales" };
+const LINK: Record<string, string> = { accommodation: "/accommodation", facility: "/facilities", movie: "/movie-room", bar: "/bar-restaurant", restaurant: "/bar-restaurant", tenancy: "/tenants", water: "/water-sales", water_bill: "/water-sales" };
+const STREAM: Record<string, string> = { accommodation: "Accommodation", facility: "Conference & facilities", movie: "Movie room", bar: "Bar", restaurant: "Restaurant", tenancy: "Shop rent & electricity", water: "Water sales", water_bill: "Metered water bills" };
 
 function result(group: string, id: string, title: string, description: string, items: CheckItem[], level: "warn" | "fail", okText: string, badText: (k: number) => string): CheckResult {
   return { id, group, title, description, status: items.length ? level : "pass", count: items.length, summary: items.length ? badText(items.length) : okText, items: items.slice(0, MAX_ITEMS) };
@@ -47,7 +47,7 @@ async function checkReceiptsPosted(): Promise<CheckResult> {
   if (!cfg.enabled) return { id: "A1", group: A, title, description: desc, status: "warn", count: 0, summary: "Receipts to Finance is switched off (Settings → Receipts to Finance), so this can't be checked.", items: [] };
   const fromMs = Date.parse(`${cfg.startDate || "2000-01-01"}T00:00:00+03:00`);
   const docs = await sql`SELECT d.id, d.doc_type, d.category, d.recipient_name, d.amount, d.payload_json, d.created_at FROM documents d
-    WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs} AND ${ORIGINAL_DOC("d")} ORDER BY d.created_at` as any[];
+    WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs} AND ${ORIGINAL_DOC("d")} AND ${NOT_SELF_POSTED("d")} ORDER BY d.created_at` as any[];
   const jes = await sql`SELECT je.source_id, je.entry_number, COALESCE(SUM(l.debit),0) AS dr FROM journal_entries je JOIN journal_entry_lines l ON l.journal_entry_id = je.id
     WHERE je.source_module = 'receipts' AND je.status = 'posted' GROUP BY je.id, je.source_id, je.entry_number` as any[];
   const bySrc = new Map<number, { no: string; dr: number }[]>();
@@ -109,7 +109,7 @@ async function checkCollectionsVsLedger(): Promise<CheckResult> {
   const start = cfg.startDate && cfg.startDate > nairobiDate(Date.now() - 7 * 86400_000) ? cfg.startDate : nairobiDate(Date.now() - 7 * 86400_000);
   const fromMs = Date.parse(`${start}T00:00:00+03:00`);
   const docs = await sql`SELECT d.doc_type, d.amount, d.payload_json, d.created_at FROM documents d
-    WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs} AND ${ORIGINAL_DOC("d")}` as any[];
+    WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs} AND ${ORIGINAL_DOC("d")} AND ${NOT_SELF_POSTED("d")}` as any[];
   const recv = new Map<string, number>();
   for (const d of docs) { const a = receivedOn({ docType: d.doc_type, amount: n(d.amount), payloadJson: d.payload_json }).amount; if (a > 0) { const k = nairobiDate(Number(d.created_at)); recv.set(k, (recv.get(k) ?? 0) + a); } }
   const led = await sql`SELECT je.entry_date, SUM(l.debit) AS dr FROM journal_entries je JOIN journal_entry_lines l ON l.journal_entry_id = je.id
@@ -135,7 +135,7 @@ async function checkDuplicateRefs(): Promise<CheckResult> {
     ["accommodation_bookings", "Room booking", "id", "booking_ref"], ["facility_bookings", "Event booking", "id", null],
     ["movie_seat_bookings", "Movie booking", "booking_ref", "booking_ref"], ["orders", "Bar/restaurant order", "id", null],
     ["payment_vouchers", "Payment voucher", "id", null], ["rent_invoice_payments", "Rent payment", "id", null],
-    ["water_sales", "Water sale", "id", null], ["table_reservations", "Table reservation", "reservation_ref", "reservation_ref"],
+    ["water_sales", "Water sale", "id", null], ["water_bill_payments", "Metered water payment", "id", null], ["table_reservations", "Table reservation", "reservation_ref", "reservation_ref"],
   ];
   for (const [table, label, key, refCol] of T) {
     const rows = await sql.unsafe(`SELECT ${key} AS k${refCol ? `, ${refCol} AS bref` : ""}, payment_reference FROM ${table} WHERE COALESCE(payment_reference,'') <> ''`) as any[];

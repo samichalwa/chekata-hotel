@@ -50,7 +50,7 @@ export interface DocLineItem {
 export interface DocPayload {
   docType: "invoice" | "receipt" | "credit_note";
   docNumber: number;
-  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy" | "water";
+  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy" | "water" | "water_bill";
   customDocNumber?: string; // overrides the auto "INV-00001"/"RCT-00001" label (e.g. a module's own sequence number like RENT-000012)
   recipientName: string;
   recipientEmail?: string | null;
@@ -59,6 +59,7 @@ export interface DocPayload {
   totalAmount: number;
   amountPaid: number;
   balance: number;
+  broughtForward?: number; // metered water bills: arrears (+) or credit (−) carried onto this bill; balance then = total due
   paymentAmount?: number; // for receipts: the specific payment this receipt covers
   paymentMethod?: string | null;
   paymentReference?: string | null;
@@ -81,6 +82,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   movie: "Movie Room (Seat Booking)",
   tenancy: "Tenancy (Shop Rent)",
   water: "Water Sales",
+  water_bill: "Metered Water Bill",
 };
 
 // Company identifiers printed under the hotel contact lines on invoices, receipts and
@@ -288,6 +290,13 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
       doc.fillColor(dark).font("Helvetica-Bold").text(fmtKES(payload.amountPaid), totalsX + 90, y, { width: 105, align: "right" });
       y += 16;
 
+      if (payload.broughtForward !== undefined && Math.abs(payload.broughtForward) > 0.5) {
+        const bf = payload.broughtForward;
+        doc.font("Helvetica").fillColor(muted).text(bf > 0 ? "Arrears b/f" : "Credit b/f", totalsX, y, { width: 90 });
+        doc.fillColor(dark).font("Helvetica-Bold").text(bf > 0 ? fmtKES(bf) : `- ${fmtKES(-bf)}`, totalsX + 90, y, { width: 105, align: "right" });
+        y += 16;
+      }
+
       if (payload.docType === "receipt" && payload.paymentAmount) {
         doc.font("Helvetica").fillColor(muted).text("This payment", totalsX, y, { width: 90 });
         doc.fillColor(accent).font("Helvetica-Bold").text(fmtKES(payload.paymentAmount), totalsX + 90, y, { width: 105, align: "right" });
@@ -305,7 +314,7 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
       doc.moveTo(totalsX, y).lineTo(545, y).strokeColor("#d9d0c4").lineWidth(1).stroke();
       y += 8;
       doc.font("Helvetica-Bold").fontSize(11).fillColor(payload.balance > 0 ? "#a3402a" : "#2f7a4f");
-      doc.text(payload.balance > 0 ? "Balance due" : "Balance", totalsX, y, { width: 90 });
+      doc.text(payload.broughtForward !== undefined ? "Total due" : payload.balance > 0 ? "Balance due" : "Balance", totalsX, y, { width: 90 });
       doc.text(fmtKES(Math.max(0, payload.balance)), totalsX + 90, y, { width: 105, align: "right" });
       y += 30;
     }
