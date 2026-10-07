@@ -2,6 +2,7 @@ import { Link } from "wouter";
 import {
   CheckSquare, BedDouble, PartyPopper, Receipt, FileBarChart, Landmark, AlertTriangle, AlertOctagon, Info,
   ChevronRight, LogIn, LogOut, Film, Users, Wallet, RefreshCw,
+  Droplets,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -94,6 +95,7 @@ export function OwnerToday() {
     { label: "Bookings", href: "/bookings", icon: BedDouble, show: (["accommodation", "facilities", "movie-room"] as const).some((m) => canAccess(user, m)) },
     { label: "Events", href: "/facilities", icon: PartyPopper, module: "facilities" },
     { label: "Movie Room", href: "/movie-room", icon: Film, module: "movie-room" },
+    { label: "Water", href: "/water-sales", icon: Droplets, module: "water-sales" },
     { label: "Finance", href: "/finance", icon: Landmark, module: "finance" },
     { label: "Expenses", href: "/expenses", icon: Receipt, module: "expenses" },
     { label: "Reports", href: "/reports", icon: FileBarChart, module: "reports" },
@@ -121,7 +123,7 @@ export function OwnerToday() {
       <DailyCloseActions user={user} date={s.date} showView />
 
       {visibleActions.length > 0 && (
-        <div className="grid grid-cols-4 sm:grid-cols-7 gap-2" data-testid="owner-quick-actions">
+        <div className="grid grid-cols-4 sm:grid-cols-8 gap-2" data-testid="owner-quick-actions">
           {visibleActions.map((a) => (
             <Link key={a.label} href={a.href}>
               <div className="relative flex h-20 flex-col items-center justify-center gap-1.5 rounded-lg border border-border bg-card hover-elevate active-elevate-2 cursor-pointer" data-testid={`quick-${a.label.toLowerCase().replace(/\s+/g, "-")}`}>
