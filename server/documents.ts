@@ -34,6 +34,8 @@ export interface IssueDocumentInput {
   paymentReference?: string | null;
   notes?: string;
   broughtForward?: number; // metered water bills: arrears/credit carried onto the bill (display only)
+  meterPhotoUrl?: string | null;
+  meterPhotoCaption?: string;
   resendOf?: number; // set on resent copies so they are never counted or posted twice
   // Credit notes only: the invoice/receipt document being credited, its display number
   // (for the PDF's "Against invoice" line), and the reason given for the credit.
@@ -133,6 +135,8 @@ async function issueDocumentCore(storage: IStorage, input: IssueDocumentInput): 
       amountPaid: input.amountPaid,
       balance: input.balance,
       broughtForward: input.broughtForward,
+      meterPhotoUrl: input.meterPhotoUrl,
+      meterPhotoCaption: input.meterPhotoCaption,
       paymentAmount: input.paymentAmount,
       paymentMethod: input.paymentMethod,
       paymentReference: input.paymentReference,

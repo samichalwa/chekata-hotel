@@ -1,7 +1,7 @@
 // Metered water customers: monthly meter readings → monthly bills (m³), payments, statements.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, FileText, MessageCircle, Send, Ban, FileSpreadsheet, Gauge, Users, Wallet, AlertTriangle, Save, Receipt } from "lucide-react";
+import { Plus, Pencil, Trash2, FileText, MessageCircle, Send, Ban, FileSpreadsheet, Gauge, Users, Wallet, AlertTriangle, Save, Receipt, Camera, ScanLine, ImageIcon } from "lucide-react";
 import { StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -26,7 +26,7 @@ import { calcWaterCharge, consumptionOf, validateTariff, monthLabel, type WaterB
 type Tariff = { id: number; name: string; bands: WaterBand[]; serviceCharge: number; minimumCharge: number; active: number; notes: string | null; customers?: number };
 type Customer = { id: number; accountNo: string; name: string; phone: string | null; email: string | null; location: string | null; meterNumber: string | null; tariffId: number; tariffName: string | null; openingReading: number; connectionDate: string | null; status: "active" | "disconnected"; depositAmount: number; depositReference: string | null; depositDate: string | null; notes: string | null; lastReading: number | null; lastMonth: string | null; balance: number };
 type ReadingRow = { customerId: number; accountNo: string; name: string; location: string | null; meterNumber: string | null; status: string; tariff: { name: string; bands: WaterBand[]; serviceCharge: number; minimumCharge: number }; previousReading: number; laterMonth: string | null;
-  reading: null | { id: number; currentReading: number; meterReplaced: boolean; oldMeterFinal: number | null; newMeterStart: number | null; consumption: number; readingDate: string; billId: number | null; billNumber: string | null; billStatus: string | null } };
+  reading: null | { id: number; currentReading: number; meterReplaced: boolean; oldMeterFinal: number | null; newMeterStart: number | null; consumption: number; readingDate: string; billId: number | null; billNumber: string | null; billStatus: string | null; photoUrl?: string | null; photoMeterNumber?: string | null; photoReading?: number | null; photoMeterVerified?: number | null; photoConfidence?: string | null } };
 type Bill = { id: number; billNumber: string; customerId: number; customerName: string; accountNo: string; phone: string | null; email: string | null; meterNumber: string | null; periodMonth: string; previousReading: number; currentReading: number; consumption: number; tariffName: string; currentCharges: number; balanceBroughtForward: number; totalDue: number; amountPaid: number; billDate: string; dueDate: string; status: string; cancelReason: string | null; smsStatus: string | null; emailStatus: string | null; documentId: number | null; documentToken: string | null; customerBalance: number };
 
 const errMsg = (e: any) => { const m = String(e?.message ?? e); const body = m.replace(/^\d+:\s*/, ""); try { return JSON.parse(body).error ?? body; } catch { return body; } };
@@ -68,7 +68,23 @@ export function MeteredWater() {
 }
 
 /* ---------------- Readings ---------------- */
-type Draft = { current: string; replaced: boolean; oldFinal: string; newStart: string };
+type PhotoScan = { token: string; url: string; reading: number | null; meterNumber: string | null; verified: boolean; confidence: string };
+type Draft = { current: string; replaced: boolean; oldFinal: string; newStart: string; photo?: PhotoScan | null };
+type ScanResult = { status: "matched" | "unverified" | "mismatch" | "unregistered" | "serial_unreadable" | "disconnected"; message: string; photoUrl: string; token: string | null;
+  detected: { meterNumber: string | null; reading: number | null; readingText: string | null; confidence: "high" | "medium" | "low"; notes: string | null };
+  customer: { id: number; name: string; accountNo: string; meterNumber: string | null } | null };
+
+/** Shrinks a phone photo to max 1600px JPEG so uploads stay small on mobile data. */
+async function photoToJpeg(file: File): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => bad(new Error("That file isn't a photo the browser can open.")); i.src = url; });
+    const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas"); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL("image/jpeg", 0.85);
+  } finally { URL.revokeObjectURL(url); }
+}
 
 function ReadingsTab({ onBilled }: { onBilled: () => void }) {
   const { toast } = useToast();
@@ -80,6 +96,32 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
   const [confirm, setConfirm] = useState(false);
   const { data: rows = [], isLoading } = useQuery<ReadingRow[]>({ queryKey: ["/api/water-billing/readings", month], queryFn: async () => (await apiRequest("GET", `/api/water-billing/readings?month=${month}`)).json(), enabled: /^\d{4}-\d{2}$/.test(month) });
   const { data: settings } = useQuery<any>({ queryKey: ["/api/water-billing/settings"] });
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [scanFor, setScanFor] = useState<number | null>(null); // customer row the camera was opened from (null = Scan a meter)
+  const [scan, setScan] = useState<{ busy: boolean; preview?: string; result?: ScanResult; error?: string; forId: number | null } | null>(null);
+  const openCamera = (customerId: number | null) => { setScanFor(customerId); if (fileRef.current) { fileRef.current.value = ""; fileRef.current.click(); } };
+  const onPhoto = async (file: File | undefined) => {
+    if (!file) return;
+    const forId = scanFor;
+    setScan({ busy: true, forId });
+    try {
+      const jpeg = await photoToJpeg(file);
+      setScan({ busy: true, preview: jpeg, forId });
+      const result: ScanResult = await (await apiRequest("POST", "/api/water-billing/scan", { imageBase64: jpeg, mimeType: "image/jpeg", customerId: forId })).json();
+      setScan({ busy: false, preview: jpeg, result, forId });
+    } catch (e) { setScan((s) => ({ busy: false, preview: s?.preview, error: errMsg(e), forId })); }
+  };
+  const applyScan = () => {
+    const r = scan?.result; if (!r?.token || !r.customer) return;
+    const row = rows.find((x) => x.customerId === r.customer!.id);
+    if (!row) { toast({ title: "Customer isn't on this month's sheet", description: `${r.customer.name} is not active for ${monthLabel(month)}.`, variant: "destructive" }); return; }
+    if (billed(row) || row.laterMonth) { toast({ title: `${row.name} is already billed for ${monthLabel(month)}`, description: "Cancel that bill first if the reading must change.", variant: "destructive" }); return; }
+    const photo: PhotoScan = { token: r.token, url: r.photoUrl, reading: r.detected.reading, meterNumber: r.detected.meterNumber, verified: r.status === "matched", confidence: r.detected.confidence };
+    set(row.customerId, { photo, ...(r.detected.reading !== null ? { current: String(r.detected.reading) } : {}) });
+    setScan(null);
+    setTimeout(() => document.getElementById(`cur-${row.customerId}`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 50);
+    toast({ title: `Reading filled in for ${row.name}`, description: "Check it against the photo, then press Save readings." });
+  };
   useEffect(() => {
     const d: Record<number, Draft> = {};
     for (const r of rows) d[r.customerId] = r.reading ? { current: String(r.reading.currentReading), replaced: r.reading.meterReplaced, oldFinal: r.reading.oldMeterFinal === null ? "" : String(r.reading.oldMeterFinal), newStart: r.reading.newMeterStart === null ? "" : String(r.reading.newMeterStart) } : { current: "", replaced: false, oldFinal: "", newStart: "0" };
@@ -101,15 +143,16 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
     if (billed(r) || r.laterMonth) return false;
     const d = drafts[r.customerId]; if (!d || d.current === "") return false;
     if (!r.reading) return true;
-    return Number(d.current) !== r.reading.currentReading || d.replaced !== r.reading.meterReplaced || (d.replaced && (Number(d.oldFinal) !== r.reading.oldMeterFinal || Number(d.newStart) !== r.reading.newMeterStart));
+    return !!d.photo || Number(d.current) !== r.reading.currentReading || d.replaced !== r.reading.meterReplaced || (d.replaced && (Number(d.oldFinal) !== r.reading.oldMeterFinal || Number(d.newStart) !== r.reading.newMeterStart));
   });
   const blocking = changed.some((r) => preview(r)?.error);
   const toBill = rows.filter((r) => r.reading && !billed(r));
 
   const save = useMutation({
-    mutationFn: async () => (await apiRequest("PUT", "/api/water-billing/readings", { month, readings: changed.map((r) => { const d = drafts[r.customerId]; return { customerId: r.customerId, currentReading: Number(d.current), readingDate, meterReplaced: d.replaced, oldMeterFinal: d.replaced ? Number(d.oldFinal || 0) : null, newMeterStart: d.replaced ? Number(d.newStart || 0) : null }; }) })).json(),
+    mutationFn: async () => (await apiRequest("PUT", "/api/water-billing/readings", { month, readings: changed.map((r) => { const d = drafts[r.customerId]; return { customerId: r.customerId, currentReading: Number(d.current), readingDate, meterReplaced: d.replaced, oldMeterFinal: d.replaced ? Number(d.oldFinal || 0) : null, newMeterStart: d.replaced ? Number(d.newStart || 0) : null, photoToken: d.photo?.token ?? null }; }) })).json(),
     onSuccess: (r: any) => {
       const e: Record<number, string> = {}; for (const x of r.errors ?? []) e[x.customerId] = x.error; setErrors(e);
+      setDrafts((d) => { const n = { ...d }; for (const id of Object.keys(n)) if (n[+id]?.photo && !e[+id]) n[+id] = { ...n[+id], photo: null }; return n; });
       invalidateAll();
       toast({ title: `${r.saved} reading${r.saved === 1 ? "" : "s"} saved`, description: r.errors?.length ? `${r.errors.length} could not be saved — see the highlighted rows.` : undefined, variant: r.errors?.length ? "destructive" : undefined });
     },
@@ -134,9 +177,12 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
         <div className="space-y-1.5"><Label htmlFor="wr-month">Billing month</Label><Input id="wr-month" type="month" className="w-44" value={month} onChange={(e) => setMonth(e.target.value)} data-testid="input-readings-month" /></div>
         <div className="space-y-1.5"><Label htmlFor="wr-date">Date read</Label><Input id="wr-date" type="date" className="w-44" value={readingDate} onChange={(e) => setReadingDate(e.target.value)} data-testid="input-readings-date" /></div>
         <div className="flex-1" />
+        {settings?.visionReady && <Button variant="outline" onClick={() => openCamera(null)} disabled={!rows.length} data-testid="button-scan-meter"><ScanLine className="h-4 w-4 mr-1" />Scan a meter</Button>}
         <Button variant="outline" disabled={!changed.length || blocking || save.isPending} onClick={() => save.mutate()} data-testid="button-save-readings"><Save className="h-4 w-4 mr-1" />{save.isPending ? "Saving…" : `Save readings${changed.length ? ` (${changed.length})` : ""}`}</Button>
         <Button disabled={!toBill.length || changed.length > 0 || raise.isPending} onClick={() => setConfirm(true)} data-testid="button-raise-bills"><Receipt className="h-4 w-4 mr-1" />Raise bills{toBill.length ? ` (${toBill.length})` : ""}</Button>
       </Card>
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => onPhoto(e.target.files?.[0])} data-testid="input-meter-photo" />
+      {settings?.visionReady && rows.length > 0 && <p className="text-xs text-muted-foreground">Type readings as usual, or use the camera: the photo is read for the meter number and reading, matched to the registered meter, and filled in for you to check before saving.</p>}
       {changed.length > 0 && toBill.length > 0 && <p className="text-xs text-muted-foreground">Save the readings you've typed before raising bills.</p>}
       {isLoading ? <Card className="p-8 text-center text-sm text-muted-foreground">Loading…</Card> : rows.length === 0 ? (
         <Card className="p-8 text-center text-sm text-muted-foreground">No active metered customers yet. Add a tariff, then add customers in the Customers tab.</Card>
@@ -157,7 +203,10 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
                     <div><div className="text-xs text-muted-foreground">Previous</div><div className="tabular-nums font-medium h-9 flex items-center">{r.previousReading}</div></div>
                     <div className="space-y-1">
                       <Label htmlFor={`cur-${r.customerId}`} className="text-xs text-muted-foreground font-normal">{d.replaced ? "New meter now" : "Current"}</Label>
-                      <Input id={`cur-${r.customerId}`} type="number" inputMode="decimal" step="0.001" min="0" className="w-28 tabular-nums" disabled={locked} value={d.current} onChange={(e) => set(r.customerId, { current: e.target.value })} data-testid={`input-reading-${r.customerId}`} />
+                      <div className="flex items-center gap-1">
+                        <Input id={`cur-${r.customerId}`} type="number" inputMode="decimal" step="0.001" min="0" className="w-28 tabular-nums" disabled={locked} value={d.current} onChange={(e) => set(r.customerId, { current: e.target.value })} data-testid={`input-reading-${r.customerId}`} />
+                        {settings?.visionReady && !locked && <Button size="icon" variant="ghost" aria-label={`Photo of ${r.name}'s meter`} onClick={() => openCamera(r.customerId)} data-testid={`button-photo-${r.customerId}`}><Camera className="h-4 w-4" /></Button>}
+                      </div>
                     </div>
                   </div>
                   <div className="text-sm">
@@ -177,12 +226,51 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
                     <p className="text-xs text-muted-foreground self-center max-w-xs">Units = (old final − previous) + (new reading − new start).</p>
                   </div>
                 )}
+                {(() => {
+                  const ph = d.photo ? { url: d.photo.url, reading: d.photo.reading, verified: d.photo.verified, pending: true } : r.reading?.photoUrl ? { url: r.reading.photoUrl, reading: r.reading.photoReading ?? null, verified: r.reading.photoMeterVerified !== 0, pending: false } : null;
+                  if (!ph) return null;
+                  const edited = ph.reading !== null && d.current !== "" && Math.abs(Number(d.current) - ph.reading) > 0.0005;
+                  return (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid={`photo-info-${r.customerId}`}>
+                      <a href={ph.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"><ImageIcon className="h-3.5 w-3.5" />Meter photo</a>
+                      <span className="text-muted-foreground">{ph.reading === null ? "reading not readable" : `photo read ${ph.reading}`}</span>
+                      {!ph.verified && <Badge variant="outline">Meter no. not verified</Badge>}
+                      {edited && <Badge variant="outline">Changed by staff</Badge>}
+                      {ph.pending && <span className="text-muted-foreground">· attached when you save</span>}
+                      {ph.pending && <button type="button" className="text-muted-foreground underline" onClick={() => set(r.customerId, { photo: null })}>remove</button>}
+                    </div>
+                  );
+                })()}
                 {err && <p className="mt-2 text-xs text-destructive" data-testid={`error-reading-${r.customerId}`}>{err}</p>}
               </Card>
             );
           })}
         </div>
       )}
+      <Dialog open={!!scan} onOpenChange={(o) => { if (!o && !scan?.busy) setScan(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>{scan?.busy ? "Reading the photo…" : scan?.result?.status === "matched" || scan?.result?.status === "unverified" ? "Check the reading" : "Photo not used"}</DialogTitle>
+            <DialogDescription>{scan?.forId ? `Taken from ${rows.find((x) => x.customerId === scan.forId)?.name ?? "this customer"}'s row.` : "Matched by the meter number in the photo."}</DialogDescription></DialogHeader>
+          {scan?.preview && <img src={scan.preview} alt="Meter photo" className="w-full max-h-64 object-contain rounded-md bg-muted" />}
+          {scan?.busy && <p className="text-sm text-muted-foreground">This takes a few seconds.</p>}
+          {scan?.error && <p className="text-sm text-destructive" data-testid="text-scan-error">{scan.error}</p>}
+          {scan?.result && (
+            <div className="space-y-2 text-sm" data-testid="scan-result">
+              <div className="grid grid-cols-2 gap-2">
+                <div><div className="text-xs text-muted-foreground">Meter number seen</div><div className="font-medium">{scan.result.detected.meterNumber ?? "Not readable"}</div></div>
+                <div><div className="text-xs text-muted-foreground">Reading seen</div><div className="font-medium tabular-nums" data-testid="text-scan-reading">{scan.result.detected.reading === null ? "Not readable" : m3(scan.result.detected.reading)}</div></div>
+              </div>
+              <p className={scan.result.status === "matched" ? "text-sm" : "text-sm text-destructive"} data-testid="text-scan-message">{scan.result.message}</p>
+              {scan.result.detected.confidence !== "high" && (scan.result.status === "matched" || scan.result.status === "unverified") && <p className="text-xs text-muted-foreground">The reader wasn't fully sure{scan.result.detected.notes ? `: ${scan.result.detected.notes.replace(/[.!]?\s*$/, ".")}` : "."} Compare the digits with the photo.</p>}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" disabled={scan?.busy} onClick={() => setScan(null)}>Close</Button>
+            {!scan?.busy && <Button variant="outline" onClick={() => { const id = scan?.forId ?? null; setScan(null); openCamera(id); }} data-testid="button-scan-retake"><Camera className="h-4 w-4 mr-1" />Retake</Button>}
+            {scan?.result?.token && <Button onClick={applyScan} data-testid="button-scan-use">{scan.result.detected.reading === null ? "Attach photo" : "Use this reading"}</Button>}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={confirm} onOpenChange={setConfirm}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Raise {toBill.length} water bill{toBill.length === 1 ? "" : "s"} for {monthLabel(month)}?</DialogTitle>
@@ -453,6 +541,7 @@ function TariffsTab() {
         <label className="flex items-center gap-2 text-sm"><Switch checked={!!settings?.waterBillSms} onCheckedChange={(v) => saveSettings.mutate({ waterBillSms: v ? 1 : 0 })} data-testid="switch-water-sms" />SMS each bill to the customer</label>
         {settings && !settings.smsEnabled && <p className="text-xs text-muted-foreground w-full">SMS is turned off in Settings → SMS, so bills will only be emailed.</p>}
       </Card>
+      <PhotoReadingCard settings={settings} />
       <div className="flex justify-end"><Button onClick={() => setEdit("new")} data-testid="button-new-tariff"><Plus className="h-4 w-4 mr-1" />Add tariff</Button></div>
       {tariffs.length === 0 ? <Card className="p-8 text-center text-sm text-muted-foreground">No tariffs yet. A tariff sets the price per m³ (optionally in bands), a monthly service charge and a minimum bill.</Card> : (
         <div className="grid gap-3 md:grid-cols-2">
@@ -472,6 +561,42 @@ function TariffsTab() {
       )}
       {edit && <TariffDialog tariff={edit === "new" ? null : edit} onClose={() => setEdit(null)} />}
     </div>
+  );
+}
+
+function PhotoReadingCard({ settings }: { settings: any }) {
+  const { toast } = useToast();
+  const { data: me } = useCurrentUser();
+  const isAdmin = !!(me as any)?.isAdmin;
+  const [provider, setProvider] = useState("");
+  const [model, setModel] = useState("");
+  const [key, setKey] = useState("");
+  useEffect(() => { if (settings) { setProvider(settings.visionProvider || ""); setModel(settings.visionModel || ""); } }, [settings]);
+  const save = useMutation({
+    mutationFn: async (patch: any) => (await apiRequest("PATCH", "/api/water-billing/settings", patch)).json(),
+    onSuccess: (r) => { queryClient.setQueryData(["/api/water-billing/settings"], r); setKey(""); toast({ title: r.visionReady ? "Photo reading is on" : "Photo reading saved", description: r.visionReady ? "Camera buttons now appear on the Readings tab." : undefined }); },
+    onError: (e) => toast({ title: "Couldn't save", description: errMsg(e), variant: "destructive" }),
+  });
+  if (!settings) return null;
+  return (
+    <Card className="p-4 space-y-3" data-testid="card-photo-reading">
+      <div className="flex flex-wrap items-center gap-2"><div className="text-sm font-medium">Photo reading (optional)</div>
+        <Badge variant={settings.visionReady ? "secondary" : "outline"} data-testid="badge-vision-status">{settings.visionReady ? `On · ${settings.visionProvider === "gemini" ? "Google Gemini" : "OpenAI"} · key ${settings.visionKeyHint}` : "Off"}</Badge></div>
+      <p className="text-xs text-muted-foreground">Lets staff photograph a meter: an AI reader picks out the meter number and reading, the meter number is matched to the registered customer, and staff confirm before saving. Typing readings always works without it. Each photo costs well under KES 1 on the provider's account.</p>
+      {!isAdmin ? <p className="text-xs text-muted-foreground">Only an admin can turn this on or change the key.</p> : (
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1.5"><Label>Provider</Label>
+            <Select value={provider || "none"} onValueChange={(v) => setProvider(v === "none" ? "" : v)}>
+              <SelectTrigger className="w-44" data-testid="select-vision-provider"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="none">Off</SelectItem><SelectItem value="gemini">Google Gemini</SelectItem><SelectItem value="openai">OpenAI</SelectItem></SelectContent>
+            </Select></div>
+          <div className="space-y-1.5"><Label htmlFor="vision-key">API key</Label><Input id="vision-key" type="password" autoComplete="off" className="w-64" placeholder={settings.visionKeySet ? `Saved ${settings.visionKeyHint}` : "Paste the key"} value={key} onChange={(e) => setKey(e.target.value)} data-testid="input-vision-key" /></div>
+          <div className="space-y-1.5"><Label htmlFor="vision-model">Model <span className="text-muted-foreground font-normal">(optional)</span></Label><Input id="vision-model" className="w-44" placeholder={provider === "openai" ? "gpt-4o-mini" : "gemini-2.5-flash"} value={model} onChange={(e) => setModel(e.target.value)} data-testid="input-vision-model" /></div>
+          <Button disabled={save.isPending || (provider !== "" && !settings.visionKeySet && !key.trim())} onClick={() => save.mutate({ visionProvider: provider, visionModel: model, ...(key.trim() ? { visionApiKey: key.trim() } : {}) })} data-testid="button-save-vision">Save</Button>
+          {settings.visionKeySet && <Button variant="ghost" disabled={save.isPending} onClick={() => save.mutate({ clearVisionKey: true, visionProvider: "" })}>Remove key</Button>}
+        </div>
+      )}
+    </Card>
   );
 }
 

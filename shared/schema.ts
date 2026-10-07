@@ -516,6 +516,9 @@ export const settings = pgTable("settings", {
   integrityTaxDay: integer("integrity_tax_day").notNull().default(1), // day of month the previous month's tax check runs
   waterBillDueDays: integer("water_bill_due_days").notNull().default(14), // metered water bills: days from bill date to due date
   waterBillSms: integer("water_bill_sms").notNull().default(1), // send an SMS with each metered water bill
+  meterVisionProvider: text("meter_vision_provider"), // "gemini" | "openai" | null — reads meter photos
+  meterVisionApiKey: text("meter_vision_api_key"),
+  meterVisionModel: text("meter_vision_model"), // optional override of the default model
   publicTableDeposit: real("public_table_deposit").notNull().default(1000), // KES per reservation, credited to the bill
   publicTableMaxParty: integer("public_table_max_party").notNull().default(12),
   publicTableOpenTime: text("public_table_open_time").notNull().default("07:00"),

@@ -5,12 +5,15 @@
 import type { Express, Request } from "express";
 import { z } from "zod";
 import PDFDocument from "pdfkit";
+import crypto from "node:crypto";
 import { sql, storage } from "./storage";
 import { requireModule } from "./auth";
 import { issueDocument, issueCreditNote } from "./documents";
 import { sendSms } from "./sms";
 import { normalizeRef, isRealRef, inFlight, findReferenceUse, duplicateRefMessage } from "./payment-refs";
 import { companyDisplayName, drawCompanyHeaderName, LOGO_EXISTS, LOGO_PATH } from "./pdf";
+import { saveBase64Upload, UploadValidationError } from "./uploads";
+import { readMeterPhoto, normSerial } from "./meter-vision";
 import { calcWaterCharge, consumptionOf, validateTariff, normalizeBands, monthLabel, type WaterBand } from "@shared/water-billing";
 
 const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -29,6 +32,10 @@ function baseUrl(req: Request): string {
   const proto = (req.headers["x-forwarded-proto"] as string)?.split(",")[0] || req.protocol || "https";
   return `${proto}://${req.get("host")}`;
 }
+
+// Photo scans waiting to be confirmed (token → what was read and for whom). In memory; tokens last 6 hours.
+const scans = new Map<string, { customerId: number; photoUrl: string; meterNumber: string | null; reading: number | null; verified: boolean; confidence: string; expires: number }>();
+setInterval(() => { const now = Date.now(); for (const [k, v] of Array.from(scans)) if (v.expires < now) scans.delete(k); }, 3600_000).unref?.();
 
 // ---------- data access ----------
 const tariffRow = (t: any) => ({ id: t.id, name: t.name, bands: normalizeBands(JSON.parse(t.bands_json || "[]")), serviceCharge: n(t.service_charge), minimumCharge: n(t.minimum_charge), active: Number(t.active), notes: t.notes ?? null });
@@ -61,11 +68,14 @@ function chargeLines(charge: any, bill: any) {
 
 async function issueBillDocument(bill: any, customer: any) {
   const charge = JSON.parse(bill.charge_json);
+  const [photo] = await sql`SELECT photo_url, photo_meter_verified, reading_date FROM water_readings WHERE id = ${bill.reading_id}` as any[];
   const bf = n(bill.balance_brought_forward);
   return issueDocument(storage, {
     docType: "invoice", category: "water_bill", sourceId: bill.id, customDocNumber: bill.bill_number,
     recipientName: customer.name, recipientEmail: customer.email || null, issueDate: prettyDate(bill.bill_date),
     lineItems: chargeLines(charge, bill), totalAmount: n(bill.current_charges), amountPaid: 0, balance: Math.max(0, n(bill.total_due)), broughtForward: bf,
+    meterPhotoUrl: photo?.photo_url ?? null,
+    meterPhotoCaption: photo?.photo_url ? `Meter ${customer.meter_number ?? ""} read ${prettyDate(photo.reading_date)}: ${bill.current_reading} m³${photo.photo_meter_verified === 0 ? " (meter number not readable in the photo)" : ""}.` : undefined,
     notes: [
       `Water bill for ${monthLabel(bill.period_month)} · Account ${customer.account_no}${customer.meter_number ? ` · Meter ${customer.meter_number}` : ""}${customer.location ? ` · ${customer.location}` : ""}.`,
       `Please pay ${kes(Math.max(0, n(bill.total_due)))} by ${prettyDate(bill.due_date)}${Math.abs(bf) > 0.5 ? ` (this month's charges ${bf > 0 ? "plus arrears" : "less credit"} brought forward)` : ""}.`,
@@ -173,7 +183,7 @@ async function excelReport(fromMonth: string, toMonth: string, hotelName: string
     const r = ws.getRow(1); r.font = { bold: true, color: { argb: "FFFFFFFF" } }; r.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF2A2118" } };
     ws.views = [{ state: "frozen", ySplit: 1 }]; ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
   };
-  const bills = await sql`SELECT b.*, c.account_no, c.name, c.meter_number, c.location, c.phone FROM water_bills b JOIN water_customers c ON c.id = b.customer_id
+  const bills = await sql`SELECT b.*, c.account_no, c.name, c.meter_number, c.location, c.phone, r.photo_url, r.photo_reading, r.photo_meter_verified FROM water_bills b JOIN water_customers c ON c.id = b.customer_id LEFT JOIN water_readings r ON r.id = b.reading_id
     WHERE b.period_month BETWEEN ${fromMonth} AND ${toMonth} ORDER BY b.period_month, c.account_no` as any[];
   const ws = wb.addWorksheet("Bills");
   head(ws, [
@@ -184,7 +194,7 @@ async function excelReport(fromMonth: string, toMonth: string, hotelName: string
     { header: "Min. adj. (KES)", key: "min", width: 13, style: { numFmt: money } }, { header: "Current charges (KES)", key: "charges", width: 16, style: { numFmt: money } },
     { header: "Brought forward (KES)", key: "bf", width: 16, style: { numFmt: money } }, { header: "Total due (KES)", key: "due", width: 14, style: { numFmt: money } },
     { header: "Paid on this bill (KES)", key: "paid", width: 16, style: { numFmt: money } }, { header: "Bill balance (KES)", key: "bal", width: 14, style: { numFmt: money } },
-    { header: "Bill date", key: "date", width: 11 }, { header: "Due date", key: "duedate", width: 11 }, { header: "Status", key: "status", width: 13 },
+    { header: "Reading source", key: "src", width: 22 }, { header: "Bill date", key: "date", width: 11 }, { header: "Due date", key: "duedate", width: 11 }, { header: "Status", key: "status", width: 13 },
   ]);
   for (const b of bills) {
     const ch = JSON.parse(b.charge_json);
@@ -192,6 +202,7 @@ async function excelReport(fromMonth: string, toMonth: string, hotelName: string
     ws.addRow({ month: b.period_month, bill: b.bill_number, acc: b.account_no, name: b.name, meter: b.meter_number, loc: b.location, tariff: b.tariff_name,
       prev: n(b.previous_reading), cur: n(b.current_reading), used: n(b.consumption), water: n(ch.consumptionAmount), service: n(ch.serviceCharge), min: n(ch.minimumTopUp),
       charges: n(b.current_charges), bf: n(b.balance_brought_forward), due: n(b.total_due), paid: n(b.amount_paid), bal: cancelled ? 0 : r2(n(b.current_charges) - n(b.amount_paid)),
+      src: !b.photo_url ? "Typed" : `Photo${b.photo_meter_verified === 0 ? ", meter no. not verified" : ""}${b.photo_reading !== null && Math.abs(n(b.photo_reading) - n(b.current_reading)) > 0.0005 ? `, edited (photo ${n(b.photo_reading)})` : ""}`,
       date: b.bill_date, duedate: b.due_date, status: cancelled ? `cancelled: ${b.cancel_reason ?? ""}` : String(b.status).replace("_", " ") });
   }
   const live = bills.filter((b) => b.status !== "cancelled");
@@ -252,6 +263,10 @@ const customerSchema = z.object({
   depositAmount: z.number().min(0).default(0), depositReference: z.string().trim().nullable().optional(), depositDate: z.string().nullable().optional(), notes: z.string().nullable().optional(),
 });
 
+const visionInfo = (s: any) => ({ waterBillDueDays: Number(s.waterBillDueDays ?? 14), waterBillSms: Number(s.waterBillSms ?? 1), smsEnabled: !!s.smsEnabled,
+  visionProvider: s.meterVisionProvider || "", visionModel: s.meterVisionModel || "", visionKeySet: !!s.meterVisionApiKey,
+  visionReady: !!(s.meterVisionProvider && s.meterVisionApiKey), visionKeyHint: s.meterVisionApiKey ? `…${String(s.meterVisionApiKey).slice(-4)}` : "" });
+
 export function registerWaterBillingRoutes(app: Express) {
   const W = requireModule("water-sales");
   const fail = (res: any, err: any, status = 400) => res.status(err?.issues ? 400 : status).json({ error: err?.issues ? err.issues[0]?.message : err?.message ?? "Failed" });
@@ -289,13 +304,23 @@ export function registerWaterBillingRoutes(app: Express) {
   // Billing settings (water module users can change these without full Settings access)
   app.get("/api/water-billing/settings", W, async (_req, res) => {
     const s = await storage.getSettings() as any;
-    res.json({ waterBillDueDays: Number(s.waterBillDueDays ?? 14), waterBillSms: Number(s.waterBillSms ?? 1), smsEnabled: !!s.smsEnabled });
+    res.json(visionInfo(s));
   });
   app.patch("/api/water-billing/settings", W, async (req, res) => {
     try {
-      const b = z.object({ waterBillDueDays: z.number().int().min(0).max(90), waterBillSms: z.number().int().min(0).max(1) }).parse(req.body);
-      const s = await storage.updateSettings(b as any) as any;
-      res.json({ waterBillDueDays: Number(s.waterBillDueDays), waterBillSms: Number(s.waterBillSms), smsEnabled: !!s.smsEnabled });
+      const b = z.object({ waterBillDueDays: z.number().int().min(0).max(90).optional(), waterBillSms: z.number().int().min(0).max(1).optional(),
+        visionProvider: z.enum(["gemini", "openai", ""]).optional(), visionModel: z.string().max(80).optional(), visionApiKey: z.string().max(400).optional(), clearVisionKey: z.boolean().optional() }).parse(req.body);
+      const patch: any = {};
+      if (b.waterBillDueDays !== undefined) patch.waterBillDueDays = b.waterBillDueDays;
+      if (b.waterBillSms !== undefined) patch.waterBillSms = b.waterBillSms;
+      const touchesVision = b.visionProvider !== undefined || b.visionModel !== undefined || !!b.visionApiKey || b.clearVisionKey;
+      if (touchesVision && !(req as any).user?.isAdmin) return res.status(403).json({ error: "Only an admin can change photo reading." });
+      if (b.visionProvider !== undefined) patch.meterVisionProvider = b.visionProvider || null;
+      if (b.visionModel !== undefined) patch.meterVisionModel = b.visionModel.trim() || null;
+      if (b.visionApiKey && b.visionApiKey.trim()) patch.meterVisionApiKey = b.visionApiKey.trim();
+      if (b.clearVisionKey) patch.meterVisionApiKey = null;
+      const s = await storage.updateSettings(patch) as any;
+      res.json(visionInfo(s));
     } catch (e) { fail(res, e); }
   });
 
@@ -393,7 +418,8 @@ export function registerWaterBillingRoutes(app: Express) {
       const prev = r ? n(r.previous_reading) : await previousReading(Number(c.id), month, n(c.opening_reading));
       out.push({ customerId: c.id, accountNo: c.account_no, name: c.name, location: c.location, meterNumber: c.meter_number, status: c.status,
         tariff: { name: c.tariff_name, bands: normalizeBands(JSON.parse(c.bands_json || "[]")), serviceCharge: n(c.service_charge), minimumCharge: n(c.minimum_charge) },
-        previousReading: prev, reading: r ? { id: r.id, currentReading: n(r.current_reading), meterReplaced: !!r.meter_replaced, oldMeterFinal: r.old_meter_final === null ? null : n(r.old_meter_final), newMeterStart: r.new_meter_start === null ? null : n(r.new_meter_start), consumption: n(r.consumption), readingDate: r.reading_date, billId: r.bill_id, billNumber: r.bill_number, billStatus: r.bill_status } : null,
+        previousReading: prev, reading: r ? { id: r.id, currentReading: n(r.current_reading), meterReplaced: !!r.meter_replaced, oldMeterFinal: r.old_meter_final === null ? null : n(r.old_meter_final), newMeterStart: r.new_meter_start === null ? null : n(r.new_meter_start), consumption: n(r.consumption), readingDate: r.reading_date, billId: r.bill_id, billNumber: r.bill_number, billStatus: r.bill_status,
+          photoUrl: r.photo_url ?? null, photoMeterNumber: r.photo_meter_number ?? null, photoReading: r.photo_reading === null ? null : n(r.photo_reading), photoMeterVerified: r.photo_meter_verified === null ? null : Number(r.photo_meter_verified), photoConfidence: r.photo_confidence ?? null } : null,
         laterMonth: laterBy.get(Number(c.id)) ?? null });
     }
     res.json(out);
@@ -403,6 +429,7 @@ export function registerWaterBillingRoutes(app: Express) {
       const body = z.object({ month: z.string(), readings: z.array(z.object({
         customerId: z.number().int(), currentReading: z.number().min(0), readingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         meterReplaced: z.boolean().optional(), oldMeterFinal: z.number().min(0).nullable().optional(), newMeterStart: z.number().min(0).nullable().optional(),
+        photoToken: z.string().nullable().optional(),
       })) }).parse(req.body);
       if (!isMonth(body.month)) return res.status(400).json({ error: "Choose a month." });
       const errors: { customerId: number; error: string }[] = []; let saved = 0;
@@ -420,18 +447,77 @@ export function registerWaterBillingRoutes(app: Express) {
           if (r.currentReading < replaced.newStart) { errors.push({ customerId: c.id, error: `${c.name}: the new meter's reading can't be below its start reading.` }); continue; }
         } else if (r.currentReading < prev) { errors.push({ customerId: c.id, error: `${c.name}: ${r.currentReading} is lower than last month's ${prev}. If the meter was replaced or reset, tick "Meter replaced".` }); continue; }
         const used = consumptionOf(prev, r.currentReading, replaced);
+        // A photo scan is attached via the one-time token the scan returned — only for the customer it was matched to.
+        let photo: any = null;
+        if (r.photoToken) {
+          const scan = scans.get(r.photoToken);
+          if (!scan || scan.customerId !== Number(c.id) || scan.expires < Date.now()) { errors.push({ customerId: c.id, error: `${c.name}: the meter photo has expired or belongs to another customer — scan it again or save without it.` }); continue; }
+          photo = scan; scans.delete(r.photoToken);
+        }
+        const keepPhoto = !r.photoToken && existing ? true : false;
         if (existing) {
           await sql`UPDATE water_readings SET previous_reading = ${prev}, current_reading = ${r.currentReading}, meter_replaced = ${replaced ? 1 : 0}, old_meter_final = ${replaced?.oldFinal ?? null},
             new_meter_start = ${replaced?.newStart ?? null}, consumption = ${used}, reading_date = ${r.readingDate}, bill_id = NULL, recorded_by = ${who(req)} WHERE id = ${existing.id}`;
+          if (photo) await sql`UPDATE water_readings SET photo_url = ${photo.photoUrl}, photo_meter_number = ${photo.meterNumber}, photo_reading = ${photo.reading}, photo_meter_verified = ${photo.verified ? 1 : 0}, photo_confidence = ${photo.confidence} WHERE id = ${existing.id}`;
+          else if (!keepPhoto) await sql`UPDATE water_readings SET photo_url = NULL, photo_meter_number = NULL, photo_reading = NULL, photo_meter_verified = NULL, photo_confidence = NULL WHERE id = ${existing.id}`;
         } else {
-          await sql`INSERT INTO water_readings (customer_id, period_month, previous_reading, current_reading, meter_replaced, old_meter_final, new_meter_start, consumption, reading_date, recorded_by, created_at)
-            VALUES (${c.id}, ${body.month}, ${prev}, ${r.currentReading}, ${replaced ? 1 : 0}, ${replaced?.oldFinal ?? null}, ${replaced?.newStart ?? null}, ${used}, ${r.readingDate}, ${who(req)}, ${Date.now()})`;
+          await sql`INSERT INTO water_readings (customer_id, period_month, previous_reading, current_reading, meter_replaced, old_meter_final, new_meter_start, consumption, reading_date, recorded_by, created_at,
+              photo_url, photo_meter_number, photo_reading, photo_meter_verified, photo_confidence)
+            VALUES (${c.id}, ${body.month}, ${prev}, ${r.currentReading}, ${replaced ? 1 : 0}, ${replaced?.oldFinal ?? null}, ${replaced?.newStart ?? null}, ${used}, ${r.readingDate}, ${who(req)}, ${Date.now()},
+              ${photo?.photoUrl ?? null}, ${photo?.meterNumber ?? null}, ${photo?.reading ?? null}, ${photo ? (photo.verified ? 1 : 0) : null}, ${photo?.confidence ?? null})`;
         }
         saved++;
       }
       res.json({ saved, errors });
     } catch (e) { fail(res, e); }
   });
+  // Photo of a meter → AI reads meter number + reading → matched to the registered meter. Nothing is saved
+  // here except the photo; staff confirm, and Save readings attaches it via the returned token.
+  app.post("/api/water-billing/scan", W, async (req, res) => {
+    try {
+      const body = z.object({ imageBase64: z.string().min(100), mimeType: z.enum(["image/jpeg", "image/png"]), customerId: z.number().int().nullable().optional() }).parse(req.body);
+      const settings = await storage.getSettings() as any;
+      if (!settings.meterVisionProvider || !settings.meterVisionApiKey) return res.status(400).json({ error: "Photo reading is not set up yet. An admin can set it up in the Tariffs tab → Photo reading." });
+      const { url: photoUrl } = saveBase64Upload({ category: "water-meters", dataBase64: body.imageBase64, mimeType: body.mimeType });
+      const seen = await readMeterPhoto({ provider: settings.meterVisionProvider, apiKey: settings.meterVisionApiKey, model: settings.meterVisionModel, imageBase64: body.imageBase64, mimeType: body.mimeType });
+      const customers = await sql`SELECT id, name, account_no, meter_number, status FROM water_customers WHERE meter_number IS NOT NULL` as any[];
+      const d = normSerial(seen.meterNumber);
+      let match: any = null; let partial = false;
+      if (d) {
+        const exact = customers.filter((c) => normSerial(c.meter_number) === d);
+        if (exact.length === 1) match = exact[0];
+        else if (!exact.length && d.length >= 4) {
+          const near = customers.filter((c) => { const k = normSerial(c.meter_number); return k.length >= 4 && (k.includes(d) || d.includes(k)); });
+          if (near.length === 1) { match = near[0]; partial = true; }
+        }
+      }
+      const want = body.customerId ?? null;
+      const wanted = want ? customers.find((c) => Number(c.id) === want) ?? (await sql`SELECT id, name, account_no, meter_number, status FROM water_customers WHERE id = ${want}` as any[])[0] : null;
+      let status: "matched" | "unverified" | "mismatch" | "unregistered" | "serial_unreadable" | "disconnected";
+      let message: string;
+      if (!d) {
+        if (wanted) { status = "unverified"; message = `The meter number isn't readable in this photo, so it can't be checked against ${wanted.meter_number ?? "the registered meter"}. Check the meter yourself before saving.`; }
+        else { status = "serial_unreadable"; message = "The meter number isn't readable in this photo, so the customer can't be found. Retake it with the serial number in view, or use the camera button on the customer's row."; }
+      } else if (!match) {
+        status = "unregistered"; message = `Meter ${seen.meterNumber} isn't registered to any customer. Check the photo, or correct the customer's meter number, then try again.`;
+      } else if (wanted && Number(match.id) !== Number(wanted.id)) {
+        status = "mismatch"; message = `This photo shows meter ${seen.meterNumber}, which belongs to ${match.name} (${match.account_no}) — not ${wanted.name}. The reading was not used.`;
+      } else if (match.status !== "active") {
+        status = "disconnected"; message = `Meter ${seen.meterNumber} belongs to ${match.name} (${match.account_no}), who is marked disconnected.`;
+      } else { status = "matched"; message = `Meter ${seen.meterNumber} matches ${match.name} (${match.account_no})${partial ? ` — registered as ${match.meter_number}` : ""}.`; }
+      const target = status === "matched" ? match : status === "unverified" ? wanted : null;
+      let token: string | null = null;
+      if (target) {
+        token = crypto.randomBytes(16).toString("hex");
+        scans.set(token, { customerId: Number(target.id), photoUrl, meterNumber: seen.meterNumber, reading: seen.reading, verified: status === "matched", confidence: seen.confidence, expires: Date.now() + 6 * 3600_000 });
+      }
+      res.json({ status, message, photoUrl, token, detected: seen, customer: target ? { id: target.id, name: target.name, accountNo: target.account_no, meterNumber: target.meter_number } : match ? { id: match.id, name: match.name, accountNo: match.account_no, meterNumber: match.meter_number } : null });
+    } catch (e: any) {
+      if (e instanceof UploadValidationError) return res.status(400).json({ error: e.message });
+      fail(res, e);
+    }
+  });
+
   app.delete("/api/water-billing/readings/:id", W, async (req, res) => {
     const [r] = await sql`SELECT r.*, b.status FROM water_readings r LEFT JOIN water_bills b ON b.id = r.bill_id WHERE r.id = ${Number(req.params.id)}` as any[];
     if (!r) return res.status(404).json({ error: "Reading not found" });

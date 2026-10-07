@@ -1293,6 +1293,14 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
   await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('water_customer', 'WC', 1, 4) ON CONFLICT (sequence_key) DO NOTHING`;
   await ensureColumn("settings", "water_bill_due_days", "INTEGER NOT NULL DEFAULT 14");
   await ensureColumn("settings", "water_bill_sms", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("settings", "meter_vision_provider", "TEXT");
+  await ensureColumn("settings", "meter_vision_api_key", "TEXT");
+  await ensureColumn("settings", "meter_vision_model", "TEXT");
+  await ensureColumn("water_readings", "photo_url", "TEXT");
+  await ensureColumn("water_readings", "photo_meter_number", "TEXT");
+  await ensureColumn("water_readings", "photo_reading", "REAL");
+  await ensureColumn("water_readings", "photo_meter_verified", "INTEGER");
+  await ensureColumn("water_readings", "photo_confidence", "TEXT");
   // In-app notifications (Owner/Director briefing + bell). One row per recipient.
   await sql`
 CREATE TABLE IF NOT EXISTS notifications (

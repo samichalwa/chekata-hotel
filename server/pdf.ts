@@ -4,6 +4,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import type { Settings, MaintenanceIssue } from "@shared/schema";
 import { getCurrentEnvironment } from "./db-context";
+import { UPLOADS_ROOT, TEST_UPLOADS_ROOT } from "./uploads";
 
 // Every PDF generated while a request is running in the Test environment
 // gets "TEST COMPANY — " prefixed onto the company/hotel name wherever it
@@ -59,6 +60,8 @@ export interface DocPayload {
   totalAmount: number;
   amountPaid: number;
   balance: number;
+  meterPhotoUrl?: string | null; // metered water bills: photo of the meter reading (/uploads/... or /test-uploads/...)
+  meterPhotoCaption?: string;
   broughtForward?: number; // metered water bills: arrears (+) or credit (−) carried onto this bill; balance then = total due
   paymentAmount?: number; // for receipts: the specific payment this receipt covers
   paymentMethod?: string | null;
@@ -324,6 +327,21 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
       ensureSpace(doc.heightOfString(payload.notes, { width: 495 }) + 12);
       doc.fillColor(muted).text(payload.notes, 50, y, { width: 495 });
       y += doc.heightOfString(payload.notes, { width: 495 }) + 12;
+    }
+
+    // ---- Meter photo (metered water bills) ----
+    if (payload.meterPhotoUrl) {
+      const m = payload.meterPhotoUrl.match(new RegExp("^/(uploads|test-uploads)/([a-z0-9_-]+)/([A-Za-z0-9._-]+[.](?:jpg|jpeg|png))$", "i"));
+      const file = m ? path.join(m[1].toLowerCase() === "uploads" ? UPLOADS_ROOT : TEST_UPLOADS_ROOT, m[2], m[3]) : null;
+      if (file && fs.existsSync(file)) {
+        try {
+          ensureSpace(132);
+          doc.image(file, 50, y, { fit: [160, 110] });
+          doc.font("Helvetica-Bold").fontSize(9).fillColor(dark).text("Meter photo", 222, y + 4, { width: 320 });
+          doc.font("Helvetica").fontSize(8.5).fillColor(muted).text(payload.meterPhotoCaption || "", 222, y + 18, { width: 320 });
+          y += 122;
+        } catch (e) { console.warn("[pdf] meter photo skipped:", (e as any)?.message); }
+      }
     }
 
     // ---- How to pay (invoices only; configured in Settings > Invoice payments) ----
