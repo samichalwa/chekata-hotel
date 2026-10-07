@@ -1301,6 +1301,25 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
   await ensureColumn("water_readings", "photo_reading", "REAL");
   await ensureColumn("water_readings", "photo_meter_verified", "INTEGER");
   await ensureColumn("water_readings", "photo_confidence", "TEXT");
+  await ensureColumn("water_readings", "updated_at", "BIGINT");
+  await ensureColumn("tenancy_leases", "meter_number", "TEXT");
+  await ensureColumn("meter_readings", "updated_at", "BIGINT");
+  await ensureColumn("meter_readings", "invoice_id", "INTEGER");
+  await ensureColumn("meter_readings", "photo_url", "TEXT");
+  await ensureColumn("meter_readings", "photo_meter_number", "TEXT");
+  await ensureColumn("meter_readings", "photo_reading", "REAL");
+  await ensureColumn("meter_readings", "photo_meter_verified", "INTEGER");
+  await ensureColumn("meter_readings", "photo_confidence", "TEXT");
+  await ensureColumn("rent_invoices", "invoice_kind", "TEXT NOT NULL DEFAULT 'rent'");
+  await ensureColumn("rent_invoices", "meter_reading_id", "INTEGER");
+  await ensureColumn("settings", "meter_bill_delay_hours", "INTEGER NOT NULL DEFAULT 24");
+  await ensureColumn("settings", "meter_auto_billing_from", "BIGINT");
+  await ensureColumn("settings", "electricity_due_days", "INTEGER NOT NULL DEFAULT 14");
+  await ensureColumn("settings", "electricity_income_account_id", "INTEGER");
+  await ensureColumn("settings", "electricity_sms", "INTEGER NOT NULL DEFAULT 1");
+  // Auto-billing of saved meter readings starts from the first boot that has this feature —
+  // older unbilled readings are never billed automatically (staff can still bill them by hand).
+  await sql`UPDATE settings SET meter_auto_billing_from = ${Date.now()} WHERE meter_auto_billing_from IS NULL`;
   // In-app notifications (Owner/Director briefing + bell). One row per recipient.
   await sql`
 CREATE TABLE IF NOT EXISTS notifications (
@@ -4036,7 +4055,8 @@ export class DatabaseStorage implements IStorage {
     return (await db.select().from(rentInvoices).where(eq(rentInvoices.id, id)))[0];
   }
   async getRentInvoiceForPeriod(leaseId: number, periodMonth: string) {
-    return (await db.select().from(rentInvoices).where(and(eq(rentInvoices.leaseId, leaseId), eq(rentInvoices.periodMonth, periodMonth))))[0];
+    // Rent only — a month can also have a separate electricity invoice (invoice_kind = 'electricity').
+    return (await db.select().from(rentInvoices).where(and(eq(rentInvoices.leaseId, leaseId), eq(rentInvoices.periodMonth, periodMonth), eq(rentInvoices.invoiceKind, "rent"))))[0];
   }
   async createRentInvoiceForPeriod(leaseId: number, periodMonth: string, createdBy: string) {
     const lease = await this.getTenancyLease(leaseId);
@@ -4046,8 +4066,9 @@ export class DatabaseStorage implements IStorage {
     if (!lease.receivableAccountId || !lease.incomeAccountId) {
       throw new Error("This lease has no GL receivable/income account configured — set them before generating invoices");
     }
-    const [meterReading] = await db.select().from(meterReadings).where(and(eq(meterReadings.leaseId, leaseId), eq(meterReadings.periodMonth, periodMonth)));
-    const electricityAmount = meterReading?.amount ?? 0;
+    // Electricity is invoiced separately from each saved meter reading (Meter Readings → auto-invoice
+    // after the review window), so rent invoices carry rent only.
+    const electricityAmount = 0;
     const rentAmount = lease.monthlyRent;
     const totalAmount = rentAmount + electricityAmount;
     const invoiceNumber = await this.getNextSequenceNumber("rent_invoice");

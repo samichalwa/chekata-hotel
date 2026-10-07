@@ -519,6 +519,11 @@ export const settings = pgTable("settings", {
   meterVisionProvider: text("meter_vision_provider"), // "gemini" | "openai" | null — reads meter photos
   meterVisionApiKey: text("meter_vision_api_key"),
   meterVisionModel: text("meter_vision_model"), // optional override of the default model
+  meterBillDelayHours: integer("meter_bill_delay_hours").notNull().default(24), // review window before saved readings auto-bill
+  meterAutoBillingFrom: bigint("meter_auto_billing_from", { mode: "number" }), // readings saved before this are never auto-billed
+  electricityDueDays: integer("electricity_due_days").notNull().default(14),
+  electricityIncomeAccountId: integer("electricity_income_account_id"), // null = the lease's income account
+  electricitySms: integer("electricity_sms").notNull().default(1),
   publicTableDeposit: real("public_table_deposit").notNull().default(1000), // KES per reservation, credited to the bill
   publicTableMaxParty: integer("public_table_max_party").notNull().default(12),
   publicTableOpenTime: text("public_table_open_time").notNull().default("07:00"),
@@ -612,6 +617,7 @@ export const MODULE_KEYS = [
   "water-sales",
   "hr",
   "integrity",
+  "meter-readings",
 ] as const;
 export type ModuleKey = typeof MODULE_KEYS[number];
 
@@ -643,6 +649,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   "water-sales": "Water Sales",
   hr: "HR: Temporary Labor Requisitions",
   integrity: "Integrity Checks",
+  "meter-readings": "Meter Readings",
 };
 
 // Cosmetic grouping used both by the Settings > Users module-access checkboxes
@@ -651,7 +658,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
 // and always sits outside these categories) must appear in exactly one
 // group here — all 25 operational modules, covered exactly once.
 export const MODULE_CATEGORY_GROUPS: { label: string; keys: ModuleKey[] }[] = [
-  { label: "Operations", keys: ["dashboard", "accommodation", "maintenance"] },
+  { label: "Operations", keys: ["dashboard", "accommodation", "maintenance", "meter-readings"] },
   { label: "Facilities", keys: ["facilities", "movie-room", "bar-restaurant", "fnb-costing"] },
   { label: "Water", keys: ["water-sales"] },
   { label: "Finance & Accounting", keys: ["finance", "budgeting", "documents", "expenses"] },
@@ -1350,6 +1357,7 @@ export const tenancyLeases = pgTable("tenancy_leases", {
   documentUrl: text("document_url"), // uploaded lease document
   receivableAccountId: integer("receivable_account_id"), // GL asset account — Tenant Rent Receivable
   incomeAccountId: integer("income_account_id"), // GL income account — Rental Income
+  meterNumber: text("meter_number"), // electricity meter serial — matched against meter photos
   status: text("status").notNull().default("active"), // active | ended
   notes: text("notes"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
@@ -1370,6 +1378,13 @@ export const meterReadings = pgTable("meter_readings", {
   readingDate: text("reading_date").notNull(), // YYYY-MM-DD
   recordedBy: text("recorded_by").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }), // last save — starts the auto-invoice review window
+  invoiceId: integer("invoice_id"), // electricity invoice (rent_invoices.invoice_kind = 'electricity'); 0 = nothing to bill
+  photoUrl: text("photo_url"),
+  photoMeterNumber: text("photo_meter_number"),
+  photoReading: real("photo_reading"),
+  photoMeterVerified: integer("photo_meter_verified"),
+  photoConfidence: text("photo_confidence"),
 });
 export const insertMeterReadingSchema = createInsertSchema(meterReadings).omit({ id: true });
 export type InsertMeterReading = z.infer<typeof insertMeterReadingSchema>;
@@ -1394,6 +1409,8 @@ export const rentInvoices = pgTable("rent_invoices", {
   journalEntryId: integer("journal_entry_id"),
   cancelReason: text("cancel_reason"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  invoiceKind: text("invoice_kind").notNull().default("rent"), // rent | electricity
+  meterReadingId: integer("meter_reading_id"), // electricity invoices: the reading billed
 });
 export const insertRentInvoiceSchema = createInsertSchema(rentInvoices).omit({ id: true });
 export type InsertRentInvoice = z.infer<typeof insertRentInvoiceSchema>;

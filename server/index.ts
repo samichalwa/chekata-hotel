@@ -7,6 +7,7 @@ import { createServer } from "node:http";
 import { sessionMiddleware, environmentMiddleware } from "./auth";
 import { schemaReady, storage } from "./storage";
 import { runTenantBillingCycle } from "./billing";
+import { startMeterAutoBillingSchedule } from "./meter-readings";
 import { startTestMessageLogPurgeSchedule } from "./test-environment";
 import { startDailyReportSchedule } from "./daily-report";
 import { startIntegritySchedule } from "./integrity";
@@ -123,6 +124,9 @@ app.use((req, res, next) => {
   }
   runBillingCycleLogged();
   setInterval(runBillingCycleLogged, 60 * 60 * 1000);
+
+  // Meter Readings: saved water/electricity readings bill automatically after the review window.
+  startMeterAutoBillingSchedule(log);
 
   // Phase 6: auto-purge intercepted Test-mode messages older than 30 days.
   startTestMessageLogPurgeSchedule();

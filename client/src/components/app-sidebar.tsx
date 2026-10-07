@@ -32,6 +32,7 @@ import {
   PiggyBank,
   Boxes,
   Droplets,
+  Gauge,
   UserCog,
 } from "lucide-react";
 import {
@@ -70,6 +71,7 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Payroll", url: "/payroll", icon: Landmark, key: "payroll" },
   { title: "Expenses", url: "/expenses", icon: Receipt, key: "expenses" },
   { title: "Maintenance", url: "/maintenance", icon: Wrench, key: "maintenance" },
+  { title: "Meter Readings", url: "/meter-readings", icon: Gauge, key: "meter-readings" },
   { title: "Lists", url: "/lists", icon: ClipboardList, key: "lists" },
   { title: "Reports", url: "/reports", icon: FileBarChart, key: "reports" },
   { title: "Invoices & Receipts", url: "/documents", icon: FileText, key: "documents" },
@@ -90,6 +92,10 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
 // (it's never permission-assignable), so it always renders in its own
 // trailing, unlabeled group at the bottom of the menu.
 const itemsByKey = new Map(items.map((item) => [item.key, item]));
+/** First page this user can open — used as the landing page when they have no Dashboard access. */
+export function firstAllowedUrl(user: Parameters<typeof canAccess>[0]): string | null {
+  return items.find((i) => i.key !== "settings" && canAccess(user, i.key))?.url ?? null;
+}
 
 export function AppSidebar() {
   const [location] = useLocation();

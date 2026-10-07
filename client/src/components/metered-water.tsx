@@ -75,7 +75,7 @@ type ScanResult = { status: "matched" | "unverified" | "mismatch" | "unregistere
   customer: { id: number; name: string; accountNo: string; meterNumber: string | null } | null };
 
 /** Shrinks a phone photo to max 1600px JPEG so uploads stay small on mobile data. */
-async function photoToJpeg(file: File): Promise<string> {
+export async function photoToJpeg(file: File): Promise<string> {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => bad(new Error("That file isn't a photo the browser can open.")); i.src = url; });
@@ -129,6 +129,10 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
   }, [rows]);
 
   const billed = (r: ReadingRow) => !!r.reading?.billId && r.reading.billStatus !== "cancelled";
+  // Saved readings bill automatically after the review window (Meter Readings → settings); a reading whose bill
+  // was cancelled waits for a manual Raise.
+  const { data: meterCfg } = useQuery<{ delayHours: number; autoFrom: number | null }>({ queryKey: ["/api/meter-reader/settings"] });
+  const autoAt = (r: ReadingRow) => { const t = (r.reading as any)?.savedAt as number | undefined; return meterCfg?.autoFrom && t && !r.reading?.billId && t >= meterCfg.autoFrom ? t + meterCfg.delayHours * 3600_000 : null; };
   const preview = (r: ReadingRow) => {
     const d = drafts[r.customerId]; if (!d || d.current === "") return null;
     const cur = Number(d.current);
@@ -213,7 +217,7 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
                     {p ? (<><div className="tabular-nums"><span className="font-medium">{m3(p.used)}</span> used</div><div className="tabular-nums text-muted-foreground">{formatKES(p.charge.total)}</div></>) : <span className="text-muted-foreground text-xs">Not read yet</span>}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                    {billed(r) ? <Badge variant="secondary">Billed {r.reading?.billNumber}</Badge> : r.laterMonth ? <Badge variant="outline">Locked — {monthLabel(r.laterMonth)} read</Badge> : r.reading ? <Badge variant="outline">Saved · not billed</Badge> : null}
+                    {billed(r) ? <Badge variant="secondary">Billed {r.reading?.billNumber}</Badge> : r.laterMonth ? <Badge variant="outline">Locked — {monthLabel(r.laterMonth)} read</Badge> : r.reading ? <Badge variant="outline" data-testid={`badge-reading-status-${r.customerId}`}>{autoAt(r) ? `Saved · auto-bills ${autoAt(r)! <= Date.now() ? "shortly" : new Date(autoAt(r)!).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : "Saved · not billed"}</Badge> : null}
                     {!locked && (
                       <label className="flex items-center gap-1.5 text-xs cursor-pointer"><Checkbox checked={d.replaced} onCheckedChange={(v) => set(r.customerId, { replaced: !!v })} data-testid={`check-replaced-${r.customerId}`} />Meter replaced</label>
                     )}

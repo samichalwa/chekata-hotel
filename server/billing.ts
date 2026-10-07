@@ -83,7 +83,8 @@ export async function runTenantBillingCycle(storage: IStorage, createdBy = "syst
     for (const inv of due) {
       try {
         const balance = inv.totalAmount - inv.amountPaid;
-        const message = `Dear ${inv.tenantName}, your rent invoice ${inv.invoiceNumber} for KES ${Math.round(balance).toLocaleString("en-KE")} is due ${inv.dueDate}. Please check your email for the invoice.`;
+        const kindWord = (inv as any).invoiceKind === "electricity" ? "electricity" : "rent";
+        const message = `Dear ${inv.tenantName}, your ${kindWord} invoice ${inv.invoiceNumber} for KES ${Math.round(balance).toLocaleString("en-KE")} is due ${inv.dueDate}. Please check your email for the invoice.`;
         if (inv.tenantPhone) {
           await sendSms({ settings, to: inv.tenantPhone, message });
         }
@@ -92,10 +93,10 @@ export async function runTenantBillingCycle(storage: IStorage, createdBy = "syst
             settings,
             to: inv.tenantEmail,
             toName: inv.tenantName,
-            subject: `Rent invoice ${inv.invoiceNumber} due ${inv.dueDate}`,
+            subject: `${kindWord === "electricity" ? "Electricity" : "Rent"} invoice ${inv.invoiceNumber} due ${inv.dueDate}`,
             html: `<div style="font-family:Arial,sans-serif;color:#2a2118;line-height:1.5;">
               <p>Dear ${escapeHtml(inv.tenantName)},</p>
-              <p>This is a reminder that rent invoice <strong>${escapeHtml(inv.invoiceNumber)}</strong> for
+              <p>This is a reminder that ${kindWord} invoice <strong>${escapeHtml(inv.invoiceNumber)}</strong> for
               KES ${Math.round(balance).toLocaleString("en-KE")} is due on ${escapeHtml(inv.dueDate)}.</p>
               <p>Please refer to the invoice previously emailed to you, or contact us if you need it resent.</p>
               <p>${escapeHtml(settings.hotelName || "The Chekata")}</p>

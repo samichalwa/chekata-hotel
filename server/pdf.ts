@@ -62,6 +62,7 @@ export interface DocPayload {
   balance: number;
   meterPhotoUrl?: string | null; // metered water bills: photo of the meter reading (/uploads/... or /test-uploads/...)
   meterPhotoCaption?: string;
+  serviceLabel?: string;
   broughtForward?: number; // metered water bills: arrears (+) or credit (−) carried onto this bill; balance then = total due
   paymentAmount?: number; // for receipts: the specific payment this receipt covers
   paymentMethod?: string | null;
@@ -188,7 +189,7 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
     doc.fillColor(muted).fontSize(9).font("Helvetica");
     doc.text(`No: ${payload.customDocNumber ?? `${docPrefix}-${String(payload.docNumber).padStart(5, "0")}`}`, 320, 74, { width: 225, align: "right" });
     doc.text(`Date: ${payload.issueDate}`, 320, 88, { width: 225, align: "right" });
-    doc.text(`Service: ${CATEGORY_LABEL[payload.category] ?? payload.category}`, 320, 102, { width: 225, align: "right" });
+    doc.text(`Service: ${payload.serviceLabel || CATEGORY_LABEL[payload.category] || payload.category}`, 320, 102, { width: 225, align: "right" });
     if (payload.docType === "credit_note" && payload.relatedDocNumber) {
       doc.text(`Against: ${payload.relatedDocNumber}`, 320, 116, { width: 225, align: "right" });
     }

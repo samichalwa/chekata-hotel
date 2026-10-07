@@ -25,7 +25,17 @@ function parse(text: string): MeterVisionResult {
   };
 }
 
-export async function readMeterPhoto(opts: { provider: string; apiKey: string; model?: string | null; imageBase64: string; mimeType: string }): Promise<MeterVisionResult> {
+const ELECTRIC_PROMPT = `You are reading a photo of an ELECTRICITY meter (kWh) for monthly billing. Reply with JSON only:
+{"meterNumber": string|null, "reading": number|null, "readingText": string|null, "confidence": "high"|"medium"|"low", "notes": string|null}
+- meterNumber: the meter's SERIAL / identification number printed on the meter body or a sticker (often labelled No., S/N or Meter No., near a barcode). It is NOT the kWh register. null if you cannot read it with certainty.
+- reading: the cumulative kWh register. Mechanical meters: rolling digits — a last digit in a red/differently coloured box is tenths of a kWh, append it as a decimal. Digital/LCD meters: use the total kWh (often labelled "kWh", "Total" or code 1.8.0); ignore voltage, current, time, date, credit/tokens or tariff screens. Drop leading zeros. null if unreadable or if the screen shows something other than total kWh.
+- readingText: the register exactly as shown, including leading zeros.
+- confidence: low if blurry, at an angle, glare, the LCD is partly visible, or a digit is between positions.
+- notes: one short sentence on anything uncertain (e.g. which LCD screen was shown), else null.
+Never guess digits you cannot see.`;
+
+export async function readMeterPhoto(opts: { provider: string; apiKey: string; model?: string | null; imageBase64: string; mimeType: string; kind?: "water" | "electricity" }): Promise<MeterVisionResult> {
+  const PROMPT_USED = opts.kind === "electricity" ? ELECTRIC_PROMPT : PROMPT;
   const data = opts.imageBase64.replace(/^data:[^,]+,/, "");
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 45_000);
@@ -35,7 +45,7 @@ export async function readMeterPhoto(opts: { provider: string; apiKey: string; m
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: "POST", signal: ctrl.signal,
         headers: { "content-type": "application/json", "x-goog-api-key": opts.apiKey },
-        body: JSON.stringify({ contents: [{ parts: [{ text: PROMPT }, { inline_data: { mime_type: opts.mimeType, data } }] }], generationConfig: { temperature: 0, responseMimeType: "application/json" } }),
+        body: JSON.stringify({ contents: [{ parts: [{ text: PROMPT_USED }, { inline_data: { mime_type: opts.mimeType, data } }] }], generationConfig: { temperature: 0, responseMimeType: "application/json" } }),
       });
       const j: any = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(`Gemini: ${j?.error?.message ?? r.status}`);
@@ -47,7 +57,7 @@ export async function readMeterPhoto(opts: { provider: string; apiKey: string; m
         method: "POST", signal: ctrl.signal,
         headers: { "content-type": "application/json", authorization: `Bearer ${opts.apiKey}` },
         body: JSON.stringify({ model, temperature: 0, response_format: { type: "json_object" },
-          messages: [{ role: "user", content: [{ type: "text", text: PROMPT }, { type: "image_url", image_url: { url: `data:${opts.mimeType};base64,${data}`, detail: "high" } }] }] }),
+          messages: [{ role: "user", content: [{ type: "text", text: PROMPT_USED }, { type: "image_url", image_url: { url: `data:${opts.mimeType};base64,${data}`, detail: "high" } }] }] }),
       });
       const j: any = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(`OpenAI: ${j?.error?.message ?? r.status}`);

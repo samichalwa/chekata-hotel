@@ -1,4 +1,5 @@
 import { registerWaterBillingRoutes } from "./water-billing";
+import { registerMeterReadingRoutes, saveElectricityReadings } from "./meter-readings";
 import { postReceiptToFinance, receivedOn, ORIGINAL_DOC, NOT_SELF_POSTED } from "./receipt-posting";
 import { runDailyChecks, runTaxCheck, latestRun, runHistory, previousMonth, integrityWorkbook } from "./integrity";
 import { paymentReferenceGuard, normalizeRef, isRealRef, inFlight, duplicateRefMessage, findReferenceUse } from "./payment-refs";
@@ -2615,8 +2616,13 @@ export async function registerRoutes(
   });
   app.post("/api/meter-readings", requireModule("tenants"), async (req, res) => {
     try {
-      const data = insertMeterReadingSchema.omit({ createdAt: true, consumption: true, amount: true }).parse(req.body);
-      res.status(201).json(await storage.createMeterReading(data));
+      // Same rules as Meter Readings: previous reading carries forward, start only for a meter's first reading,
+      // readings in month order, no edits once invoiced. Electricity is invoiced separately after the review window.
+      const data = insertMeterReadingSchema.omit({ createdAt: true, consumption: true, amount: true, recordedBy: true }).partial({ startReading: true }).parse(req.body);
+      const user = (req as any).user;
+      const r = await saveElectricityReadings({ month: data.periodMonth, readings: [{ leaseId: data.leaseId, currentReading: data.endReading, startReading: data.startReading ?? null, readingDate: data.readingDate }] }, user?.fullName ?? user?.username ?? "staff");
+      if (r.errors.length) return res.status(400).json({ error: r.errors[0].error });
+      res.status(201).json({ ok: true });
     } catch (err) { handleZodError(res, err); }
   });
 
@@ -2684,12 +2690,13 @@ export async function registerRoutes(
         const doc = await issueDocument(storage, {
           docType: "receipt",
           category: "tenancy",
+          serviceLabel: invoice.invoiceKind === "electricity" ? "Tenancy (Electricity)" : undefined,
           sourceId: invoice.id,
           customDocNumber: invoice.invoiceNumber,
           recipientName: tenant?.name ?? "Tenant",
           recipientEmail: tenant?.email ?? null,
           issueDate: formatDate(),
-          lineItems: [{ label: `Shop ${shop?.shopNumber ?? invoice.leaseId} rent — payment received`, amount }],
+          lineItems: [{ label: `Shop ${shop?.shopNumber ?? invoice.leaseId} ${invoice.invoiceKind === "electricity" ? "electricity" : "rent"} — payment received`, amount }],
           totalAmount: invoice.totalAmount,
           amountPaid: invoice.amountPaid,
           balance: invoice.totalAmount - invoice.amountPaid,
@@ -2720,13 +2727,16 @@ export async function registerRoutes(
       const lease = await storage.getTenancyLease(invoice.leaseId);
       const tenant = lease ? await storage.getTenant(lease.tenantId) : undefined;
       const shop = lease ? await storage.getShop(lease.shopId) : undefined;
-      const lineItems = [
-        { label: `Shop ${shop?.shopNumber ?? invoice.leaseId} rent — ${invoice.periodMonth}`, amount: invoice.rentAmount },
-        ...(invoice.electricityAmount > 0 ? [{ label: "Electricity", detail: `${invoice.periodMonth} consumption`, amount: invoice.electricityAmount }] : []),
-      ];
+      const lineItems = invoice.invoiceKind === "electricity"
+        ? [{ label: `Shop ${shop?.shopNumber ?? invoice.leaseId} electricity — ${invoice.periodMonth}`, amount: invoice.electricityAmount }]
+        : [
+          { label: `Shop ${shop?.shopNumber ?? invoice.leaseId} rent — ${invoice.periodMonth}`, amount: invoice.rentAmount },
+          ...(invoice.electricityAmount > 0 ? [{ label: "Electricity", detail: `${invoice.periodMonth} consumption`, amount: invoice.electricityAmount }] : []),
+        ];
       const doc = await issueDocument(storage, {
         docType: "invoice",
         category: "tenancy",
+        serviceLabel: invoice.invoiceKind === "electricity" ? "Tenancy (Electricity)" : undefined,
         sourceId: invoice.id,
         customDocNumber: invoice.invoiceNumber,
         recipientName: tenant?.name ?? "Tenant",
@@ -3367,6 +3377,7 @@ export async function registerRoutes(
 
   // ---------- Owner / Director briefing + in-app notifications ----------
   registerWaterBillingRoutes(app);
+  registerMeterReadingRoutes(app);
   registerDirectorRoutes(app);
   registerPushRoutes(app);
   registerDailyReportRoutes(app, requireAdmin);

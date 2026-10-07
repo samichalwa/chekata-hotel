@@ -329,6 +329,7 @@ const leaseFormSchema = z.object({
   tenantId: z.coerce.number().min(1, "Tenant is required"),
   monthlyRent: z.coerce.number().min(0, "Monthly rent can't be negative"),
   electricityRatePerUnit: z.coerce.number().min(0, "Rate can't be negative"),
+  meterNumber: z.string().trim().optional().nullable(),
   leaseStart: z.string().min(1, "Lease start date is required"),
   leaseEnd: z.string().optional().nullable(),
   dueDayOfMonth: z.coerce.number().min(1).max(28),
@@ -348,8 +349,8 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
   const form = useForm<z.input<typeof leaseFormSchema>, any, z.output<typeof leaseFormSchema>>({
     resolver: zodResolver(leaseFormSchema),
     defaultValues: lease
-      ? { shopId: lease.shopId, tenantId: lease.tenantId, monthlyRent: lease.monthlyRent, electricityRatePerUnit: lease.electricityRatePerUnit, leaseStart: lease.leaseStart, leaseEnd: lease.leaseEnd ?? "", dueDayOfMonth: lease.dueDayOfMonth, reminderDaysBefore: lease.reminderDaysBefore, receivableAccountId: lease.receivableAccountId ?? 0, incomeAccountId: lease.incomeAccountId ?? 0, status: lease.status, notes: lease.notes ?? "" }
-      : { shopId: 0, tenantId: 0, monthlyRent: 0, electricityRatePerUnit: 0, leaseStart: todayISO(), leaseEnd: "", dueDayOfMonth: 5, reminderDaysBefore: 3, receivableAccountId: 0, incomeAccountId: 0, status: "active", notes: "" },
+      ? { shopId: lease.shopId, tenantId: lease.tenantId, monthlyRent: lease.monthlyRent, electricityRatePerUnit: lease.electricityRatePerUnit, meterNumber: lease.meterNumber ?? "", leaseStart: lease.leaseStart, leaseEnd: lease.leaseEnd ?? "", dueDayOfMonth: lease.dueDayOfMonth, reminderDaysBefore: lease.reminderDaysBefore, receivableAccountId: lease.receivableAccountId ?? 0, incomeAccountId: lease.incomeAccountId ?? 0, status: lease.status, notes: lease.notes ?? "" }
+      : { shopId: 0, tenantId: 0, monthlyRent: 0, electricityRatePerUnit: 0, meterNumber: "", leaseStart: todayISO(), leaseEnd: "", dueDayOfMonth: 5, reminderDaysBefore: 3, receivableAccountId: 0, incomeAccountId: 0, status: "active", notes: "" },
   });
   const mutation = useMutation({
     mutationFn: async (values: z.infer<typeof leaseFormSchema>) => {
@@ -403,6 +404,10 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
                 <FormItem><FormLabel>Electricity rate (KES/unit)</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-lease-electricity-rate" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
+            <FormField control={form.control} name="meterNumber" render={({ field }) => (
+              <FormItem><FormLabel>Electricity meter number (optional)</FormLabel><FormControl><Input placeholder="e.g. 14251234567" {...field} value={field.value ?? ""} data-testid="input-lease-meter-number" /></FormControl>
+                <FormDescription>Shown to meter readers, and used to match meter photos to this shop. Leases with an electricity rate appear in Meter Readings.</FormDescription><FormMessage /></FormItem>
+            )} />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="leaseStart" render={({ field }) => (
                 <FormItem><FormLabel>Lease start</FormLabel><FormControl><Input type="date" {...field} data-testid="input-lease-start" /></FormControl><FormMessage /></FormItem>
@@ -541,11 +546,10 @@ function LeasesTab() {
 const meterReadingFormSchema = z.object({
   leaseId: z.coerce.number().min(1, "Lease is required"),
   periodMonth: z.string().regex(/^\d{4}-\d{2}$/, "Use YYYY-MM"),
-  startReading: z.coerce.number().min(0),
+  startReading: z.union([z.literal(""), z.coerce.number().min(0)]).optional(),
   endReading: z.coerce.number().min(0),
   readingDate: z.string().min(1, "Reading date is required"),
-  recordedBy: z.string().min(1),
-}).refine((v) => v.endReading >= v.startReading, { message: "End reading must be greater than or equal to start reading", path: ["endReading"] });
+});
 
 function MeterReadingFormDialog({ trigger }: { trigger: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -554,13 +558,14 @@ function MeterReadingFormDialog({ trigger }: { trigger: React.ReactNode }) {
   const { data: shops = [] } = useQuery<Shop[]>({ queryKey: ["/api/shops"] });
   const form = useForm<z.input<typeof meterReadingFormSchema>, any, z.output<typeof meterReadingFormSchema>>({
     resolver: zodResolver(meterReadingFormSchema),
-    defaultValues: { leaseId: 0, periodMonth: todayISO().slice(0, 7), startReading: 0, endReading: 0, readingDate: todayISO(), recordedBy: "" },
+    defaultValues: { leaseId: 0, periodMonth: todayISO().slice(0, 7), startReading: "", endReading: 0, readingDate: todayISO() },
   });
   const mutation = useMutation({
-    mutationFn: (values: z.infer<typeof meterReadingFormSchema>) => apiRequest("POST", "/api/meter-readings", values),
+    mutationFn: (values: z.infer<typeof meterReadingFormSchema>) => apiRequest("POST", "/api/meter-readings", { ...values, startReading: values.startReading === "" || values.startReading === undefined ? null : values.startReading }),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tenants/electricity-readings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/meter-readings"] });
-      toast({ title: "Meter reading recorded" });
+      toast({ title: "Meter reading recorded", description: "It will be invoiced automatically after the review window." });
       setOpen(false); form.reset();
     },
     onError: (err: Error) => toast({ title: "Something went wrong", description: extractErrorMessage(err.message), variant: "destructive" }),
@@ -593,15 +598,12 @@ function MeterReadingFormDialog({ trigger }: { trigger: React.ReactNode }) {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="startReading" render={({ field }) => (
-                <FormItem><FormLabel>Start reading</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-reading-start" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Start reading (first reading only)</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-reading-start" /></FormControl><FormDescription>Later months carry the previous reading forward.</FormDescription><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="endReading" render={({ field }) => (
-                <FormItem><FormLabel>End reading</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-reading-end" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Current reading</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-reading-end" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <FormField control={form.control} name="recordedBy" render={({ field }) => (
-              <FormItem><FormLabel>Recorded by</FormLabel><FormControl><Input placeholder="Staff name" {...field} data-testid="input-reading-recorded-by" /></FormControl><FormMessage /></FormItem>
-            )} />
             <DialogFooter>
               <Button type="submit" disabled={mutation.isPending} data-testid="button-save-reading">{mutation.isPending ? "Saving..." : "Record reading"}</Button>
             </DialogFooter>
@@ -612,52 +614,88 @@ function MeterReadingFormDialog({ trigger }: { trigger: React.ReactNode }) {
   );
 }
 
+type ElecRow = { leaseId: number; name: string; ref: string; meterNumber: string | null; previousReading: number | null; laterMonth: string | null;
+  reading: null | { id: number; currentReading: number; startReading: number; consumption: number; readingDate: string; recordedBy: string; autoBillAt: number | null; invoiced: boolean; invoiceNumber: string | null; invoiceStatus: string | null; nothingToBill: boolean; photoUrl: string | null } };
+
 function MeterReadingsTab() {
-  const { data: readings = [], isLoading } = useQuery<MeterReading[]>({ queryKey: ["/api/meter-readings"] });
+  const { toast } = useToast();
+  const [month, setMonth] = useState(todayISO().slice(0, 7));
+  const { data: rows = [], isLoading } = useQuery<ElecRow[]>({ queryKey: ["/api/tenants/electricity-readings", month], queryFn: async () => (await apiRequest("GET", `/api/tenants/electricity-readings?month=${month}`)).json(), enabled: /^\d{4}-\d{2}$/.test(month) });
   const { data: leases = [] } = useQuery<TenancyLease[]>({ queryKey: ["/api/tenancy-leases"] });
-  const { data: shops = [] } = useQuery<Shop[]>({ queryKey: ["/api/shops"] });
-  const shopForLease = (leaseId: number) => {
-    const lease = leases.find((l) => l.id === leaseId);
-    return lease ? (shops.find((s) => s.id === lease.shopId)?.shopNumber ?? `Lease #${leaseId}`) : `Lease #${leaseId}`;
-  };
-  const sorted = [...readings].sort((a, b) => b.createdAt - a.createdAt);
+  const lease = (id: number) => leases.find((l) => l.id === id);
+  const refresh = () => { for (const k of ["/api/tenants/electricity-readings", "/api/rent-invoices", "/api/meter-readings", "/api/meter-reader/electricity"]) queryClient.invalidateQueries({ queryKey: [k] }); };
+  const invoiceNow = useMutation({
+    mutationFn: async (id: number) => (await apiRequest("POST", `/api/tenants/electricity-readings/${id}/invoice`, {})).json(),
+    onSuccess: (r: any) => { refresh(); toast({ title: `Electricity invoice ${r.invoiceNumber} raised`, description: `${formatKES(r.amount)} — emailed${r.sms === "sent" ? " and sent by SMS" : ""}.` }); },
+    onError: (e: Error) => toast({ title: "Couldn't invoice", description: extractErrorMessage(e.message), variant: "destructive" }),
+  });
+  const remove = useMutation({
+    mutationFn: async (id: number) => apiRequest("DELETE", `/api/tenants/electricity-readings/${id}`),
+    onSuccess: () => { refresh(); toast({ title: "Reading removed" }); },
+    onError: (e: Error) => toast({ title: "Couldn't remove", description: extractErrorMessage(e.message), variant: "destructive" }),
+  });
+  const when = (ms: number) => new Date(ms).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground max-w-2xl">Monthly electricity meter readings per leased shop. Consumption and charge are calculated automatically using the lease's electricity rate.</p>
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div className="space-y-1">
+          <label htmlFor="er-month" className="text-sm font-medium">Month</label>
+          <Input id="er-month" type="month" className="w-44" value={month} onChange={(e) => setMonth(e.target.value)} data-testid="input-electricity-month" />
+        </div>
+        <p className="text-sm text-muted-foreground max-w-xl">Electricity readings (also recorded by meter readers in Meter Readings). Each reading is invoiced separately from rent, automatically after the review window — or press Invoice now.</p>
         <MeterReadingFormDialog trigger={<Button size="sm" data-testid="button-new-reading"><Plus className="h-4 w-4 mr-1" /> Record reading</Button>} />
       </div>
       <Card>
         {isLoading ? (
           <div className="p-6 text-sm text-muted-foreground">Loading readings…</div>
-        ) : sorted.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">No meter readings recorded yet.</div>
+        ) : rows.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">No leases with an electricity rate. Set a rate per unit on a lease to read its meter.</div>
         ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Shop</TableHead>
-                  <TableHead>Period</TableHead>
-                  <TableHead className="text-right">Start</TableHead>
-                  <TableHead className="text-right">End</TableHead>
-                  <TableHead className="text-right">Consumption</TableHead>
+                  <TableHead>Shop / Tenant</TableHead>
+                  <TableHead>Meter</TableHead>
+                  <TableHead className="text-right">Previous</TableHead>
+                  <TableHead className="text-right">Current</TableHead>
+                  <TableHead className="text-right">Units</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
-                  <TableHead>Recorded by</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.map((r) => (
-                  <TableRow key={r.id} data-testid={`row-reading-${r.id}`}>
-                    <TableCell className="font-medium">{shopForLease(r.leaseId)}</TableCell>
-                    <TableCell>{r.periodMonth}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.startReading}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.endReading}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.consumption}</TableCell>
-                    <TableCell className="text-right tabular-nums">{formatKES(r.amount)}</TableCell>
-                    <TableCell>{r.recordedBy}</TableCell>
-                  </TableRow>
-                ))}
+                {rows.map((r) => {
+                  const x = r.reading; const rate = lease(r.leaseId)?.electricityRatePerUnit ?? 0;
+                  const open = x && !x.invoiced && !x.nothingToBill;
+                  return (
+                    <TableRow key={r.leaseId} data-testid={`row-reading-${r.leaseId}`}>
+                      <TableCell className="font-medium">{r.ref} — {r.name}</TableCell>
+                      <TableCell className="text-muted-foreground whitespace-nowrap">{r.meterNumber ?? "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{x ? x.startReading : r.previousReading ?? "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{x ? x.currentReading : "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{x ? x.consumption : "—"}</TableCell>
+                      <TableCell className="text-right tabular-nums">{x ? formatKES(x.consumption * rate) : "—"}</TableCell>
+                      <TableCell data-testid={`status-reading-${r.leaseId}`}>
+                        {!x ? <span className="text-xs text-muted-foreground">Not read</span>
+                          : x.invoiced ? <Badge variant="secondary">Invoiced {x.invoiceNumber}</Badge>
+                          : x.nothingToBill ? <Badge variant="outline">No units</Badge>
+                          : x.autoBillAt ? <Badge variant="outline">Auto-invoices {x.autoBillAt <= Date.now() ? "shortly" : when(x.autoBillAt)}</Badge>
+                          : <Badge variant="outline">Not invoiced</Badge>}
+                        {x && <div className="text-xs text-muted-foreground mt-0.5">by {x.recordedBy}</div>}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {open && (
+                          <div className="flex justify-end gap-1">
+                            <Button size="sm" variant="outline" disabled={invoiceNow.isPending} onClick={() => invoiceNow.mutate(x!.id)} data-testid={`button-invoice-reading-${x!.id}`}>Invoice now</Button>
+                            {!r.laterMonth && <Button size="icon" variant="ghost" title="Remove reading" disabled={remove.isPending} onClick={() => remove.mutate(x!.id)} data-testid={`button-delete-reading-${x!.id}`}><Trash2 className="h-4 w-4" /></Button>}
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>
@@ -854,7 +892,7 @@ function RentInvoicesTab() {
         <StatCard label="Paid invoices" value={String(invoices.filter((i) => i.status === "paid").length)} icon={Receipt} accent="success" testId="stat-rent-paid" />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground max-w-2xl">Rent invoices auto-generate hourly for active leases (with electricity charges from the latest meter reading) and email the tenant a PDF invoice. Record payments and cancellations here.</p>
+        <p className="text-sm text-muted-foreground max-w-2xl">Rent invoices auto-generate hourly for active leases and email the tenant a PDF. Electricity is invoiced separately from each saved meter reading. Record payments and cancellations here.</p>
         <GenerateInvoiceDialog trigger={<Button size="sm" data-testid="button-generate-invoice"><Plus className="h-4 w-4 mr-1" /> Generate invoice</Button>} />
       </div>
       <Card>
@@ -882,7 +920,7 @@ function RentInvoicesTab() {
                   const { shop, tenant } = shopTenantForLease(inv.leaseId);
                   return (
                     <TableRow key={inv.id} data-testid={`row-rent-invoice-${inv.id}`}>
-                      <TableCell className="font-medium">{inv.invoiceNumber}</TableCell>
+                      <TableCell className="font-medium">{inv.invoiceNumber}{inv.invoiceKind === "electricity" && <Badge variant="outline" className="ml-2" data-testid={`badge-electricity-${inv.id}`}>Electricity</Badge>}</TableCell>
                       <TableCell>{shop} — {tenant}</TableCell>
                       <TableCell>{inv.periodMonth}</TableCell>
                       <TableCell className="text-right tabular-nums">{formatKES(inv.totalAmount)}</TableCell>
@@ -936,8 +974,8 @@ export default function Tenants() {
           <TabsTrigger value="shops" data-testid="tab-shops">Shops</TabsTrigger>
           <TabsTrigger value="tenants" data-testid="tab-tenants-list">Tenants</TabsTrigger>
           <TabsTrigger value="leases" data-testid="tab-leases">Leases</TabsTrigger>
-          <TabsTrigger value="readings" data-testid="tab-meter-readings">Meter Readings</TabsTrigger>
-          <TabsTrigger value="invoices" data-testid="tab-rent-invoices">Rent Invoices</TabsTrigger>
+          <TabsTrigger value="readings" data-testid="tab-meter-readings">Electricity Readings</TabsTrigger>
+          <TabsTrigger value="invoices" data-testid="tab-rent-invoices">Invoices</TabsTrigger>
         </TabsList>
         <TabsContent value="shops" className="mt-4"><ShopsTab /></TabsContent>
         <TabsContent value="tenants" className="mt-4"><TenantsTab /></TabsContent>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Switch, Route, Router } from "wouter";
+import { Switch, Route, Router, Redirect } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { Button } from "@/components/ui/button";
 import { queryClient } from "./lib/queryClient";
@@ -7,7 +7,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/app-sidebar";
+import { AppSidebar, firstAllowedUrl } from "@/components/app-sidebar";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notification-bell";
@@ -42,6 +42,7 @@ import Integrity from "@/pages/integrity";
 import Budgeting from "@/pages/budgeting";
 import AssetsPage from "@/pages/assets";
 import WaterSalesPage from "@/pages/water-sales";
+import MeterReadingsPage from "@/pages/meter-readings";
 import Inventory from "@/pages/inventory";
 import Purchasing from "@/pages/purchasing";
 import InternalRequisitions from "@/pages/internal-requisitions";
@@ -74,6 +75,17 @@ function Guarded({ moduleKey, component: Component, requireAdminUsername }: { mo
   return <Component />;
 }
 
+// Landing page: the Today briefing, or — for users without Dashboard access (e.g. meter readers) —
+// the first section they can open, instead of an access-denied screen.
+function HomeRoute() {
+  const { data: user } = useCurrentUser();
+  if (!canAccess(user, "dashboard")) {
+    const url = firstAllowedUrl(user);
+    if (url) return <Redirect to={url} />;
+  }
+  return <Guarded moduleKey="dashboard" component={DailyClosePage} />;
+}
+
 function OnlineBookingsGate() {
   const { data: user } = useCurrentUser();
   if (!canAccess(user, "movie-room") && !canAccess(user, "bar-restaurant") && !canAccess(user, "accommodation")) {
@@ -92,7 +104,7 @@ function AppRouter() {
     <Switch>
       {/* Landing page: the Daily close report. The full Today briefing +
           month overview (Dashboard) lives at /dashboard. */}
-      <Route path="/" component={() => <Guarded moduleKey="dashboard" component={DailyClosePage} />} />
+      <Route path="/" component={HomeRoute} />
       <Route path="/dashboard" component={() => <Guarded moduleKey="dashboard" component={Dashboard} />} />
       {/* Unified inbox: not a module/permission — its content is filtered by each underlying module. */}
       <Route path="/approvals" component={ApprovalsPage} />
@@ -123,6 +135,7 @@ function AppRouter() {
       <Route path="/budgeting" component={() => <Guarded moduleKey="budgeting" component={Budgeting} />} />
       <Route path="/assets" component={() => <Guarded moduleKey="assets" component={AssetsPage} />} />
       <Route path="/water-sales" component={() => <Guarded moduleKey="water-sales" component={WaterSalesPage} />} />
+      <Route path="/meter-readings" component={() => <Guarded moduleKey="meter-readings" component={MeterReadingsPage} />} />
       <Route path="/system-admin" component={() => <Guarded moduleKey="system-admin" component={SystemAdmin} />} />
       <Route path="/integrity" component={() => <Guarded moduleKey="integrity" component={Integrity} />} />
       <Route path="/settings" component={() => <Guarded moduleKey="settings" component={SettingsPage} requireAdminUsername />} />
