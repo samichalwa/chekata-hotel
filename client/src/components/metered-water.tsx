@@ -484,8 +484,8 @@ function TariffDialog({ tariff, onClose }: { tariff: Tariff | null; onClose: () 
   const [active, setActive] = useState(tariff ? !!tariff.active : true);
   const [notes, setNotes] = useState(tariff?.notes ?? "");
   const [test, setTest] = useState("10");
-  const parsed = useMemo(() => ({ name, bands: bands.map((b) => ({ upTo: b.upTo === "" ? null : Number(b.upTo), rate: Number(b.rate) })), serviceCharge: Number(service || 0), minimumCharge: Number(minimum || 0) }), [name, bands, service, minimum]);
-  const err = bands.some((b) => b.rate === "") ? "Enter a price for every band." : validateTariff(parsed);
+  const parsed = useMemo(() => ({ name, bands: bands.map((b, i) => ({ upTo: i === bands.length - 1 || b.upTo === "" ? null : Number(b.upTo), rate: Number(b.rate) })), serviceCharge: Number(service || 0), minimumCharge: Number(minimum || 0) }), [name, bands, service, minimum]);
+  const err = !name.trim() ? "Enter a tariff name." : bands.some((b) => b.rate === "") ? "Enter a price per m³." : bands.slice(0, -1).some((b) => b.upTo === "") ? "Fill in \"Up to\" on every band except the last." : validateTariff(parsed);
   const sample = !err ? calcWaterCharge(Number(test || 0), parsed) : null;
   const save = useMutation({
     mutationFn: async () => (await apiRequest(tariff ? "PATCH" : "POST", tariff ? `/api/water-billing/tariffs/${tariff.id}` : "/api/water-billing/tariffs", { ...parsed, active: active ? 1 : 0, notes: notes || null })).json(),
@@ -499,16 +499,25 @@ function TariffDialog({ tariff, onClose }: { tariff: Tariff | null; onClose: () 
         <div className="space-y-3">
           <div className="space-y-1.5"><Label htmlFor="tf-name">Name</Label><Input id="tf-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Domestic" data-testid="input-tariff-name" /></div>
           <div className="space-y-2">
-            <Label>Price bands</Label>
-            {bands.map((b, i) => (
-              <div key={i} className="flex items-end gap-2">
-                <div className="space-y-1"><span className="text-xs text-muted-foreground">Up to (m³)</span><Input type="number" min="0" className="w-28" placeholder={i === bands.length - 1 ? "and above" : ""} value={b.upTo} onChange={(e) => setBands((x) => x.map((y, j) => (j === i ? { ...y, upTo: e.target.value } : y)))} data-testid={`input-band-upto-${i}`} /></div>
-                <div className="space-y-1"><span className="text-xs text-muted-foreground">KES per m³</span><Input type="number" min="0" step="0.01" className="w-28" value={b.rate} onChange={(e) => setBands((x) => x.map((y, j) => (j === i ? { ...y, rate: e.target.value } : y)))} data-testid={`input-band-rate-${i}`} /></div>
-                {bands.length > 1 && <Button size="icon" variant="ghost" onClick={() => setBands((x) => x.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button>}
-              </div>
-            ))}
-            <Button variant="outline" size="sm" onClick={() => setBands((x) => [...x.slice(0, -1), { upTo: "", rate: "" }, x[x.length - 1]])} data-testid="button-add-band"><Plus className="h-4 w-4 mr-1" />Add band</Button>
-            <p className="text-xs text-muted-foreground">One band = flat price. For tiers, fill "up to" on each band except the last, which covers everything above.</p>
+            <Label>{bands.length === 1 ? "Price per m³" : "Price bands"}</Label>
+            {bands.map((b, i) => {
+              const last = i === bands.length - 1;
+              const from = i === 0 ? 0 : Number(bands[i - 1].upTo || 0);
+              return (
+                <div key={i} className="flex items-end gap-2">
+                  {last ? (
+                    <div className="space-y-1 w-28"><span className="text-xs text-muted-foreground">Units</span><div className="h-9 flex items-center text-sm" data-testid={`text-band-range-${i}`}>{bands.length === 1 ? "All units" : `Above ${from} m³`}</div></div>
+                  ) : (
+                    <div className="space-y-1"><span className="text-xs text-muted-foreground">{i === 0 ? "First (m³)" : `${from} m³ up to`}</span><Input type="number" min="0" className="w-28" value={b.upTo} onChange={(e) => setBands((x) => x.map((y, j) => (j === i ? { ...y, upTo: e.target.value } : y)))} data-testid={`input-band-upto-${i}`} /></div>
+                  )}
+                  <div className="space-y-1"><span className="text-xs text-muted-foreground">KES per m³</span><Input type="number" min="0" step="0.01" className="w-28" value={b.rate} onChange={(e) => setBands((x) => x.map((y, j) => (j === i ? { ...y, rate: e.target.value } : y)))} data-testid={`input-band-rate-${i}`} /></div>
+                  {bands.length > 1 && <Button size="icon" variant="ghost" onClick={() => setBands((x) => x.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button>}
+                </div>
+              );
+            })}
+            <Button variant="outline" size="sm" onClick={() => setBands((x) => [...x, { upTo: "", rate: "" }])} data-testid="button-add-band"><Plus className="h-4 w-4 mr-1" />{bands.length === 1 ? "Add a higher price band" : "Add band"}</Button>
+            <p className="text-xs text-muted-foreground">{bands.length === 1 ? "One price for every m³. Add a band only if heavier use is charged at a different price." : "The last band always covers everything above the band before it."}</p>
+            {err && <p className="text-sm text-destructive" data-testid="text-tariff-form-error">{err}</p>}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5"><Label htmlFor="tf-svc">Monthly service charge</Label><Input id="tf-svc" type="number" min="0" value={service} onChange={(e) => setService(e.target.value)} data-testid="input-tariff-service" /></div>
@@ -528,6 +537,7 @@ function TariffDialog({ tariff, onClose }: { tariff: Tariff | null; onClose: () 
             )}
           </div>
         </div>
+        {err && <p className="text-sm text-destructive text-right">{err}</p>}
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button disabled={!!err || save.isPending} onClick={() => save.mutate()} data-testid="button-save-tariff">{save.isPending ? "Saving…" : "Save tariff"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
