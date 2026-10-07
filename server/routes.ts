@@ -20,7 +20,7 @@ import {
   insertChartOfAccountSchema, insertAccountingPeriodSchema,
   insertJournalEntrySchema, insertJournalEntryLineSchema,
   insertBankAccountSchema, insertBankReconciliationSchema,
-  insertPaymentVoucherSchema, insertApprovalMatrixRuleSchema,
+  insertPaymentVoucherSchema, insertApprovalMatrixRuleSchema, approvalMatrixRuleBaseSchema,
   insertDefinitionListSchema, insertDefinitionListItemSchema,
   PERMISSION_TABLE_KEYS, type PermissionTableKey,
   insertStoreSchema, insertInventoryItemSchema, insertSupplierSchema,
@@ -1885,7 +1885,11 @@ export async function registerRoutes(
   });
   app.patch("/api/admin/approval-matrix/:id", requireModule("system-admin"), async (req, res) => {
     try {
-      const data = insertApprovalMatrixRuleSchema.partial().parse(req.body);
+      const data = approvalMatrixRuleBaseSchema.partial().parse(req.body);
+      const existing = (await storage.listApprovalMatrixRules()).find((r) => r.id === Number(req.params.id));
+      if (!existing) return res.status(404).json({ error: "Approval rule not found" });
+      const merged = { ...existing, ...data };
+      if (merged.approverUserId == null && !(merged.approverPosition ?? "").trim()) return res.status(400).json({ error: "Set either a final approver or an approver position" });
       const updated = await storage.updateApprovalMatrixRule(Number(req.params.id), data);
       if (!updated) return res.status(404).json({ error: "Approval rule not found" });
       res.json(updated);

@@ -892,7 +892,9 @@ export const approvalMatrixRules = pgTable("approval_matrix_rules", {
   reviewerPosition: text("reviewer_position"),
   approverPosition: text("approver_position"),
 });
-export const insertApprovalMatrixRuleSchema = createInsertSchema(approvalMatrixRules).omit({ id: true }).refine(
+// Base (unrefined) shape — used for partial updates; zod can't .partial() a refined schema.
+export const approvalMatrixRuleBaseSchema = createInsertSchema(approvalMatrixRules).omit({ id: true });
+export const insertApprovalMatrixRuleSchema = approvalMatrixRuleBaseSchema.refine(
   (v) => v.approverUserId != null || (v.approverPosition != null && v.approverPosition.trim() !== ""),
   { message: "Set either a final approver or an approver position", path: ["approverUserId"] },
 );
