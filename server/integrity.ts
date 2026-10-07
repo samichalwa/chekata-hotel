@@ -10,6 +10,7 @@ import { normalizeRef, isRealRef } from "./payment-refs";
 import { computeInclusiveTaxBreakdown } from "./tax";
 import { DOC_CATEGORY_TO_TAX_CATEGORY } from "./documents";
 import type { Tax } from "@shared/schema";
+import { linkProblems } from "./shpms";
 
 export type CheckStatus = "pass" | "warn" | "fail";
 export interface CheckItem { label: string; detail: string; link?: string }
@@ -193,6 +194,14 @@ async function checkOnlinePayments(): Promise<CheckResult> {
   return result(B, "B7", "Confirmed bookings are paid; online payments are dealt with", "No booking confirmed without payment (unless overridden), no online payment pending over 24 h, and verified payments have confirmed their booking.", items, "fail", "All confirmed bookings are paid and online payments are up to date.", (k) => `${k} item${k === 1 ? "" : "s"} to deal with.`);
 }
 
+async function checkShpmsLink(): Promise<CheckResult> {
+  const title = "SHPMS and The Chekata agree";
+  const desc = "Every SHPMS update was recorded, every payment confirmed here reached SHPMS and Finance, and invoice balances match SHPMS.";
+  const items = await linkProblems();
+  if (items === null) return { id: "B9", group: B, title, description: desc, status: "pass", count: 0, summary: "The SHPMS link is switched off.", items: [] };
+  return result(B, "B9", title, desc, items, "warn", "SHPMS and The Chekata match.", (k) => `${k} difference${k === 1 ? "" : "s"} with SHPMS.`);
+}
+
 async function checkRooms(): Promise<CheckResult> {
   const items: CheckItem[] = [];
   const overlaps = await sql`SELECT a.id AS a_id, b.id AS b_id, a.guest_name AS a_name, b.guest_name AS b_name, r.name AS room, a.check_in, a.check_out, b.check_in AS b_in, b.check_out AS b_out
@@ -258,6 +267,7 @@ export async function runDailyChecks(ranBy: string): Promise<IntegrityRun> {
     [B, "B6", "Booking balances", checkBookingBalances],
     [B, "B7", "Confirmed & online payments", checkOnlinePayments],
     [B, "B8", "Rooms", checkRooms],
+    [B, "B9", "SHPMS link", checkShpmsLink],
     [D, "D12", "Stock", checkStock],
     [D, "D13", "Payroll", checkPayroll],
   ];

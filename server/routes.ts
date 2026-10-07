@@ -1,4 +1,5 @@
 import { registerWaterBillingRoutes } from "./water-billing";
+import { registerShpmsPublicRoutes, registerShpmsRoutes, shpmsWriteGuard } from "./shpms";
 import { registerMeterReadingRoutes, saveElectricityReadings } from "./meter-readings";
 import { postReceiptToFinance, receivedOn, ORIGINAL_DOC, NOT_SELF_POSTED } from "./receipt-posting";
 import { runDailyChecks, runTaxCheck, latestRun, runHistory, previousMonth, integrityWorkbook } from "./integrity";
@@ -285,11 +286,14 @@ export async function registerRoutes(
 
   registerPublicDailyReportRoute(app);
   registerPublicBookingRoutes(app);
+  registerShpmsPublicRoutes(app);
 
   // ---------- Everything below requires a signed-in, active user ----------
   app.use("/api", requireAuth);
   // No payment reference (M-Pesa code, slip, bank ref) may ever be recorded twice.
   app.use("/api", paymentReferenceGuard);
+  // SHPMS is the master for linked tenants/leases/invoices (server/shpms.ts).
+  app.use("/api", shpmsWriteGuard);
   registerOnlineBookingStaffRoutes(app);
 
   // ---------- Uploads (ID-document photos, lease documents) ----------
@@ -3378,6 +3382,7 @@ export async function registerRoutes(
   // ---------- Owner / Director briefing + in-app notifications ----------
   registerWaterBillingRoutes(app);
   registerMeterReadingRoutes(app);
+  registerShpmsRoutes(app);
   registerDirectorRoutes(app);
   registerPushRoutes(app);
   registerDailyReportRoutes(app, requireAdmin);

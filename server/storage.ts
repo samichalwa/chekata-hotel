@@ -1317,6 +1317,36 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
   await ensureColumn("settings", "electricity_due_days", "INTEGER NOT NULL DEFAULT 14");
   await ensureColumn("settings", "electricity_income_account_id", "INTEGER");
   await ensureColumn("settings", "electricity_sms", "INTEGER NOT NULL DEFAULT 1");
+  // SHPMS link — Seanes Homes PMS is the master for linked tenancies (see server/shpms.ts).
+  await ensureColumn("tenants", "shpms_tenant_id", "INTEGER");
+  await ensureColumn("shops", "shpms_unit_id", "INTEGER");
+  await ensureColumn("tenancy_leases", "shpms_lease_id", "INTEGER");
+  await ensureColumn("rent_invoices", "shpms_invoice_id", "INTEGER");
+  await ensureColumn("rent_invoices", "shpms_status", "TEXT");
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_tenancy_leases_shpms ON tenancy_leases(shpms_lease_id) WHERE shpms_lease_id IS NOT NULL`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_rent_invoices_shpms ON rent_invoices(shpms_invoice_id) WHERE shpms_invoice_id IS NOT NULL`;
+  await sql`CREATE TABLE IF NOT EXISTS shpms_link (
+    id INTEGER PRIMARY KEY DEFAULT 1, enabled INTEGER NOT NULL DEFAULT 0, base_url TEXT, secret TEXT,
+    bank_account_id INTEGER, receivable_account_id INTEGER, rent_income_account_id INTEGER,
+    other_income_account_id INTEGER, deposit_account_id INTEGER, last_snapshot_at BIGINT, updated_at BIGINT, updated_by TEXT)`;
+  await sql`INSERT INTO shpms_link (id) VALUES (1) ON CONFLICT (id) DO NOTHING`;
+  await sql`CREATE TABLE IF NOT EXISTS shpms_events (
+    id SERIAL PRIMARY KEY, event_id TEXT NOT NULL UNIQUE, event_type TEXT NOT NULL, status TEXT NOT NULL,
+    error TEXT, attempts INTEGER NOT NULL DEFAULT 1, payload_json TEXT, received_at BIGINT NOT NULL, processed_at BIGINT)`;
+  await sql`CREATE TABLE IF NOT EXISTS shpms_declarations (
+    id SERIAL PRIMARY KEY, shpms_declaration_id INTEGER NOT NULL UNIQUE, declaration_no TEXT, lease_id INTEGER NOT NULL,
+    amount REAL NOT NULL, paid_on TEXT, method TEXT, reference TEXT, period_start TEXT, narrative TEXT,
+    status TEXT NOT NULL DEFAULT 'declared', query_reason TEXT, confirmed_by TEXT, confirmed_at BIGINT, confirmed_in TEXT,
+    payment_id INTEGER, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL)`;
+  await sql`CREATE TABLE IF NOT EXISTS shpms_payments (
+    id SERIAL PRIMARY KEY, source TEXT NOT NULL, lease_id INTEGER NOT NULL, shpms_declaration_id INTEGER,
+    shpms_receipt_id INTEGER, receipt_no TEXT, rent_invoice_id INTEGER, amount REAL NOT NULL, paid_on TEXT NOT NULL,
+    payment_method TEXT, payment_reference TEXT, attempted_reference TEXT, bank_account_id INTEGER, journal_entry_id INTEGER,
+    reversal_journal_id INTEGER, status TEXT NOT NULL DEFAULT 'pending', error TEXT, recorded_by TEXT, created_at BIGINT NOT NULL)`;
+  await sql`CREATE TABLE IF NOT EXISTS shpms_credit_notes (
+    id SERIAL PRIMARY KEY, shpms_credit_note_id INTEGER NOT NULL UNIQUE, rent_invoice_id INTEGER NOT NULL, amount REAL NOT NULL,
+    journal_entry_id INTEGER, created_at BIGINT NOT NULL)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_shpms_payments_receipt ON shpms_payments(shpms_receipt_id) WHERE shpms_receipt_id IS NOT NULL`;
   // Auto-billing of saved meter readings starts from the first boot that has this feature —
   // older unbilled readings are never billed automatically (staff can still bill them by hand).
   await sql`UPDATE settings SET meter_auto_billing_from = ${Date.now()} WHERE meter_auto_billing_from IS NULL`;

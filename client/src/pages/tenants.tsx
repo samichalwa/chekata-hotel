@@ -20,6 +20,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatKES, todayISO, titleCase } from "@/lib/format";
 import { fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
+import { ShpmsTab } from "./shpms-link";
 import type { Shop, Tenant, TenancyLease, MeterReading, RentInvoice, ChartOfAccount, BankAccount } from "@shared/schema";
 
 function extractErrorMessage(raw: string): string {
@@ -295,7 +296,7 @@ function TenantsTab() {
               <TableBody>
                 {tenants.map((t) => (
                   <TableRow key={t.id} data-testid={`row-tenant-${t.id}`}>
-                    <TableCell className="font-medium">{t.name}</TableCell>
+                    <TableCell className="font-medium">{t.name}{t.shpmsTenantId ? <Badge variant="outline" className="ml-2">SHPMS</Badge> : null}</TableCell>
                     <TableCell>{t.contactPerson || "—"}</TableCell>
                     <TableCell>{t.phone || "—"}</TableCell>
                     <TableCell>{t.email || "—"}</TableCell>
@@ -367,14 +368,16 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
   });
   const receivableAccounts = accounts.filter((a) => a.type === "asset");
   const incomeAccounts = accounts.filter((a) => a.type === "income");
+  const linked = !!lease?.shpmsLeaseId;
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-y-auto max-w-lg">
         <DialogHeader><DialogTitle>{lease ? "Edit lease" : "New lease"}</DialogTitle></DialogHeader>
+        {linked && <p className="text-sm rounded-md border bg-muted/50 p-3" data-testid="text-lease-shpms-note">Managed in SHPMS. Rent, dates, shop, tenant and status change in SHPMS and update here automatically. Here you set the electricity rate, meter number, reminder days and notes.</p>}
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <fieldset disabled={linked} className="grid grid-cols-1 sm:grid-cols-2 gap-4 disabled:opacity-60">
               <FormField control={form.control} name="shopId" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Shop</FormLabel>
@@ -395,10 +398,10 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
                   <FormMessage />
                 </FormItem>
               )} />
-            </div>
+            </fieldset>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="monthlyRent" render={({ field }) => (
-                <FormItem><FormLabel>Monthly rent (KES)</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-lease-rent" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Monthly rent (KES)</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} disabled={linked} data-testid="input-lease-rent" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="electricityRatePerUnit" render={({ field }) => (
                 <FormItem><FormLabel>Electricity rate (KES/unit)</FormLabel><FormControl><Input type="number" step="0.01" {...field} value={field.value as any} data-testid="input-lease-electricity-rate" /></FormControl><FormMessage /></FormItem>
@@ -408,23 +411,23 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
               <FormItem><FormLabel>Electricity meter number (optional)</FormLabel><FormControl><Input placeholder="e.g. 14251234567" {...field} value={field.value ?? ""} data-testid="input-lease-meter-number" /></FormControl>
                 <FormDescription>Shown to meter readers, and used to match meter photos to this shop. Leases with an electricity rate appear in Meter Readings.</FormDescription><FormMessage /></FormItem>
             )} />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <fieldset disabled={linked} className="grid grid-cols-1 sm:grid-cols-2 gap-4 disabled:opacity-60">
               <FormField control={form.control} name="leaseStart" render={({ field }) => (
                 <FormItem><FormLabel>Lease start</FormLabel><FormControl><Input type="date" {...field} data-testid="input-lease-start" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="leaseEnd" render={({ field }) => (
                 <FormItem><FormLabel>Lease end (optional)</FormLabel><FormControl><Input type="date" {...field} value={field.value ?? ""} data-testid="input-lease-end" /></FormControl><FormMessage /></FormItem>
               )} />
-            </div>
+            </fieldset>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="dueDayOfMonth" render={({ field }) => (
-                <FormItem><FormLabel>Rent due day of month</FormLabel><FormControl><Input type="number" min={1} max={28} {...field} value={field.value as any} data-testid="input-lease-due-day" /></FormControl><FormMessage /></FormItem>
+                <FormItem><FormLabel>Rent due day of month</FormLabel><FormControl><Input type="number" min={1} max={28} {...field} value={field.value as any} disabled={linked} data-testid="input-lease-due-day" /></FormControl><FormMessage /></FormItem>
               )} />
               <FormField control={form.control} name="reminderDaysBefore" render={({ field }) => (
                 <FormItem><FormLabel>Remind (days before due)</FormLabel><FormControl><Input type="number" min={0} max={28} {...field} value={field.value as any} data-testid="input-lease-reminder-days" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <fieldset disabled={linked} className="grid grid-cols-1 sm:grid-cols-2 gap-4 disabled:opacity-60">
               <FormField control={form.control} name="receivableAccountId" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Receivable (GL asset account)</FormLabel>
@@ -445,9 +448,9 @@ function LeaseFormDialog({ lease, trigger }: { lease?: TenancyLease; trigger: Re
                   <FormMessage />
                 </FormItem>
               )} />
-            </div>
+            </fieldset>
             <FormField control={form.control} name="status" render={({ field }) => (
-              <FormItem>
+              <FormItem className={linked ? "pointer-events-none opacity-60" : undefined}>
                 <FormLabel>Status</FormLabel>
                 <Select onValueChange={field.onChange} value={field.value}>
                   <FormControl><SelectTrigger data-testid="select-lease-status"><SelectValue /></SelectTrigger></FormControl>
@@ -510,7 +513,7 @@ function LeasesTab() {
               <TableBody>
                 {leases.map((l) => (
                   <TableRow key={l.id} data-testid={`row-lease-${l.id}`}>
-                    <TableCell className="font-medium">{shopName(l.shopId)}</TableCell>
+                    <TableCell className="font-medium whitespace-nowrap">{shopName(l.shopId)}{l.shpmsLeaseId ? <Badge variant="outline" className="ml-2" data-testid={`badge-lease-shpms-${l.id}`}>SHPMS</Badge> : null}</TableCell>
                     <TableCell>{tenantName(l.tenantId)}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatKES(l.monthlyRent)}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatKES(l.electricityRatePerUnit)}</TableCell>
@@ -520,7 +523,7 @@ function LeasesTab() {
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         <LeaseFormDialog lease={l} trigger={<Button size="icon" variant="ghost" data-testid={`button-edit-lease-${l.id}`}><Pencil className="h-4 w-4" /></Button>} />
-                        {l.status === "active" && (
+                        {l.status === "active" && !l.shpmsLeaseId && (
                           <AlertDialog>
                             <AlertDialogTrigger asChild><Button size="icon" variant="ghost" title="End lease" data-testid={`button-end-lease-${l.id}`}><Ban className="h-4 w-4" /></Button></AlertDialogTrigger>
                             <AlertDialogContent>
@@ -764,7 +767,8 @@ function RecordPaymentDialog({ invoice, trigger }: { invoice: RentInvoice; trigg
     mutationFn: () => apiRequest("POST", `/api/rent-invoices/${invoice.id}/payments`, { amount: Number(amount), bankAccountId, paymentMethod, paymentReference: paymentReference || undefined }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/rent-invoices"] });
-      toast({ title: "Payment recorded" });
+      queryClient.invalidateQueries({ queryKey: ["/api/shpms/payments"] });
+      toast({ title: "Payment recorded", description: invoice.shpmsInvoiceId ? "Sent to SHPMS, which issues the tenant's receipt." : undefined });
       setOpen(false);
     },
     onError: (err: Error) => toast({ title: "Could not record payment", description: extractErrorMessage(err.message), variant: "destructive" }),
@@ -776,6 +780,7 @@ function RecordPaymentDialog({ invoice, trigger }: { invoice: RentInvoice; trigg
         <DialogHeader><DialogTitle>Record payment — {invoice.invoiceNumber}</DialogTitle></DialogHeader>
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">Outstanding balance: {formatKES(invoice.totalAmount - invoice.amountPaid)}</p>
+          {invoice.shpmsInvoiceId ? <p className="text-sm rounded-md border bg-muted/50 p-3">This invoice comes from SHPMS. The payment is sent to SHPMS first, then posted to Finance; SHPMS emails the tenant's receipt.</p> : null}
           <div>
             <label className="text-sm font-medium">Amount (KES)</label>
             <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-payment-amount" />
@@ -920,7 +925,7 @@ function RentInvoicesTab() {
                   const { shop, tenant } = shopTenantForLease(inv.leaseId);
                   return (
                     <TableRow key={inv.id} data-testid={`row-rent-invoice-${inv.id}`}>
-                      <TableCell className="font-medium">{inv.invoiceNumber}{inv.invoiceKind === "electricity" && <Badge variant="outline" className="ml-2" data-testid={`badge-electricity-${inv.id}`}>Electricity</Badge>}</TableCell>
+                      <TableCell className="font-medium">{inv.invoiceNumber}{inv.invoiceKind === "electricity" && <Badge variant="outline" className="ml-2" data-testid={`badge-electricity-${inv.id}`}>Electricity</Badge>}{inv.shpmsInvoiceId ? <Badge variant="outline" className="ml-2" data-testid={`badge-invoice-shpms-${inv.id}`}>SHPMS</Badge> : null}</TableCell>
                       <TableCell>{shop} — {tenant}</TableCell>
                       <TableCell>{inv.periodMonth}</TableCell>
                       <TableCell className="text-right tabular-nums">{formatKES(inv.totalAmount)}</TableCell>
@@ -933,8 +938,8 @@ function RentInvoicesTab() {
                             <RecordPaymentDialog invoice={inv} trigger={<Button size="icon" variant="ghost" title="Record payment" data-testid={`button-pay-invoice-${inv.id}`}><CircleDollarSign className="h-4 w-4" /></Button>} />
                           )}
                           <ViewInvoicePdfButton invoiceId={inv.id} />
-                          <Button size="icon" variant="ghost" title="Resend invoice email" onClick={() => resend.mutate(inv.id)} data-testid={`button-resend-invoice-${inv.id}`}><Send className="h-4 w-4" /></Button>
-                          {inv.status !== "cancelled" && (
+                          {!inv.shpmsInvoiceId && <Button size="icon" variant="ghost" title="Resend invoice email" onClick={() => resend.mutate(inv.id)} data-testid={`button-resend-invoice-${inv.id}`}><Send className="h-4 w-4" /></Button>}
+                          {inv.status !== "cancelled" && !inv.shpmsInvoiceId && (
                             <CancelInvoiceDialog invoice={inv} trigger={<Button size="icon" variant="ghost" title="Cancel invoice" data-testid={`button-cancel-invoice-${inv.id}`}><Ban className="h-4 w-4" /></Button>} />
                           )}
                         </div>
@@ -970,18 +975,20 @@ export default function Tenants() {
       </div>
 
       <Tabs defaultValue="leases">
-        <TabsList>
+        <TabsList className="flex h-auto flex-wrap justify-start">
           <TabsTrigger value="shops" data-testid="tab-shops">Shops</TabsTrigger>
           <TabsTrigger value="tenants" data-testid="tab-tenants-list">Tenants</TabsTrigger>
           <TabsTrigger value="leases" data-testid="tab-leases">Leases</TabsTrigger>
           <TabsTrigger value="readings" data-testid="tab-meter-readings">Electricity Readings</TabsTrigger>
           <TabsTrigger value="invoices" data-testid="tab-rent-invoices">Invoices</TabsTrigger>
+          <TabsTrigger value="shpms" data-testid="tab-shpms">SHPMS link</TabsTrigger>
         </TabsList>
         <TabsContent value="shops" className="mt-4"><ShopsTab /></TabsContent>
         <TabsContent value="tenants" className="mt-4"><TenantsTab /></TabsContent>
         <TabsContent value="leases" className="mt-4"><LeasesTab /></TabsContent>
         <TabsContent value="readings" className="mt-4"><MeterReadingsTab /></TabsContent>
         <TabsContent value="invoices" className="mt-4"><RentInvoicesTab /></TabsContent>
+        <TabsContent value="shpms" className="mt-4"><ShpmsTab /></TabsContent>
       </Tabs>
     </div>
   );

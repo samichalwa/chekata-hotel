@@ -38,7 +38,8 @@ export async function runTenantBillingCycle(storage: IStorage, createdBy = "syst
 
   const periodMonth = currentPeriodMonth();
   const leases = await storage.listTenancyLeases();
-  const activeLeases = leases.filter((l) => l.status === "active");
+  // Leases managed in SHPMS are billed there — their invoices arrive through the SHPMS link.
+  const activeLeases = leases.filter((l) => l.status === "active" && !(l as any).shpmsLeaseId);
 
   for (const lease of activeLeases) {
     try {
@@ -81,6 +82,8 @@ export async function runTenantBillingCycle(storage: IStorage, createdBy = "syst
     const due = await storage.listUnpaidRentInvoicesDueForReminder();
     const settings = await storage.getSettings();
     for (const inv of due) {
+      // SHPMS sends its own reminders for the invoices it issues.
+      if ((inv as any).shpmsInvoiceId) continue;
       try {
         const balance = inv.totalAmount - inv.amountPaid;
         const kindWord = (inv as any).invoiceKind === "electricity" ? "electricity" : "rent";

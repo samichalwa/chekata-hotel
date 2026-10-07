@@ -1319,6 +1319,7 @@ export const shops = pgTable("shops", {
   sizeSqm: real("size_sqm"),
   active: integer("active").notNull().default(1),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  shpmsUnitId: integer("shpms_unit_id"), // SHPMS unit this shop mirrors
 });
 export const insertShopSchema = createInsertSchema(shops).omit({ id: true });
 export type InsertShop = z.infer<typeof insertShopSchema>;
@@ -1335,6 +1336,7 @@ export const tenants = pgTable("tenants", {
   active: integer("active").notNull().default(1),
   notes: text("notes"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  shpmsTenantId: integer("shpms_tenant_id"), // set when the tenant is managed in SHPMS (Seanes Homes)
 });
 export const insertTenantSchema = createInsertSchema(tenants).omit({ id: true });
 export type InsertTenant = z.infer<typeof insertTenantSchema>;
@@ -1358,6 +1360,7 @@ export const tenancyLeases = pgTable("tenancy_leases", {
   receivableAccountId: integer("receivable_account_id"), // GL asset account — Tenant Rent Receivable
   incomeAccountId: integer("income_account_id"), // GL income account — Rental Income
   meterNumber: text("meter_number"), // electricity meter serial — matched against meter photos
+  shpmsLeaseId: integer("shpms_lease_id"), // set when SHPMS (Seanes Homes) is the master for this lease
   status: text("status").notNull().default("active"), // active | ended
   notes: text("notes"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
@@ -1411,6 +1414,8 @@ export const rentInvoices = pgTable("rent_invoices", {
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   invoiceKind: text("invoice_kind").notNull().default("rent"), // rent | electricity
   meterReadingId: integer("meter_reading_id"), // electricity invoices: the reading billed
+  shpmsInvoiceId: integer("shpms_invoice_id"), // rent invoice issued in SHPMS and mirrored here
+  shpmsStatus: text("shpms_status"), // SHPMS invoice status (issued | part_paid | paid | void)
 });
 export const insertRentInvoiceSchema = createInsertSchema(rentInvoices).omit({ id: true });
 export type InsertRentInvoice = z.infer<typeof insertRentInvoiceSchema>;
