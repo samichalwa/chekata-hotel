@@ -27,6 +27,7 @@ const categoryLabel: Record<string, string> = {
   movie: "Movie Room (Seat)",
   water: "Water Sales",
   water_bill: "Metered water",
+  water_deposit: "Water deposit",
   tenancy: "Shop rent",
 };
 

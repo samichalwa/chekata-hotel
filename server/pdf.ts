@@ -51,7 +51,7 @@ export interface DocLineItem {
 export interface DocPayload {
   docType: "invoice" | "receipt" | "credit_note";
   docNumber: number;
-  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy" | "water" | "water_bill";
+  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy" | "water" | "water_bill" | "water_deposit";
   customDocNumber?: string; // overrides the auto "INV-00001"/"RCT-00001" label (e.g. a module's own sequence number like RENT-000012)
   recipientName: string;
   recipientEmail?: string | null;
@@ -87,6 +87,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   tenancy: "Tenancy (Shop Rent)",
   water: "Water Sales",
   water_bill: "Metered Water Bill",
+  water_deposit: "Water Meter Deposit",
 };
 
 // Company identifiers printed under the hotel contact lines on invoices, receipts and

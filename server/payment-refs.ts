@@ -31,6 +31,7 @@ const SOURCES: { table: string; label: string }[] = [
   { table: "shpms_payments", label: "an SHPMS rent payment" },
   { table: "water_sales", label: "a water sale" },
   { table: "water_bill_payments", label: "a metered water payment" },
+  { table: "water_deposits", label: "a water meter deposit" },
   { table: "table_reservations", label: "a table reservation" },
 ];
 

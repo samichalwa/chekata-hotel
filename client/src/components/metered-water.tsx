@@ -1,7 +1,7 @@
 // Metered water customers: monthly meter readings → monthly bills (m³), payments, statements.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, FileText, MessageCircle, Send, Ban, FileSpreadsheet, Gauge, Users, Wallet, AlertTriangle, Save, Receipt, Camera, ScanLine, ImageIcon } from "lucide-react";
+import { Plus, Pencil, Trash2, FileText, MessageCircle, Send, Ban, FileSpreadsheet, Gauge, Users, Wallet, AlertTriangle, Save, Receipt, Camera, ScanLine, ImageIcon, PiggyBank } from "lucide-react";
 import { StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -389,6 +389,7 @@ function CustomersTab() {
   const { toast } = useToast();
   const [edit, setEdit] = useState<Customer | "new" | null>(null);
   const [stmt, setStmt] = useState<Customer | null>(null);
+  const [dep, setDep] = useState<Customer | null>(null);
   const [search, setSearch] = useState("");
   const [del, setDel] = useState<Customer | null>(null);
   const { data: customers = [], isLoading } = useQuery<Customer[]>({ queryKey: ["/api/water-billing/customers"] });
@@ -418,10 +419,11 @@ function CustomersTab() {
                 <TableCell className="hidden md:table-cell text-sm"><div>{c.meterNumber ?? "—"}</div><div className="text-xs text-muted-foreground">{c.location ?? ""}</div></TableCell>
                 <TableCell className="hidden lg:table-cell text-sm">{c.tariffName}</TableCell>
                 <TableCell className="text-right tabular-nums text-sm">{c.lastReading ?? c.openingReading}<div className="text-xs text-muted-foreground">{c.lastMonth ? monthLabel(c.lastMonth) : "opening"}</div></TableCell>
-                <TableCell className={`text-right tabular-nums text-sm font-medium ${c.balance > 0.5 ? "text-destructive" : ""}`} data-testid={`text-balance-${c.id}`}>{c.balance < -0.5 ? `${formatKES(-c.balance)} cr` : formatKES(Math.max(0, c.balance))}</TableCell>
+                <TableCell className={`text-right tabular-nums text-sm font-medium ${c.balance > 0.5 ? "text-destructive" : ""}`} data-testid={`text-balance-${c.id}`}>{c.balance < -0.5 ? `${formatKES(-c.balance)} cr` : formatKES(Math.max(0, c.balance))}<div className="text-xs font-normal text-muted-foreground whitespace-nowrap" data-testid={`text-deposit-${c.id}`}>Deposit {formatKES(c.depositAmount || 0)}</div></TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end flex-wrap gap-1">
                     <RecordPaymentButton endpoint={`/api/water-billing/customers/${c.id}/record-payment`} due={c.balance} guestName={`${c.name} (${c.accountNo})`} summary="Account balance — applied to the oldest bill first" invalidate={[["/api/water-billing/bills"], ["/api/water-billing/customers"], ["/api/water-billing/summary"]]} testId={`wc-${c.id}`} compact />
+                    <Button size="sm" variant="outline" title="Deposit" onClick={() => setDep(c)} data-testid={`button-deposit-${c.id}`}><PiggyBank className="h-4 w-4 mr-1" />Deposit</Button>
                     <Button size="icon" variant="ghost" title="Statement" onClick={() => setStmt(c)} data-testid={`button-statement-${c.id}`}><FileText className="h-4 w-4" /></Button>
                     <Button size="icon" variant="ghost" title="Edit" onClick={() => setEdit(c)} data-testid={`button-edit-customer-${c.id}`}><Pencil className="h-4 w-4" /></Button>
                     <Button size="icon" variant="ghost" title="Delete" onClick={() => setDel(c)} data-testid={`button-delete-customer-${c.id}`}><Trash2 className="h-4 w-4" /></Button>
@@ -434,6 +436,7 @@ function CustomersTab() {
       )}
       {edit && <CustomerDialog customer={edit === "new" ? null : edit} tariffs={tariffs} onClose={() => setEdit(null)} />}
       {stmt && <StatementDialog customer={stmt} onClose={() => setStmt(null)} />}
+      {dep && <DepositDialog customer={dep} onClose={() => setDep(null)} />}
       <Dialog open={!!del} onOpenChange={(o) => !o && setDel(null)}>
         <DialogContent className="max-w-sm"><DialogHeader><DialogTitle>Delete {del?.name}?</DialogTitle><DialogDescription>Only customers with no readings or payments can be deleted. Otherwise mark them disconnected.</DialogDescription></DialogHeader>
           <DialogFooter><Button variant="outline" onClick={() => setDel(null)}>Cancel</Button><Button variant="destructive" disabled={remove.isPending} onClick={() => del && remove.mutate(del)} data-testid="button-confirm-delete-customer">Delete</Button></DialogFooter></DialogContent>
@@ -478,7 +481,7 @@ function CustomerDialog({ customer, tariffs, onClose }: { customer: Customer | n
           <div className="space-y-1.5"><Label>Status</Label>
             <Select value={f.status} onValueChange={set("status")}><SelectTrigger data-testid="select-wc-status"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="active">Active (billed monthly)</SelectItem><SelectItem value="disconnected">Disconnected</SelectItem></SelectContent></Select></div>
-          <div className="sm:col-span-2 border-t pt-3 text-sm font-medium">Connection deposit <span className="font-normal text-xs text-muted-foreground">— recorded for reference only; it is not receipted or posted to Finance</span></div>
+          <div className="sm:col-span-2 border-t pt-3 text-sm font-medium">Connection deposit <span className="font-normal text-xs text-muted-foreground">— typed in by hand, not receipted or posted to Finance. To receipt a deposit and post it, use the Deposit button on the customer list.</span></div>
           <div className="space-y-1.5"><Label htmlFor="wc-dep">Deposit amount (KES)</Label><Input id="wc-dep" type="number" min="0" value={f.depositAmount} onChange={set("depositAmount")} /></div>
           <div className="space-y-1.5"><Label htmlFor="wc-depref">Deposit reference</Label><Input id="wc-depref" value={f.depositReference} onChange={set("depositReference")} /></div>
           <div className="space-y-1.5"><Label htmlFor="wc-depdate">Deposit date</Label><Input id="wc-depdate" type="date" value={f.depositDate} onChange={set("depositDate")} /></div>
@@ -545,6 +548,7 @@ function TariffsTab() {
         <label className="flex items-center gap-2 text-sm"><Switch checked={!!settings?.waterBillSms} onCheckedChange={(v) => saveSettings.mutate({ waterBillSms: v ? 1 : 0 })} data-testid="switch-water-sms" />SMS each bill to the customer</label>
         {settings && !settings.smsEnabled && <p className="text-xs text-muted-foreground w-full">SMS is turned off in Settings → SMS, so bills will only be emailed.</p>}
       </Card>
+      <DepositAccountsCard />
       <PhotoReadingCard settings={settings} />
       <div className="flex justify-end"><Button onClick={() => setEdit("new")} data-testid="button-new-tariff"><Plus className="h-4 w-4 mr-1" />Add tariff</Button></div>
       {tariffs.length === 0 ? <Card className="p-8 text-center text-sm text-muted-foreground">No tariffs yet. A tariff sets the price per m³ (optionally in bands), a monthly service charge and a minimum bill.</Card> : (
@@ -670,5 +674,125 @@ function TariffDialog({ tariff, onClose }: { tariff: Tariff | null; onClose: () 
         <DialogFooter><Button variant="outline" onClick={onClose}>Cancel</Button><Button disabled={!!err || save.isPending} onClick={() => save.mutate()} data-testid="button-save-tariff">{save.isPending ? "Saving…" : "Save tariff"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ---------------- Deposits ---------------- */
+type DepositRow = { id: number; amount: number; paid_on: string; payment_method: string; payment_reference: string | null; void_reference: string | null; bank_name: string | null; entry_number: string | null; reversal_number: string | null; status: string; cancel_reason: string | null; recorded_by: string | null; document_id: number | null };
+const METHOD_LABEL: Record<string, string> = { mpesa: "M-Pesa", cash: "Cash", card: "Card", bank_transfer: "Bank transfer" };
+
+function DepositDialog({ customer, onClose }: { customer: Customer; onClose: () => void }) {
+  const { toast } = useToast();
+  const { data: me } = useCurrentUser();
+  const { data, isLoading } = useQuery<{ deposits: DepositRow[]; posted: number; total: number; handEntered: number }>({ queryKey: [`/api/water-billing/customers/${customer.id}/deposits`] });
+  const { data: acc } = useQuery<{ liabilities: any[]; banks: any[]; depositAccountId: number | null; depositBankAccountId: number | null }>({ queryKey: ["/api/water-billing/deposit-accounts"] });
+  const [f, setF] = useState({ amount: "", paymentMethod: "mpesa", paymentReference: "", paidOn: todayISO(), bankAccountId: "" });
+  const [replaces, setReplaces] = useState(false);
+  const [cancel, setCancel] = useState<DepositRow | null>(null);
+  const [reason, setReason] = useState("");
+  useEffect(() => { if (acc && !f.bankAccountId && acc.depositBankAccountId) setF((x) => ({ ...x, bankAccountId: String(acc.depositBankAccountId) })); }, [acc]);
+  const refresh = () => { queryClient.invalidateQueries({ queryKey: [`/api/water-billing/customers/${customer.id}/deposits`] }); queryClient.invalidateQueries({ queryKey: ["/api/water-billing/customers"] }); queryClient.invalidateQueries({ queryKey: ["/api/documents"] }); };
+  const save = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/water-billing/customers/${customer.id}/deposits`, {
+      amount: Number(f.amount), paymentMethod: f.paymentMethod, paymentReference: f.paymentReference.trim() || null, paidOn: f.paidOn,
+      bankAccountId: f.bankAccountId ? Number(f.bankAccountId) : null, replacesHandEntered: replaces })).json(),
+    onSuccess: (r: any) => {
+      refresh();
+      toast({ title: `Deposit ${formatKES(r.amount)} recorded`, description: `Receipt ${r.receiptNo} · journal ${r.entryNumber} · SMS ${r.sms} · email ${r.email ?? "—"}. Total deposit held ${formatKES(r.total)}.` });
+      setF((x) => ({ ...x, amount: "", paymentReference: "" })); setReplaces(false);
+    },
+    onError: (e) => toast({ title: "Couldn't record the deposit", description: errMsg(e), variant: "destructive" }),
+  });
+  const doCancel = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/water-billing/deposits/${cancel!.id}/cancel`, { reason }),
+    onSuccess: () => { refresh(); toast({ title: "Deposit cancelled", description: "The journal was reversed and the reference can be used again." }); setCancel(null); setReason(""); },
+    onError: (e) => toast({ title: "Couldn't cancel", description: errMsg(e), variant: "destructive" }),
+  });
+  const notSetUp = acc && !acc.depositAccountId;
+  const set = (k: keyof typeof f) => (e: any) => setF((x) => ({ ...x, [k]: e?.target ? e.target.value : e }));
+  const valid = Number(f.amount) > 0 && !!f.bankAccountId && (f.paymentMethod !== "mpesa" || f.paymentReference.trim().length > 0);
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Water deposit — {customer.name} ({customer.accountNo})</DialogTitle>
+          <DialogDescription>Money held for the customer, not income: it goes into the chosen bank account and the deposits held account in Finance. The customer gets a receipt by SMS{customer.email ? " and email" : ""}.</DialogDescription></DialogHeader>
+        <div className="grid grid-cols-3 gap-3 text-sm">
+          <Card className="p-3"><div className="text-xs text-muted-foreground">Total deposit held</div><div className="font-semibold tabular-nums" data-testid="text-deposit-total">{data ? formatKES(data.total) : "…"}</div></Card>
+          <Card className="p-3"><div className="text-xs text-muted-foreground">Receipted &amp; in Finance</div><div className="font-semibold tabular-nums" data-testid="text-deposit-posted">{data ? formatKES(data.posted) : "…"}</div></Card>
+          <Card className="p-3"><div className="text-xs text-muted-foreground">Typed in by hand only</div><div className="font-semibold tabular-nums" data-testid="text-deposit-hand">{data ? formatKES(data.handEntered) : "…"}</div></Card>
+        </div>
+        {notSetUp ? (
+          <p className="text-sm text-destructive" data-testid="text-deposit-not-setup">Choose the deposits held account first: Water sales → Metered → Tariffs → Deposits{me?.isAdmin ? "" : " (an admin must do this)"}.</p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 border rounded-md p-3">
+            <div className="space-y-1.5"><Label htmlFor="dep-amt">Amount received (KES)</Label><Input id="dep-amt" type="number" min="0" value={f.amount} onChange={set("amount")} data-testid="input-deposit-amount" /></div>
+            <div className="space-y-1.5"><Label>How they paid</Label>
+              <Select value={f.paymentMethod} onValueChange={set("paymentMethod")}><SelectTrigger data-testid="select-deposit-method"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(METHOD_LABEL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select></div>
+            <div className="space-y-1.5"><Label htmlFor="dep-ref">{f.paymentMethod === "mpesa" ? "M-Pesa code" : "Reference (optional)"}</Label><Input id="dep-ref" value={f.paymentReference} onChange={set("paymentReference")} className="uppercase" data-testid="input-deposit-reference" /></div>
+            <div className="space-y-1.5"><Label htmlFor="dep-date">Date paid</Label><Input id="dep-date" type="date" max={todayISO()} value={f.paidOn} onChange={set("paidOn")} data-testid="input-deposit-date" /></div>
+            <div className="space-y-1.5 sm:col-span-2"><Label>Paid into</Label>
+              <Select value={f.bankAccountId} onValueChange={set("bankAccountId")}><SelectTrigger data-testid="select-deposit-bank"><SelectValue placeholder="Choose bank / cash account" /></SelectTrigger>
+                <SelectContent>{(acc?.banks ?? []).map((b: any) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}</SelectContent></Select></div>
+            {(data?.handEntered ?? 0) > 0.5 && (
+              <label className="flex items-start gap-2 text-sm sm:col-span-2"><Checkbox checked={replaces} onCheckedChange={(v) => setReplaces(!!v)} data-testid="checkbox-deposit-replaces" />
+                <span>This payment is the {formatKES(data!.handEntered)} already typed in by hand — replace that figure instead of adding to it.</span></label>
+            )}
+            <div className="sm:col-span-2 flex justify-end"><Button disabled={!valid || save.isPending} onClick={() => save.mutate()} data-testid="button-save-deposit">{save.isPending ? "Recording…" : "Record deposit"}</Button></div>
+          </div>
+        )}
+        <div>
+          <div className="text-sm font-medium mb-2">Deposits recorded</div>
+          {isLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : !data?.deposits.length ? <p className="text-sm text-muted-foreground">None yet.</p> : (
+            <div className="overflow-x-auto"><Table>
+              <TableHeader><TableRow><TableHead>Date</TableHead><TableHead className="text-right">Amount</TableHead><TableHead>Paid by</TableHead><TableHead className="hidden sm:table-cell">Finance</TableHead><TableHead className="text-right"></TableHead></TableRow></TableHeader>
+              <TableBody>{data.deposits.map((d) => (
+                <TableRow key={d.id} data-testid={`row-deposit-${d.id}`}>
+                  <TableCell className="text-sm whitespace-nowrap">{d.paid_on}<div className="text-xs text-muted-foreground">{customer.accountNo}-D{d.id}</div></TableCell>
+                  <TableCell className={`text-right tabular-nums text-sm ${d.status === "cancelled" ? "line-through text-muted-foreground" : ""}`}>{formatKES(d.amount)}</TableCell>
+                  <TableCell className="text-sm">{METHOD_LABEL[d.payment_method] ?? d.payment_method}{(d.payment_reference || d.void_reference) ? ` · ${d.payment_reference || d.void_reference}` : ""}<div className="text-xs text-muted-foreground">{d.bank_name}</div></TableCell>
+                  <TableCell className="hidden sm:table-cell text-xs">{d.entry_number}{d.status === "cancelled" ? <div className="text-muted-foreground">Cancelled{d.reversal_number ? ` (${d.reversal_number})` : ""}: {d.cancel_reason}</div> : null}</TableCell>
+                  <TableCell className="text-right">{d.status === "posted" && <Button size="sm" variant="ghost" onClick={() => setCancel(d)} data-testid={`button-cancel-deposit-${d.id}`}><Ban className="h-4 w-4 mr-1" />Cancel</Button>}</TableCell>
+                </TableRow>))}</TableBody>
+            </Table></div>
+          )}
+        </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Close</Button></DialogFooter>
+        <Dialog open={!!cancel} onOpenChange={(o) => { if (!o) { setCancel(null); setReason(""); } }}>
+          <DialogContent className="max-w-sm"><DialogHeader><DialogTitle>Cancel deposit {cancel ? formatKES(cancel.amount) : ""}?</DialogTitle>
+            <DialogDescription>Only for a deposit entered by mistake. The Finance entry is reversed today and the payment reference can be used again.</DialogDescription></DialogHeader>
+            <div className="space-y-1.5"><Label htmlFor="dep-reason">Reason</Label><Textarea id="dep-reason" value={reason} onChange={(e) => setReason(e.target.value)} data-testid="input-cancel-deposit-reason" /></div>
+            <DialogFooter><Button variant="outline" onClick={() => setCancel(null)}>Keep</Button><Button variant="destructive" disabled={reason.trim().length < 3 || doCancel.isPending} onClick={() => doCancel.mutate()} data-testid="button-confirm-cancel-deposit">Cancel deposit</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DepositAccountsCard() {
+  const { toast } = useToast();
+  const { data: me } = useCurrentUser();
+  const { data } = useQuery<{ liabilities: any[]; banks: any[]; depositAccountId: number | null; depositBankAccountId: number | null }>({ queryKey: ["/api/water-billing/deposit-accounts"] });
+  const save = useMutation({
+    mutationFn: async (patch: any) => apiRequest("PATCH", "/api/water-billing/deposit-accounts", patch),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/water-billing/deposit-accounts"] }); toast({ title: "Deposit accounts saved" }); },
+    onError: (e) => toast({ title: "Couldn't save", description: errMsg(e), variant: "destructive" }),
+  });
+  if (!data) return null;
+  return (
+    <Card className="p-4 flex flex-wrap items-end gap-4" data-testid="card-deposit-accounts">
+      <div className="w-full"><div className="text-sm font-medium">Deposits</div><p className="text-xs text-muted-foreground">Where customer meter deposits post in Finance. Deposits are held for the customer, so they go to a liability account, not income.</p></div>
+      <div className="space-y-1.5 min-w-[16rem]"><Label>Deposits held account (liability)</Label>
+        <Select disabled={!me?.isAdmin} value={data.depositAccountId ? String(data.depositAccountId) : ""} onValueChange={(v) => save.mutate({ depositAccountId: Number(v) })}>
+          <SelectTrigger data-testid="select-deposit-liability"><SelectValue placeholder="Choose account" /></SelectTrigger>
+          <SelectContent>{data.liabilities.map((a: any) => <SelectItem key={a.id} value={String(a.id)}>{a.code} · {a.name}</SelectItem>)}</SelectContent></Select></div>
+      <div className="space-y-1.5 min-w-[14rem]"><Label>Usually paid into</Label>
+        <Select disabled={!me?.isAdmin} value={data.depositBankAccountId ? String(data.depositBankAccountId) : ""} onValueChange={(v) => save.mutate({ depositBankAccountId: Number(v) })}>
+          <SelectTrigger data-testid="select-deposit-default-bank"><SelectValue placeholder="Choose bank / cash account" /></SelectTrigger>
+          <SelectContent>{data.banks.map((b: any) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}</SelectContent></Select></div>
+      {!me?.isAdmin && <p className="text-xs text-muted-foreground w-full">Only an admin can change these.</p>}
+      {data.liabilities.length === 0 && <p className="text-xs text-destructive w-full">No liability accounts yet. Add one in Finance → Chart of accounts (e.g. 2150 Water Customer Deposits).</p>}
+    </Card>
   );
 }

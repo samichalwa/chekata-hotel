@@ -1,4 +1,5 @@
 import { registerWaterBillingRoutes } from "./water-billing";
+import { registerWaterDepositRoutes } from "./water-deposits";
 import { registerShpmsPublicRoutes, registerShpmsRoutes, shpmsWriteGuard } from "./shpms";
 import { registerMeterReadingRoutes, saveElectricityReadings } from "./meter-readings";
 import { postReceiptToFinance, receivedOn, ORIGINAL_DOC, NOT_SELF_POSTED } from "./receipt-posting";
@@ -3381,6 +3382,7 @@ export async function registerRoutes(
 
   // ---------- Owner / Director briefing + in-app notifications ----------
   registerWaterBillingRoutes(app);
+  registerWaterDepositRoutes(app);
   registerMeterReadingRoutes(app);
   registerShpmsRoutes(app);
   registerDirectorRoutes(app);

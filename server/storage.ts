@@ -1293,6 +1293,15 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
   await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('water_customer', 'WC', 1, 4) ON CONFLICT (sequence_key) DO NOTHING`;
   await ensureColumn("settings", "water_bill_due_days", "INTEGER NOT NULL DEFAULT 14");
   await ensureColumn("settings", "water_bill_sms", "INTEGER NOT NULL DEFAULT 1");
+  await sql`CREATE TABLE IF NOT EXISTS water_deposits (
+    id SERIAL PRIMARY KEY, customer_id INTEGER NOT NULL, amount REAL NOT NULL, paid_on TEXT NOT NULL,
+    payment_method TEXT NOT NULL, payment_reference TEXT, void_reference TEXT, bank_account_id INTEGER NOT NULL,
+    journal_entry_id INTEGER, document_id INTEGER, replaces_hand_entered REAL NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'posted', cancel_reason TEXT, reversal_journal_id INTEGER,
+    recorded_by TEXT, created_at BIGINT NOT NULL, cancelled_by TEXT, cancelled_at BIGINT)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_water_deposits_customer ON water_deposits(customer_id)`;
+  await ensureColumn("settings", "water_deposit_account_id", "INTEGER");
+  await ensureColumn("settings", "water_deposit_bank_account_id", "INTEGER");
   await ensureColumn("settings", "meter_vision_provider", "TEXT");
   await ensureColumn("settings", "meter_vision_api_key", "TEXT");
   await ensureColumn("settings", "meter_vision_model", "TEXT");

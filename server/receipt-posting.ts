@@ -14,7 +14,8 @@ export const ORIGINAL_DOC = (alias: string) => sql.unsafe(`(COALESCE(${alias}.pa
 
 // Shop-rent payments on a lease with a receivable account already post their own journal
 // (Dr bank, Cr receivable) in the Tenants module — never post those receipts a second time.
-export const NOT_SELF_POSTED = (alias: string) => sql.unsafe(`NOT (${alias}.category = 'tenancy' AND ${alias}.doc_type = 'receipt' AND EXISTS (
+// Water meter deposits post their own journal (Dr bank, Cr deposits held) and are never income.
+export const NOT_SELF_POSTED = (alias: string) => sql.unsafe(`NOT (${alias}.category = 'water_deposit' OR ${alias}.category = 'tenancy' AND ${alias}.doc_type = 'receipt' AND EXISTS (
   SELECT 1 FROM journal_entries j WHERE j.source_module = 'tenants' AND j.source_id = ${alias}.source_id AND j.status = 'posted' AND j.description LIKE 'Payment received%'))`);
 
 const nairobiDate = (ms: number) => new Date(ms + 3 * 3600_000).toISOString().slice(0, 10);
