@@ -116,12 +116,12 @@ export async function saveElectricityReadings(input: unknown, by: string) {
     if (existing) {
       await sql`UPDATE meter_readings SET start_reading = ${start}, end_reading = ${r.currentReading}, consumption = ${used}, amount = ${amount}, reading_date = ${r.readingDate},
         recorded_by = ${by}, updated_at = ${now}, invoice_id = NULL WHERE id = ${existing.id}`;
-      if (photo) await sql`UPDATE meter_readings SET photo_url = ${photo.photoUrl}, photo_meter_number = ${photo.meterNumber}, photo_reading = ${photo.reading}, photo_meter_verified = ${photo.verified ? 1 : 0}, photo_confidence = ${photo.confidence} WHERE id = ${existing.id}`;
+      if (photo) await sql`UPDATE meter_readings SET photo_url = ${photo.photoUrl}, photo_meter_number = ${photo.meterNumber}, photo_reading = ${photo.reading}, photo_meter_verified = ${photo.verified === null ? null : photo.verified ? 1 : 0}, photo_confidence = ${photo.confidence} WHERE id = ${existing.id}`;
     } else {
       await sql`INSERT INTO meter_readings (lease_id, period_month, start_reading, end_reading, consumption, amount, reading_date, recorded_by, created_at, updated_at,
           photo_url, photo_meter_number, photo_reading, photo_meter_verified, photo_confidence)
         VALUES (${l.id}, ${body.month}, ${start}, ${r.currentReading}, ${used}, ${amount}, ${r.readingDate}, ${by}, ${now}, ${now},
-          ${photo?.photoUrl ?? null}, ${photo?.meterNumber ?? null}, ${photo?.reading ?? null}, ${photo ? (photo.verified ? 1 : 0) : null}, ${photo?.confidence ?? null})`;
+          ${photo?.photoUrl ?? null}, ${photo?.meterNumber ?? null}, ${photo?.reading ?? null}, ${photo && photo.verified !== null ? (photo.verified ? 1 : 0) : null}, ${photo?.confidence ?? null})`;
     }
     saved++;
   }

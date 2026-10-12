@@ -68,9 +68,9 @@ export function MeteredWater() {
 }
 
 /* ---------------- Readings ---------------- */
-type PhotoScan = { token: string; url: string; reading: number | null; meterNumber: string | null; verified: boolean; confidence: string };
+type PhotoScan = { token: string; url: string; reading: number | null; meterNumber: string | null; verified: boolean | null; confidence: string };
 type Draft = { current: string; replaced: boolean; oldFinal: string; newStart: string; photo?: PhotoScan | null };
-type ScanResult = { status: "matched" | "unverified" | "mismatch" | "unregistered" | "serial_unreadable" | "disconnected"; message: string; photoUrl: string; token: string | null;
+type ScanResult = { status: "matched" | "unverified" | "mismatch" | "unregistered" | "serial_unreadable" | "disconnected" | "photo_only"; message: string; photoUrl: string; token: string | null;
   detected: { meterNumber: string | null; reading: number | null; readingText: string | null; confidence: "high" | "medium" | "low"; notes: string | null };
   customer: { id: number; name: string; accountNo: string; meterNumber: string | null } | null };
 
@@ -108,6 +108,12 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
       const jpeg = await photoToJpeg(file);
       setScan({ busy: true, preview: jpeg, forId });
       const result: ScanResult = await (await apiRequest("POST", "/api/water-billing/scan", { imageBase64: jpeg, mimeType: "image/jpeg", customerId: forId })).json();
+      if (result.status === "photo_only" && result.token && forId !== null) {
+        set(forId, { photo: { token: result.token, url: result.photoUrl, reading: null, meterNumber: null, verified: null, confidence: "" } });
+        setScan(null);
+        toast({ title: "Photo attached", description: `${result.message} Then press Save readings.` });
+        return;
+      }
       setScan({ busy: false, preview: jpeg, result, forId });
     } catch (e) { setScan((s) => ({ busy: false, preview: s?.preview, error: errMsg(e), forId })); }
   };
@@ -185,8 +191,8 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
         <Button variant="outline" disabled={!changed.length || blocking || save.isPending} onClick={() => save.mutate()} data-testid="button-save-readings"><Save className="h-4 w-4 mr-1" />{save.isPending ? "Saving…" : `Save readings${changed.length ? ` (${changed.length})` : ""}`}</Button>
         <Button disabled={!toBill.length || changed.length > 0 || raise.isPending} onClick={() => setConfirm(true)} data-testid="button-raise-bills"><Receipt className="h-4 w-4 mr-1" />Raise bills{toBill.length ? ` (${toBill.length})` : ""}</Button>
       </Card>
-      <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => onPhoto(e.target.files?.[0])} data-testid="input-meter-photo" />
-      {settings?.visionReady && rows.length > 0 && <p className="text-xs text-muted-foreground">Type readings as usual, or use the camera: the photo is read for the meter number and reading, matched to the registered meter, and filled in for you to check before saving.</p>}
+      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => onPhoto(e.target.files?.[0])} data-testid="input-meter-photo" />
+      {rows.length > 0 && <p className="text-xs text-muted-foreground">{settings?.visionReady ? "Type readings as usual, or use the camera: the photo is read for the meter number and reading, matched to the registered meter, and filled in for you to check before saving." : "Type readings as usual. Use the camera button on a row to attach a meter photo, taken now or chosen from the gallery."}</p>}
       {changed.length > 0 && toBill.length > 0 && <p className="text-xs text-muted-foreground">Save the readings you've typed before raising bills.</p>}
       {isLoading ? <Card className="p-8 text-center text-sm text-muted-foreground">Loading…</Card> : rows.length === 0 ? (
         <Card className="p-8 text-center text-sm text-muted-foreground">No active metered customers yet. Add a tariff, then add customers in the Customers tab.</Card>
@@ -209,7 +215,7 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
                       <Label htmlFor={`cur-${r.customerId}`} className="text-xs text-muted-foreground font-normal">{d.replaced ? "New meter now" : "Current"}</Label>
                       <div className="flex items-center gap-1">
                         <Input id={`cur-${r.customerId}`} type="number" inputMode="decimal" step="0.001" min="0" className="w-28 tabular-nums" disabled={locked} value={d.current} onChange={(e) => set(r.customerId, { current: e.target.value })} data-testid={`input-reading-${r.customerId}`} />
-                        {settings?.visionReady && !locked && <Button size="icon" variant="ghost" aria-label={`Photo of ${r.name}'s meter`} onClick={() => openCamera(r.customerId)} data-testid={`button-photo-${r.customerId}`}><Camera className="h-4 w-4" /></Button>}
+                        {!locked && <Button size="icon" variant="ghost" title="Add meter photo (camera or gallery)" aria-label={`Add a photo of ${r.name}'s meter`} onClick={() => openCamera(r.customerId)} data-testid={`button-photo-${r.customerId}`}><Camera className="h-4 w-4" /></Button>}
                       </div>
                     </div>
                   </div>
@@ -231,13 +237,13 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
                   </div>
                 )}
                 {(() => {
-                  const ph = d.photo ? { url: d.photo.url, reading: d.photo.reading, verified: d.photo.verified, pending: true } : r.reading?.photoUrl ? { url: r.reading.photoUrl, reading: r.reading.photoReading ?? null, verified: r.reading.photoMeterVerified !== 0, pending: false } : null;
+                  const ph = d.photo ? { url: d.photo.url, reading: d.photo.reading, verified: d.photo.verified !== false, manual: d.photo.verified === null, pending: true } : r.reading?.photoUrl ? { url: r.reading.photoUrl, reading: r.reading.photoReading ?? null, verified: r.reading.photoMeterVerified !== 0, manual: r.reading.photoMeterVerified == null && r.reading.photoReading == null, pending: false } : null;
                   if (!ph) return null;
                   const edited = ph.reading !== null && d.current !== "" && Math.abs(Number(d.current) - ph.reading) > 0.0005;
                   return (
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid={`photo-info-${r.customerId}`}>
                       <a href={ph.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"><ImageIcon className="h-3.5 w-3.5" />Meter photo</a>
-                      <span className="text-muted-foreground">{ph.reading === null ? "reading not readable" : `photo read ${ph.reading}`}</span>
+                      {!ph.manual && <span className="text-muted-foreground">{ph.reading === null ? "reading not readable" : `photo read ${ph.reading}`}</span>}
                       {!ph.verified && <Badge variant="outline">Meter no. not verified</Badge>}
                       {edited && <Badge variant="outline">Changed by staff</Badge>}
                       {ph.pending && <span className="text-muted-foreground">· attached when you save</span>}

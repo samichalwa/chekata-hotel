@@ -34,7 +34,7 @@ function baseUrl(req: Request): string {
 }
 
 // Photo scans waiting to be confirmed (token → what was read and for whom). In memory; tokens last 6 hours.
-const scans = new Map<string, { kind: "water" | "electricity"; targetId: number; photoUrl: string; meterNumber: string | null; reading: number | null; verified: boolean; confidence: string; expires: number }>();
+const scans = new Map<string, { kind: "water" | "electricity"; targetId: number; photoUrl: string; meterNumber: string | null; reading: number | null; verified: boolean | null; confidence: string; expires: number }>(); // verified null = photo attached without the AI reader
 export class UserError extends Error { status = 400; }
 setInterval(() => { const now = Date.now(); for (const [k, v] of Array.from(scans)) if (v.expires < now) scans.delete(k); }, 3600_000).unref?.();
 
@@ -316,13 +316,13 @@ export async function saveWaterReadings(input: unknown, by: string) {
         if (existing) {
           await sql`UPDATE water_readings SET previous_reading = ${prev}, current_reading = ${r.currentReading}, meter_replaced = ${replaced ? 1 : 0}, old_meter_final = ${replaced?.oldFinal ?? null},
             new_meter_start = ${replaced?.newStart ?? null}, consumption = ${used}, reading_date = ${r.readingDate}, bill_id = NULL, recorded_by = ${by}, updated_at = ${Date.now()} WHERE id = ${existing.id}`;
-          if (photo) await sql`UPDATE water_readings SET photo_url = ${photo.photoUrl}, photo_meter_number = ${photo.meterNumber}, photo_reading = ${photo.reading}, photo_meter_verified = ${photo.verified ? 1 : 0}, photo_confidence = ${photo.confidence} WHERE id = ${existing.id}`;
+          if (photo) await sql`UPDATE water_readings SET photo_url = ${photo.photoUrl}, photo_meter_number = ${photo.meterNumber}, photo_reading = ${photo.reading}, photo_meter_verified = ${photo.verified === null ? null : photo.verified ? 1 : 0}, photo_confidence = ${photo.confidence} WHERE id = ${existing.id}`;
           else if (!keepPhoto) await sql`UPDATE water_readings SET photo_url = NULL, photo_meter_number = NULL, photo_reading = NULL, photo_meter_verified = NULL, photo_confidence = NULL WHERE id = ${existing.id}`;
         } else {
           await sql`INSERT INTO water_readings (customer_id, period_month, previous_reading, current_reading, meter_replaced, old_meter_final, new_meter_start, consumption, reading_date, recorded_by, created_at, updated_at,
               photo_url, photo_meter_number, photo_reading, photo_meter_verified, photo_confidence)
             VALUES (${c.id}, ${body.month}, ${prev}, ${r.currentReading}, ${replaced ? 1 : 0}, ${replaced?.oldFinal ?? null}, ${replaced?.newStart ?? null}, ${used}, ${r.readingDate}, ${by}, ${Date.now()}, ${Date.now()},
-              ${photo?.photoUrl ?? null}, ${photo?.meterNumber ?? null}, ${photo?.reading ?? null}, ${photo ? (photo.verified ? 1 : 0) : null}, ${photo?.confidence ?? null})`;
+              ${photo?.photoUrl ?? null}, ${photo?.meterNumber ?? null}, ${photo?.reading ?? null}, ${photo && photo.verified !== null ? (photo.verified ? 1 : 0) : null}, ${photo?.confidence ?? null})`;
         }
         saved++;
       }
@@ -343,10 +343,34 @@ async function scanTargets(kind: "water" | "electricity"): Promise<ScanTarget[]>
  *  tenant lease). Only the photo is stored; staff confirm, and saving attaches it via the returned token. */
 export async function scanMeterPhoto(opts: { kind: "water" | "electricity"; imageBase64: string; mimeType: "image/jpeg" | "image/png"; targetId: number | null }) {
   const settings = await storage.getSettings() as any;
-  if (!settings.meterVisionProvider || !settings.meterVisionApiKey) throw new UserError("Photo reading is not set up yet. An admin can set it up in Water Sales → Metered customers → Tariffs → Photo reading.");
-  const { url: photoUrl } = saveBase64Upload({ category: opts.kind === "water" ? "water-meters" : "electricity-meters", dataBase64: opts.imageBase64, mimeType: opts.mimeType });
-  const seen = await readMeterPhoto({ provider: settings.meterVisionProvider, apiKey: settings.meterVisionApiKey, model: settings.meterVisionModel, imageBase64: opts.imageBase64, mimeType: opts.mimeType, kind: opts.kind });
+  const visionReady = !!(settings.meterVisionProvider && settings.meterVisionApiKey);
+  if (!visionReady && !opts.targetId) throw new UserError("Photo reading is not set up, so a photo can't find the customer by itself. Use the camera button on the customer's row to attach a photo to their reading.");
   const targets = await scanTargets(opts.kind);
+  // The row the photo is for, also when that customer/tenant is not on the active list.
+  const findWanted = async (): Promise<ScanTarget | null> => {
+    if (!opts.targetId) return null;
+    const t = targets.find((c) => c.id === opts.targetId); if (t) return t;
+    if (opts.kind === "water") { const [c] = await sql`SELECT id, name, account_no, meter_number, status FROM water_customers WHERE id = ${opts.targetId}` as any[]; return c ? { id: Number(c.id), name: c.name, ref: c.account_no, meterNumber: c.meter_number, active: c.status === "active" } : null; }
+    const [l] = await sql`SELECT l.id, l.meter_number, l.status, t.name, s.shop_number FROM tenancy_leases l JOIN tenants t ON t.id = l.tenant_id LEFT JOIN shops s ON s.id = l.shop_id WHERE l.id = ${opts.targetId}` as any[];
+    return l ? { id: Number(l.id), name: l.name, ref: `Shop ${l.shop_number ?? l.id}`, meterNumber: l.meter_number, active: l.status === "active" } : null;
+  };
+  if (opts.targetId && !(await findWanted())) throw new UserError("That meter was not found.");
+  const { url: photoUrl } = saveBase64Upload({ category: opts.kind === "water" ? "water-meters" : "electricity-meters", dataBase64: opts.imageBase64, mimeType: opts.mimeType });
+  // Without the AI reader (or if it fails), the photo is simply attached to the row's reading as evidence.
+  const photoOnly = async (why: string) => {
+    const w = (await findWanted())!;
+    const token = crypto.randomBytes(16).toString("hex");
+    scans.set(token, { kind: opts.kind, targetId: w.id, photoUrl, meterNumber: null, reading: null, verified: null, confidence: "", expires: Date.now() + 6 * 3600_000 });
+    return { status: "photo_only" as const, message: why, photoUrl, token, detected: { meterNumber: null, reading: null, confidence: "" }, customer: { id: w.id, name: w.name, accountNo: w.ref, meterNumber: w.meterNumber } };
+  };
+  if (!visionReady) return photoOnly("Type the reading from the meter.");
+  let seen: Awaited<ReturnType<typeof readMeterPhoto>>;
+  try {
+    seen = await readMeterPhoto({ provider: settings.meterVisionProvider, apiKey: settings.meterVisionApiKey, model: settings.meterVisionModel, imageBase64: opts.imageBase64, mimeType: opts.mimeType, kind: opts.kind });
+  } catch (e: any) {
+    if (opts.targetId) return photoOnly(`The photo couldn't be read automatically (${e?.message ?? "reader error"}), but it is attached. Type the reading from the meter.`);
+    throw e;
+  }
   const d = normSerial(seen.meterNumber);
   let match: ScanTarget | null = null; let partial = false;
   if (d) {
@@ -358,14 +382,7 @@ export async function scanMeterPhoto(opts: { kind: "water" | "electricity"; imag
     }
   }
   const noun = opts.kind === "water" ? "customer" : "tenant";
-  let wanted: ScanTarget | null = null;
-  if (opts.targetId) {
-    wanted = targets.find((c) => c.id === opts.targetId) ?? null;
-    if (!wanted) {
-      if (opts.kind === "water") { const [c] = await sql`SELECT id, name, account_no, meter_number, status FROM water_customers WHERE id = ${opts.targetId}` as any[]; if (c) wanted = { id: Number(c.id), name: c.name, ref: c.account_no, meterNumber: c.meter_number, active: c.status === "active" }; }
-      else { const [l] = await sql`SELECT l.id, l.meter_number, l.status, t.name, s.shop_number FROM tenancy_leases l JOIN tenants t ON t.id = l.tenant_id LEFT JOIN shops s ON s.id = l.shop_id WHERE l.id = ${opts.targetId}` as any[]; if (l) wanted = { id: Number(l.id), name: l.name, ref: `Shop ${l.shop_number ?? l.id}`, meterNumber: l.meter_number, active: l.status === "active" }; }
-    }
-  }
+  const wanted: ScanTarget | null = await findWanted();
   let status: "matched" | "unverified" | "mismatch" | "unregistered" | "serial_unreadable" | "disconnected";
   let message: string;
   if (!d) {
