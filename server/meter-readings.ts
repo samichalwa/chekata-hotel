@@ -189,7 +189,7 @@ export async function createElectricityInvoice(readingId: number, by: string, ba
     const s = cfg.raw;
     const pay = s.mpesaNumber ? (s.mpesaPaymentType === "paybill" ? ` Pay via M-Pesa Paybill ${s.mpesaNumber}, Acc ${s.mpesaAccountNumber || invoiceNumber}.` : s.mpesaPaymentType === "phone" ? ` Pay via M-Pesa to ${s.mpesaNumber}.` : ` Pay via M-Pesa Till ${s.mpesaNumber}.`) : "";
     const msg = `Dear ${tenant.name}, your ${s.hotelName || "The Chekata"} electricity invoice ${invoiceNumber} for Shop ${shopNo}, ${monthLabel(m.period_month)}: ${units} kWh, ${kes(amount)}, due ${prettyDate(dueDate)}.${pay}${pdf}`;
-    const r = await sendSms({ settings: s, to: tenant.phone, message: msg }).catch((e: any) => ({ ok: false, error: e?.message }));
+    const r = await sendSms({ source: "Electricity invoice", settings: s, to: tenant.phone, message: msg }).catch((e: any) => ({ ok: false, error: e?.message }));
     sms = r.ok ? "sent" : `failed: ${(r as any).error ?? ""}`;
   }
   return { invoiceNumber, amount, email: doc?.status ?? "failed", sms };

@@ -439,7 +439,7 @@ export async function raiseWaterBills(body: { month?: string; billDate?: string;
         const pdfUrl = doc?.id && doc?.publicToken ? `${body.base}/api/public/documents/${doc.id}/pdf?token=${doc.publicToken}` : null;
         let sms = "skipped";
         if (settings.waterBillSms !== 0 && c.phone) {
-          const s = await sendSms({ settings, to: c.phone, message: billSms(settings, bill, c, pdfUrl) }).catch((e: any) => ({ ok: false, error: e?.message }));
+          const s = await sendSms({ source: "Water bill", settings, to: c.phone, message: billSms(settings, bill, c, pdfUrl) }).catch((e: any) => ({ ok: false, error: e?.message }));
           sms = s.ok ? "sent" : `failed: ${(s as any).error ?? ""}`;
         }
         await sql`UPDATE water_bills SET sms_status = ${sms} WHERE id = ${bill.id}`;
@@ -659,7 +659,7 @@ export function registerWaterBillingRoutes(app: Express) {
       const settings = await storage.getSettings() as any;
       if (req.body?.sms && c.phone) {
         const pdfUrl = doc?.id && doc?.publicToken ? `${baseUrl(req)}/api/public/documents/${doc.id}/pdf?token=${doc.publicToken}` : null;
-        const s = await sendSms({ settings, to: c.phone, message: billSms(settings, bill, c, pdfUrl) }).catch((e: any) => ({ ok: false, error: e?.message }));
+        const s = await sendSms({ source: "Water bill", settings, to: c.phone, message: billSms(settings, bill, c, pdfUrl) }).catch((e: any) => ({ ok: false, error: e?.message }));
         sms = s.ok ? "sent" : `failed: ${(s as any).error ?? ""}`;
         await sql`UPDATE water_bills SET sms_status = ${sms} WHERE id = ${bill.id}`;
       }
@@ -728,7 +728,7 @@ export function registerWaterBillingRoutes(app: Express) {
       }).catch(() => null) : null;
       if (c.phone) {
         const settings = await storage.getSettings();
-        void sendSms({ settings, to: c.phone, message: `Hi ${c.name}, payment received for your water account ${c.account_no}: ${kes(amount)}${reference ? ` (${reference})` : ""}. ${balance > 0.5 ? `Balance: ${kes(balance)}.` : "Paid in full."} Thank you.` }).catch(() => null);
+        void sendSms({ source: "Water payment", settings, to: c.phone, message: `Hi ${c.name}, payment received for your water account ${c.account_no}: ${kes(amount)}${reference ? ` (${reference})` : ""}. ${balance > 0.5 ? `Balance: ${kes(balance)}.` : "Paid in full."} Thank you.` }).catch(() => null);
       }
       res.status(201).json({ ok: true, amount, balance, allocation: alloc, _document: doc ? { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } : null });
     } catch (e) { fail(res, e); }

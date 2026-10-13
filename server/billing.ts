@@ -89,7 +89,7 @@ export async function runTenantBillingCycle(storage: IStorage, createdBy = "syst
         const kindWord = (inv as any).invoiceKind === "electricity" ? "electricity" : "rent";
         const message = `Dear ${inv.tenantName}, your ${kindWord} invoice ${inv.invoiceNumber} for KES ${Math.round(balance).toLocaleString("en-KE")} is due ${inv.dueDate}. Please check your email for the invoice.`;
         if (inv.tenantPhone) {
-          await sendSms({ settings, to: inv.tenantPhone, message });
+          await sendSms({ source: "Rent reminder", settings, to: inv.tenantPhone, message });
         }
         if (inv.tenantEmail) {
           await sendTransactionalEmail({

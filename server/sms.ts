@@ -1,16 +1,31 @@
 import type { Settings } from "@shared/schema";
 import { getCurrentEnvironment } from "./db-context";
 import { logTestMessage } from "./test-environment";
+import { sql } from "./storage";
 
 export interface SendSmsInput {
   settings: Settings;
   to: string; // raw phone number as entered by staff (e.g. 07xx, 01xx, +254xx, 254xx)
   message: string;
+  source?: string; // what sent it, shown in Settings → SMS log (e.g. "Water bill")
 }
 
 export interface SendSmsResult {
   ok: boolean;
   error?: string;
+}
+type CoreResult = SendSmsResult & { phone?: string | null; cost?: string | null; messageId?: string | null; providerStatus?: string | null; test?: boolean };
+
+/** Every SMS the system tries to send is recorded in sms_log (Settings → SMS log). Logging never blocks or fails a send. */
+export async function sendSms(input: SendSmsInput): Promise<SendSmsResult> {
+  let r: CoreResult;
+  try { r = await sendSmsCore(input); } catch (e: any) { r = { ok: false, error: e?.message ?? "SMS failed" }; }
+  try {
+    await sql`INSERT INTO sms_log (created_at, recipient, phone, message, source, status, error, provider_status, cost, message_id)
+      VALUES (${Date.now()}, ${String(input.to ?? "").slice(0, 60)}, ${r.phone ?? normalizeKenyanPhone(String(input.to ?? ""))}, ${String(input.message ?? "").slice(0, 2000)},
+        ${input.source ?? "Other"}, ${r.test ? "test" : r.ok ? "sent" : "failed"}, ${r.ok ? null : (r.error ?? "").slice(0, 500)}, ${r.providerStatus ?? null}, ${r.cost ?? null}, ${r.messageId ?? null})`;
+  } catch (e: any) { console.warn("[sms_log] could not record SMS:", e?.message ?? e); }
+  return r.ok ? { ok: true } : { ok: false, error: r.error };
 }
 
 // Normalizes a Kenyan phone number to E.164 (+254...) as required by
@@ -29,7 +44,7 @@ export function normalizeKenyanPhone(raw: string): string | null {
 // Provider-agnostic SMS sender. Currently supports Africa's Talking, the
 // standard SMS gateway for Kenya. Each provider is a plain HTTPS fetch call
 // (form-encoded for Africa's Talking) so no native/SDK dependency is needed.
-export async function sendSms(input: SendSmsInput): Promise<SendSmsResult> {
+async function sendSmsCore(input: SendSmsInput): Promise<CoreResult> {
   const { settings, to, message } = input;
 
   // Test environment: never actually send — log the attempt and report
@@ -37,7 +52,7 @@ export async function sendSms(input: SendSmsInput): Promise<SendSmsResult> {
   // continues unchanged, without any real SMS leaving the building.
   if (getCurrentEnvironment() === "test") {
     await logTestMessage({ channel: "sms", recipient: to, bodyPreview: message });
-    return { ok: true };
+    return { ok: true, test: true, phone: normalizeKenyanPhone(to || "") };
   }
 
   const provider = (settings.smsProvider || "").toLowerCase();
@@ -73,23 +88,26 @@ export async function sendSms(input: SendSmsInput): Promise<SendSmsResult> {
         body: body.toString(),
       });
       const text = await res.text();
-      if (!res.ok) return { ok: false, error: `Africa's Talking error ${res.status}: ${text}` };
+      if (!res.ok) return { ok: false, phone, error: `Africa's Talking error ${res.status}: ${text}` };
       let parsed: any;
       try { parsed = JSON.parse(text); } catch { parsed = null; }
       const recipients = parsed?.SMSMessageData?.Recipients;
+      let first: any = null;
       if (Array.isArray(recipients) && recipients.length > 0) {
-        const first = recipients[0];
+        first = recipients[0];
         // Africa's Talking's accepted/success codes: 100 (Processed), 101
         // (Sent), 102 (Queued). Anything else (e.g. 401/406/407) is a real
         // rejection. This previously omitted 100, so a successfully
         // delivered, billed message was still reported to the user as failed.
         if (first.statusCode !== 100 && first.statusCode !== 101 && first.statusCode !== 102) {
-          return { ok: false, error: first.status || `Africa's Talking rejected the message (status ${first.statusCode}).` };
+          return { ok: false, phone, providerStatus: first.status ?? null, error: first.status || `Africa's Talking rejected the message (status ${first.statusCode}).` };
         }
+      } else if (parsed?.SMSMessageData?.Message) {
+        return { ok: false, phone, error: String(parsed.SMSMessageData.Message) };
       }
-      return { ok: true };
+      return { ok: true, phone, providerStatus: first?.status ?? null, cost: first?.cost ?? null, messageId: first?.messageId ?? null };
     } catch (e: any) {
-      return { ok: false, error: e?.message ?? "Failed to reach Africa's Talking." };
+      return { ok: false, phone, error: e?.message ?? "Failed to reach Africa's Talking." };
     }
   }
 

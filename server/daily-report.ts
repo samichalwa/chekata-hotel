@@ -288,7 +288,7 @@ export async function sendDailyReport(date: string, req?: Request): Promise<Dail
   }
   if (settings.smsEnabled) {
     for (const to of splitList(settings.dailyReportSmsPhones)) {
-      const r = await sendSms({ settings, to, message: `${hotelName} close ${date}: income ${kes(summary.income.totalToday)}, occupancy ${summary.rooms?.occupancyPct ?? 0}%, ${summary.approvals.total} approvals pending. PDF: ${link}` });
+      const r = await sendSms({ source: "Daily report", settings, to, message: `${hotelName} close ${date}: income ${kes(summary.income.totalToday)}, occupancy ${summary.rooms?.occupancyPct ?? 0}%, ${summary.approvals.total} approvals pending. PDF: ${link}` });
       result.sms.push({ to, ok: r.ok, error: r.error });
     }
   }

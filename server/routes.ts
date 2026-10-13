@@ -981,7 +981,7 @@ export async function registerRoutes(
           ? `\nPayment: ${[body.paymentMethod, body.paymentReference].filter(Boolean).join(" / ")}`
           : "";
         const message = `Hi ${guestName}, your Movie Room booking at The Chekata is confirmed:\n${smsLegLines.join("\n")}\nTotal paid: KES ${amountPaid.toLocaleString()}.${paymentDetailLine}\nEnjoy the show!`;
-        const sms = await sendSms({ settings: await storage.getSettings(), to: body.guestPhone, message });
+        const sms = await sendSms({ source: "Movie booking", settings: await storage.getSettings(), to: body.guestPhone, message });
         smsResult = sms.ok ? { status: "sent" } : { status: "skipped", errorMessage: sms.error };
       }
 
@@ -1036,7 +1036,7 @@ export async function registerRoutes(
             ? ` Payment: ${[updated.paymentMethod, updated.paymentReference].filter(Boolean).join(" / ")}.`
             : "";
           const message = `Hi ${updated.guestName}, payment received for your Movie Room booking at The Chekata: ${show?.name ?? "Movie Room"} \u2014 Seat ${updated.seatRow}${updated.seatNumber}. Paid KES ${paymentDelta.toLocaleString()}${balance > 0 ? `, balance KES ${balance.toLocaleString()}` : ""}.${paymentDetailLine} Enjoy the show!`;
-          await sendSms({ settings: await storage.getSettings(), to: updated.guestPhone, message });
+          await sendSms({ source: "Movie payment", settings: await storage.getSettings(), to: updated.guestPhone, message });
         }
       }
       res.json({ ...updated, _document: docResult });
@@ -1101,7 +1101,7 @@ export async function registerRoutes(
         totalAmount: updated.totalAmount, amountPaid: updated.amountPaid, balance: updated.totalAmount - updated.amountPaid,
         paymentAmount: c.amount, paymentMethod: c.method, paymentReference: c.reference,
       });
-      if (updated.guestPhone) void sendSms({ settings: await storage.getSettings(), to: updated.guestPhone, message: paidSms(updated.guestName, "room booking", c.amount, c.reference, balance) }).catch(() => {});
+      if (updated.guestPhone) void sendSms({ source: "Room payment", settings: await storage.getSettings(), to: updated.guestPhone, message: paidSms(updated.guestName, "room booking", c.amount, c.reference, balance) }).catch(() => {});
       res.json({ ok: true, amount: c.amount, balance, status: updated.status, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
     } catch (err) { handleZodError(res, err); }
     finally { if (lock) inFlight.delete(lock); }
@@ -1131,7 +1131,7 @@ export async function registerRoutes(
         totalAmount: updated.totalAmount, amountPaid: updated.amountPaid, balance: updated.totalAmount - updated.amountPaid,
         paymentAmount: c.amount, paymentMethod: c.method, paymentReference: c.reference,
       });
-      if (updated.clientPhone) void sendSms({ settings: await storage.getSettings(), to: updated.clientPhone, message: paidSms(updated.clientName, `${facility?.name ?? "booking"} booking`, c.amount, c.reference, balance) }).catch(() => {});
+      if (updated.clientPhone) void sendSms({ source: "Facility payment", settings: await storage.getSettings(), to: updated.clientPhone, message: paidSms(updated.clientName, `${facility?.name ?? "booking"} booking`, c.amount, c.reference, balance) }).catch(() => {});
       res.json({ ok: true, amount: c.amount, balance, status: updated.status, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
     } catch (err) { handleZodError(res, err); }
     finally { if (lock) inFlight.delete(lock); }
@@ -1178,7 +1178,7 @@ export async function registerRoutes(
       if (primary.guestPhone) {
         const bal = total - paid;
         const msg = `Hi ${primary.guestName}, payment received for your Movie Room booking at The Chekata: KES ${amount.toLocaleString("en-KE")}${reference ? ` (${reference})` : ""}. ${bal > 0.5 ? `Balance: KES ${Math.round(bal).toLocaleString("en-KE")}.` : "Paid in full."} Thank you!`;
-        void sendSms({ settings: await storage.getSettings(), to: primary.guestPhone, message: msg }).catch(() => {});
+        void sendSms({ source: "Movie payment", settings: await storage.getSettings(), to: primary.guestPhone, message: msg }).catch(() => {});
       }
       res.json({ ok: true, amount, balance: total - paid, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
     } catch (err) { handleZodError(res, err); }
@@ -1429,7 +1429,7 @@ export async function registerRoutes(
       let smsResult: { status: "sent" | "skipped"; errorMessage?: string } | null = null;
       if (created.reportedPhone) {
         const message = `The Chekata Maintenance: your report "${created.title}" has been logged (ref #${created.id}). We'll notify you once it's resolved.`;
-        const sms = await sendSms({ settings: await storage.getSettings(), to: created.reportedPhone, message });
+        const sms = await sendSms({ source: "Maintenance", settings: await storage.getSettings(), to: created.reportedPhone, message });
         smsResult = sms.ok ? { status: "sent" } : { status: "skipped", errorMessage: sms.error };
       }
       res.status(201).json({ ...created, _sms: smsResult });
@@ -1458,7 +1458,7 @@ export async function registerRoutes(
       let smsResult: { status: "sent" | "skipped"; errorMessage?: string } | null = null;
       if (closingNow && updated.reportedPhone) {
         const message = `The Chekata Maintenance: your report "${updated.title}" (ref #${updated.id}) has been resolved and closed. Thank you for reporting it.`;
-        const sms = await sendSms({ settings: await storage.getSettings(), to: updated.reportedPhone, message });
+        const sms = await sendSms({ source: "Maintenance", settings: await storage.getSettings(), to: updated.reportedPhone, message });
         smsResult = sms.ok ? { status: "sent" } : { status: "skipped", errorMessage: sms.error };
       }
       res.json({ ...updated, _sms: smsResult });
@@ -1528,7 +1528,7 @@ export async function registerRoutes(
       const { phone } = req.body as { phone?: string };
       if (!phone) return res.status(400).json({ error: "Provide a phone number to test." });
       const settings = await storage.getSettings();
-      const result = await sendSms({
+      const result = await sendSms({ source: "Test SMS",
         settings,
         to: phone,
         message: `This is a test SMS from your ${settings.hotelName || "The Chekata"} management system. If you received this, your SMS settings are working.`,
@@ -1536,6 +1536,35 @@ export async function registerRoutes(
       if (!result.ok) return res.status(400).json({ error: result.error });
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to send test SMS" }); }
+  });
+
+  // ---------- SMS log (Settings → SMS log): every SMS the system tried to send ----------
+  app.get("/api/settings/sms-log", requireAdmin, async (req, res) => {
+    try {
+      const isDay = (v: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? ""));
+      const from = isDay(req.query.from) ? String(req.query.from) : hotelToday();
+      const to = isDay(req.query.to) ? String(req.query.to) : from;
+      if (to < from) return res.status(400).json({ error: "The end date is before the start date." });
+      const fromMs = Date.parse(`${from}T00:00:00+03:00`);
+      const toMs = Date.parse(`${to}T00:00:00+03:00`) + 86_400_000;
+      const status = ["sent", "failed", "test"].includes(String(req.query.status)) ? String(req.query.status) : null;
+      const q = String(req.query.q ?? "").trim().toLowerCase();
+      const like = `%${q.replace(/[%_]/g, "")}%`;
+      const rows = await sql`SELECT id, created_at, recipient, phone, message, source, status, error, provider_status, cost, message_id FROM sms_log
+        WHERE created_at >= ${fromMs} AND created_at < ${toMs}
+          ${status ? sql`AND status = ${status}` : sql``}
+          ${q ? sql`AND (LOWER(message) LIKE ${like} OR LOWER(COALESCE(phone, '')) LIKE ${like} OR LOWER(COALESCE(recipient, '')) LIKE ${like} OR LOWER(source) LIKE ${like})` : sql``}
+        ORDER BY created_at DESC LIMIT 2000` as any[];
+      const costOf = (c: string | null) => { const m = String(c ?? "").match(/([\d.]+)/); return m ? Number(m[1]) : 0; };
+      res.json({
+        from, to,
+        summary: { total: rows.length, sent: rows.filter((r) => r.status === "sent").length, failed: rows.filter((r) => r.status === "failed").length,
+          test: rows.filter((r) => r.status === "test").length, cost: Math.round(rows.reduce((t, r) => t + costOf(r.cost), 0) * 100) / 100 },
+        rows: rows.map((r) => ({ id: r.id, createdAt: Number(r.created_at), recipient: r.recipient, phone: r.phone, message: r.message, source: r.source,
+          status: r.status, error: r.error, providerStatus: r.provider_status, cost: r.cost, messageId: r.message_id })),
+        truncated: rows.length >= 2000,
+      });
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to load the SMS log" }); }
   });
 
   // ---------- Documents (Invoices & Receipts) ----------

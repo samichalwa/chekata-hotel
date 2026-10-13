@@ -1301,6 +1301,10 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
     recorded_by TEXT, created_at BIGINT NOT NULL, cancelled_by TEXT, cancelled_at BIGINT)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_water_deposits_customer ON water_deposits(customer_id)`;
   await ensureColumn("settings", "water_deposit_account_id", "INTEGER");
+  await sql`CREATE TABLE IF NOT EXISTS sms_log (
+    id SERIAL PRIMARY KEY, created_at BIGINT NOT NULL, recipient TEXT, phone TEXT, message TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'Other',
+    status TEXT NOT NULL, error TEXT, provider_status TEXT, cost TEXT, message_id TEXT)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_sms_log_created ON sms_log(created_at)`;
   await ensureColumn("settings", "water_deposit_bank_account_id", "INTEGER");
   await ensureColumn("settings", "meter_vision_provider", "TEXT");
   await ensureColumn("settings", "meter_vision_api_key", "TEXT");

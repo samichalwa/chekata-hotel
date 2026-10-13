@@ -26,6 +26,7 @@ import { DailyReportSettingsTab } from "@/components/daily-report-settings";
 import { ReceiptPostingSettingsTab } from "@/components/receipt-posting-settings";
 import { OnlineBookingSettingsTab } from "@/components/online-booking-settings";
 import { CompanyInfoSettingsTab } from "@/components/company-info-settings";
+import { SmsLogTab } from "@/components/sms-log";
 
 const settingsFormSchema = z.object({
   hotelName: z.string().min(1, "Hotel name is required"),
@@ -952,7 +953,7 @@ export default function SettingsPage() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-4xl mx-auto">
-      <PageHeader title="Settings" description="Hotel and company details, taxes, email, and user access." />
+      <PageHeader title="Settings" description="Hotel and company details, taxes, email, SMS log and user access." />
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="h-auto flex-wrap justify-start">
@@ -962,6 +963,7 @@ export default function SettingsPage() {
           {currentUser?.isAdmin && <TabsTrigger value="daily-report" data-testid="tab-daily-report"><FileBarChart className="h-4 w-4 mr-1" /> Daily report</TabsTrigger>}
           {currentUser?.isAdmin && <TabsTrigger value="receipt-posting" data-testid="tab-receipt-posting"><Landmark className="h-4 w-4 mr-1" /> Receipts to Finance</TabsTrigger>}
           {currentUser?.isAdmin && <TabsTrigger value="online-booking" data-testid="tab-online-booking"><Globe className="h-4 w-4 mr-1" /> Online booking</TabsTrigger>}
+          {currentUser?.isAdmin && <TabsTrigger value="sms-log" data-testid="tab-sms-log"><MessageSquare className="h-4 w-4 mr-1" /> SMS log</TabsTrigger>}
           {currentUser?.isAdmin && <TabsTrigger value="users" data-testid="tab-users"><KeyRound className="h-4 w-4 mr-1" /> Users &amp; Access</TabsTrigger>}
         </TabsList>
         <TabsContent value="hotel" className="pt-4">
@@ -985,6 +987,9 @@ export default function SettingsPage() {
           <TabsContent value="online-booking" className="pt-4">
             <OnlineBookingSettingsTab />
           </TabsContent>
+        )}
+        {currentUser?.isAdmin && (
+          <TabsContent value="sms-log" className="pt-4"><SmsLogTab /></TabsContent>
         )}
         {currentUser?.isAdmin && (
           <TabsContent value="users" className="pt-4">

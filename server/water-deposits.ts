@@ -134,7 +134,7 @@ export function registerWaterDepositRoutes(app: Express) {
       let sms = "skipped";
       if (c.phone) {
         const link = doc?.id && (doc as any).publicToken ? ` Receipt: ${baseUrl(req)}/api/public/documents/${doc.id}/pdf?token=${(doc as any).publicToken}` : "";
-        const r = await sendSms({ settings: s, to: c.phone, message: `Hi ${c.name}, we have received your water deposit of ${kes(amount)}${reference ? ` (${reference})` : ""} for account ${c.account_no}. Total deposit held: ${kes(newTotal)}. Thank you, The Chekata.${link}` }).catch((e: any) => ({ ok: false, error: e?.message }));
+        const r = await sendSms({ source: "Water deposit", settings: s, to: c.phone, message: `Hi ${c.name}, we have received your water deposit of ${kes(amount)}${reference ? ` (${reference})` : ""} for account ${c.account_no}. Total deposit held: ${kes(newTotal)}. Thank you, The Chekata.${link}` }).catch((e: any) => ({ ok: false, error: e?.message }));
         sms = r.ok ? "sent" : `failed: ${(r as any).error ?? ""}`;
       }
       res.status(201).json({ ok: true, id: d.id, amount, total: newTotal, entryNumber: entry.entryNumber, receiptNo: `${c.account_no}-D${d.id}`, email: doc?.status ?? null, sms,

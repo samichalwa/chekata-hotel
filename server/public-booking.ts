@@ -279,7 +279,7 @@ export function registerPublicBookingRoutes(app: Express) {
       }
       void notifyModuleUsers("bar-restaurant", { category: "booking", title: `Bill paid by M-Pesa — verify ${c.code}`, body: `${guestName}: ${summary}, ${kes(c.amount)} of ${kes(o.totalAmount)}. Verify it under Online bookings & payments.`, linkPath: "/online-bookings" });
       const s = await storage.getSettings();
-      void sendSms({ settings: s, to: guestPhone, message: `Hi ${guestName}, we received your M-Pesa ${c.code} for ${summary} (${kes(c.amount)}). Our staff will confirm it shortly. - ${s.hotelName}` }).catch(() => {});
+      void sendSms({ source: "Online payment", settings: s, to: guestPhone, message: `Hi ${guestName}, we received your M-Pesa ${c.code} for ${summary} (${kes(c.amount)}). Our staff will confirm it shortly. - ${s.hotelName}` }).catch(() => {});
       res.status(201).json({ ref, status: "pending", summary, amount: c.amount, mpesaCode: c.code });
     } catch (err: any) {
       if (/duplicate key|unique/i.test(String(err?.message))) return res.status(409).json({ error: "This M-Pesa code has already been used. Each payment can only be used once." });
@@ -373,7 +373,7 @@ export function registerPublicBookingRoutes(app: Express) {
         return res.status(err?.status ?? 500).json({ error: err?.status ? err.message : "Booking failed. Please try again." });
       }
       void notifyModuleUsers("accommodation", { category: "booking", title: `Online room booking — verify M-Pesa ${check.code}`, body: `${guestName}: ${summary}. Paid ${kes(check.amount)} of ${kes(total)}.`, linkPath: "/online-bookings" });
-      void sendSms({ settings: s, to: guestPhone, message: `Hi ${guestName}, we received your room booking ${ref}: ${summary}. M-Pesa ${check.code} is being verified; we'll text you once confirmed. - ${s.hotelName}` }).catch(() => {});
+      void sendSms({ source: "Online booking", settings: s, to: guestPhone, message: `Hi ${guestName}, we received your room booking ${ref}: ${summary}. M-Pesa ${check.code} is being verified; we'll text you once confirmed. - ${s.hotelName}` }).catch(() => {});
       res.status(201).json({ ref, status: "pending", summary, amount: check.amount, mpesaCode: check.code });
     } catch (err: any) {
       if (/duplicate key|unique/i.test(String(err?.message))) return res.status(409).json({ error: "This M-Pesa code has already been used. Each payment can only be used once." });
@@ -451,7 +451,7 @@ export function registerPublicBookingRoutes(app: Express) {
       }
 
       void notifyModuleUsers("movie-room", { category: "booking", title: `Online movie booking — verify M-Pesa ${check.code}`, body: `${guestName}: ${summary}. Paid ${kes(check.amount)}.`, linkPath: "/online-bookings" });
-      void sendSms({ settings: s, to: guestPhone, message: `Hi ${guestName}, we received your Movie Room booking ${bookingRef}: ${summary}. M-Pesa ${check.code} is being verified; we'll text you once confirmed. - ${s.hotelName}` }).catch(() => {});
+      void sendSms({ source: "Online booking", settings: s, to: guestPhone, message: `Hi ${guestName}, we received your Movie Room booking ${bookingRef}: ${summary}. M-Pesa ${check.code} is being verified; we'll text you once confirmed. - ${s.hotelName}` }).catch(() => {});
       res.status(201).json({ ref: bookingRef, status: "pending", summary, amount: check.amount, mpesaCode: check.code });
     } catch (err: any) {
       if (/duplicate key|unique/i.test(String(err?.message))) return res.status(409).json({ error: "This M-Pesa code has already been used. Each payment can only be used once." });
@@ -510,7 +510,7 @@ export function registerPublicBookingRoutes(app: Express) {
         throw err;
       }
       void notifyModuleUsers("bar-restaurant", { category: "booking", title: check ? `Table reservation — verify M-Pesa ${check.code}` : "New online table reservation", body: `${guestName}: ${summary}.${check ? ` Deposit ${kes(check.amount)}.` : ""}`, linkPath: "/online-bookings" });
-      void sendSms({ settings: s, to: guestPhone, message: `Hi ${guestName}, we received your table reservation ${ref}: ${summary}.${check ? ` M-Pesa ${check.code} is being verified;` : ""} we'll text you once confirmed. - ${s.hotelName}` }).catch(() => {});
+      void sendSms({ source: "Online booking", settings: s, to: guestPhone, message: `Hi ${guestName}, we received your table reservation ${ref}: ${summary}.${check ? ` M-Pesa ${check.code} is being verified;` : ""} we'll text you once confirmed. - ${s.hotelName}` }).catch(() => {});
       res.status(201).json({ ref, status: "pending", summary, amount: check?.amount ?? 0, mpesaCode: check?.code ?? null });
     } catch (err: any) {
       if (/duplicate key|unique/i.test(String(err?.message))) return res.status(409).json({ error: "This M-Pesa code has already been used. Each payment can only be used once." });
@@ -632,7 +632,7 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
           });
           docResult = { status: doc.status, id: doc.id, publicToken: doc.publicToken };
         }
-        void sendSms({ settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your Movie Room booking ${p.targetRef} is CONFIRMED: ${p.summary}. M-Pesa ${p.mpesaCode} received. Enjoy the show! - ${s.hotelName}` }).catch(() => {});
+        void sendSms({ source: "Online booking", settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your Movie Room booking ${p.targetRef} is CONFIRMED: ${p.summary}. M-Pesa ${p.mpesaCode} received. Enjoy the show! - ${s.hotelName}` }).catch(() => {});
       } else if (p.kind === "bill" && billOrder) {
         const updated = await storage.updateOrder(billOrder.id, {
           status: "paid", paymentMethod: "mpesa", paymentReference: p.mpesaCode,
@@ -640,7 +640,7 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
           notes: [billOrder.notes, `Paid online — M-Pesa ${p.mpesaCode} verified by ${who}`].filter(Boolean).join(" | "),
         } as any);
         if (updated) docResult = await issueOrderReceipt(storage, updated);
-        void sendSms({ settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your payment for ${p.summary} is CONFIRMED. M-Pesa ${p.mpesaCode} received. Thank you! - ${s.hotelName}` }).catch(() => {});
+        void sendSms({ source: "Online payment", settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your payment for ${p.summary} is CONFIRMED. M-Pesa ${p.mpesaCode} received. Thank you! - ${s.hotelName}` }).catch(() => {});
       } else if (p.kind === "room") {
         const bk = (await storage.listAccommodationBookings()).find((x) => x.bookingRef === p.targetRef && x.status !== "cancelled");
         if (bk) {
@@ -659,11 +659,11 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
           });
           docResult = { status: doc.status, id: doc.id, publicToken: doc.publicToken, bookingId: updated?.id };
           const bal = bk.totalAmount - paid;
-          void sendSms({ settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your room booking ${p.targetRef} is CONFIRMED: ${p.summary}. M-Pesa ${p.mpesaCode} received.${bal > 0.5 ? ` Balance ${kes(bal)} payable at check-in.` : ""} Check-in from ${s.publicRoomCheckInTime || "14:00"}. - ${s.hotelName}` }).catch(() => {});
+          void sendSms({ source: "Online booking", settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your room booking ${p.targetRef} is CONFIRMED: ${p.summary}. M-Pesa ${p.mpesaCode} received.${bal > 0.5 ? ` Balance ${kes(bal)} payable at check-in.` : ""} Check-in from ${s.publicRoomCheckInTime || "14:00"}. - ${s.hotelName}` }).catch(() => {});
         }
       } else {
         await sql`UPDATE table_reservations SET status = 'confirmed', deposit_paid = ${p.amount}, payment_reference = ${p.mpesaCode} WHERE reservation_ref = ${p.targetRef} AND status = 'awaiting_verification'`;
-        void sendSms({ settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your table reservation ${p.targetRef} is CONFIRMED: ${p.summary}. Deposit ${kes(p.amount)} (M-Pesa ${p.mpesaCode}) will be deducted from your bill. - ${s.hotelName}` }).catch(() => {});
+        void sendSms({ source: "Online booking", settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your table reservation ${p.targetRef} is CONFIRMED: ${p.summary}. Deposit ${kes(p.amount)} (M-Pesa ${p.mpesaCode}) will be deducted from your bill. - ${s.hotelName}` }).catch(() => {});
       }
       res.json({ ok: true, _document: docResult });
     } catch (err: any) {
@@ -691,7 +691,7 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
         await sql`UPDATE table_reservations SET status = 'cancelled', notes = COALESCE(notes || ' | ', '') || ${`Rejected: ${reason}`} WHERE reservation_ref = ${p.targetRef}`;
       } // kind "bill": the bill simply stays open for payment another way.
       const s = await storage.getSettings();
-      void sendSms({ settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, we could not confirm ${p.kind === "bill" ? `your payment for ${p.summary}` : `booking ${p.targetRef}`}: ${reason}. Please contact reception${s.hotelPhone ? ` on ${s.hotelPhone}` : ""}. - ${s.hotelName}` }).catch(() => {});
+      void sendSms({ source: "Online payment", settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, we could not confirm ${p.kind === "bill" ? `your payment for ${p.summary}` : `booking ${p.targetRef}`}: ${reason}. Please contact reception${s.hotelPhone ? ` on ${s.hotelPhone}` : ""}. - ${s.hotelName}` }).catch(() => {});
       res.json({ ok: true });
     } catch (err: any) {
       console.error("[online-payments] reject failed:", err);
