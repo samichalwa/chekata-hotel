@@ -640,7 +640,7 @@ export function registerShpmsRoutes(app: Express) {
   app.get("/api/shpms/accounts", T, async (_req, res) => {
     res.json({
       accounts: await sql`SELECT id, code, name, type FROM chart_of_accounts WHERE active = 1 AND type IN ('asset','income','liability') ORDER BY code`,
-      banks: await sql`SELECT id, name FROM bank_accounts WHERE active = 1 ORDER BY name`,
+      banks: await sql`SELECT id, name, account_number AS "accountNumber" FROM bank_accounts WHERE active = 1 ORDER BY name`,
     });
   });
   app.post("/api/shpms/test", T, async (req, res) => {

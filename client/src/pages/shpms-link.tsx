@@ -1,5 +1,6 @@
 // Tenants → SHPMS link. Tenant payments declared in SHPMS wait here for staff to Confirm or Query;
 // payments recorded here go to SHPMS first. Admins set up the link (address, shared key, accounts).
+import { PaymentSmsPaste, bankFromSmsAccount } from "@/components/payment-sms-paste";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link2, CheckCircle2, HelpCircle, RefreshCw, KeyRound, Copy, Plus, Settings2 } from "lucide-react";
@@ -22,7 +23,7 @@ const when = (ms?: number | null) => (ms ? new Date(Number(ms)).toLocaleString("
 const refresh = () => { for (const k of ["/api/shpms/declarations", "/api/shpms/payments", "/api/shpms/events", "/api/shpms/settings", "/api/rent-invoices", "/api/tenancy-leases", "/api/tenants-list", "/api/shops"]) queryClient.invalidateQueries({ queryKey: [k] }); };
 
 interface LinkSettings { enabled: boolean; baseUrl: string; secretHint: string; hasSecret: boolean; bankAccountId: number | null; receivableAccountId: number | null; rentIncomeAccountId: number | null; otherIncomeAccountId: number | null; depositAccountId: number | null; lastSnapshotAt: number | null; environment: string; webhookPath: string; isAdmin: boolean }
-interface Accounts { accounts: { id: number; code: string; name: string; type: string }[]; banks: { id: number; name: string }[] }
+interface Accounts { accounts: { id: number; code: string; name: string; type: string }[]; banks: { id: number; name: string; accountNumber?: string | null }[] }
 interface Decl { id: number; declaration_no: string | null; lease_id: number; amount: number; paid_on: string | null; method: string | null; reference: string | null; period_start: string | null; narrative: string | null; status: string; query_reason: string | null; confirmed_by: string | null; confirmed_in: string | null; tenant_name: string | null; shop_number: string | null; receipt_no: string | null }
 interface Pay { id: number; source: string; lease_id: number; amount: number; paid_on: string; payment_method: string | null; payment_reference: string | null; attempted_reference: string | null; receipt_no: string | null; status: string; error: string | null; recorded_by: string | null; tenant_name: string | null; shop_number: string | null; bank_name: string | null; entry_number: string | null; created_at: number }
 interface Ev { id: number; event_id: string; event_type: string; status: string; error: string | null; attempts: number; received_at: number }
@@ -193,6 +194,10 @@ function RecordDialog({ defaultBank, onClose }: { defaultBank: number | null; on
   const [ref, setRef] = useState("");
   const [paidOn, setPaidOn] = useState(todayISO());
   const [bank, setBank] = useState(defaultBank ? String(defaultBank) : "");
+  const [sms, setSms] = useState("");
+  const [smsAccount, setSmsAccount] = useState<string | null>(null);
+  const { data: accts } = useQuery<Accounts>({ queryKey: ["/api/shpms/accounts"] });
+  useEffect(() => { const b = bankFromSmsAccount(accts?.banks ?? [], smsAccount); if (b) setBank(String(b.id)); }, [accts, smsAccount]);
   const m = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/shpms/payments", { leaseId: Number(leaseId), amount: Number(amount), paymentMethod: method, paymentReference: ref || null, paidOn, bankAccountId: bank ? Number(bank) : null })).json(),
     onSuccess: (r: any) => { refresh(); toast({ title: "Payment recorded", description: `${formatKES(r.amount)} sent to SHPMS${r.receiptNo ? ` (receipt ${r.receiptNo})` : ""} and posted to Finance.` }); onClose(); },
@@ -204,6 +209,12 @@ function RecordDialog({ defaultBank, onClose }: { defaultBank: number | null; on
       <DialogContent>
         <DialogHeader><DialogTitle>Record rent payment</DialogTitle><DialogDescription>For money that reached The Chekata's account without the tenant declaring it in SHPMS. SHPMS allocates it and issues the receipt.</DialogDescription></DialogHeader>
         <div className="space-y-3">
+          <PaymentSmsPaste value={sms} onChange={setSms} testId="shpms-payment-sms" onRead={(d) => {
+            if (d.amount != null) setAmount(String(d.amount));
+            if (d.code) { setRef(d.code); setMethod("mpesa"); }
+            if (d.paidOn && d.paidOn <= todayISO()) setPaidOn(d.paidOn);
+            setSmsAccount(d.account);
+          }} />
           <div className="space-y-1.5"><Label>Lease</Label>
             <Select value={leaseId || undefined} onValueChange={setLeaseId}><SelectTrigger data-testid="select-shpms-record-lease"><SelectValue placeholder="Select lease" /></SelectTrigger>
               <SelectContent>{linked.map((l) => <SelectItem key={l.id} value={String(l.id)}>{label(l)}</SelectItem>)}</SelectContent></Select></div>

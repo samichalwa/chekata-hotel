@@ -6,8 +6,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { MpesaPaste } from "@/components/public-booking-parts";
-import { parseMpesaMessage } from "@shared/mpesa";
+import { PaymentSmsPaste } from "@/components/payment-sms-paste";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatKES } from "@/lib/format";
@@ -72,6 +71,10 @@ export function RecordPaymentButton({ endpoint, due, guestName, summary, invalid
           <div className="flex justify-between pt-1"><span className="text-muted-foreground">Balance due</span><span className="font-semibold tabular-nums" data-testid="text-record-payment-due">{formatKES(due)}</span></div>
         </div>
         <div className="space-y-3">
+          <PaymentSmsPaste value={sms} onChange={setSms} testId="record-payment-sms" onRead={(d) => {
+            if (d.amount != null) setAmount(String(d.amount));
+            if (d.code) { setReference(d.code); setMethod("mpesa"); }
+          }} />
           <div className="space-y-1.5">
             <Label htmlFor="rp-amount">Amount received (KES)</Label>
             <Input id="rp-amount" type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-record-payment-amount" />
@@ -89,7 +92,6 @@ export function RecordPaymentButton({ endpoint, due, guestName, summary, invalid
               </SelectContent>
             </Select>
           </div>
-          {method === "mpesa" && <MpesaPaste staff value={sms} onChange={(v) => { const first = !sms; setSms(v); const p = parseMpesaMessage(v); if (p.code) setReference(p.code); if (p.amount && first) setAmount(String(Math.min(p.amount, Math.round(due)))); }} amountDue={amt || due} />}
           <div className="space-y-1.5">
             <Label htmlFor="rp-ref">{method === "mpesa" ? "M-Pesa code" : "Payment reference (optional)"}</Label>
             <Input id="rp-ref" value={reference} onChange={(e) => setReference(e.target.value.toUpperCase())} placeholder={method === "mpesa" ? "e.g. SJR7AB12CD" : "Slip #, bank ref…"} data-testid="input-record-payment-reference" />

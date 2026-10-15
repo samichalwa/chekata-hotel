@@ -24,6 +24,7 @@ import { buildWhatsAppLink, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import { WATER_SALE_TYPES } from "@shared/schema";
 import type { WaterBucketPrice, WaterSale } from "@shared/schema";
 import { MeteredWater } from "@/components/metered-water";
+import { PaymentSmsPaste } from "@/components/payment-sms-paste";
 
 function extractErrorMessage(raw: string): string {
   const match = raw.match(/^\d+:\s*([\s\S]*)$/);
@@ -191,6 +192,7 @@ function NewSaleDialog({ bucketPrices }: { bucketPrices: WaterBucketPrice[] }) {
   const meterEnd = form.watch("meterEnd");
   const customerPhone = form.watch("customerPhone");
   const customerName = form.watch("customerName");
+  const [sms, setSms] = useState("");
 
   const activeBuckets = bucketPrices.filter((b) => b.active);
   const selectedBucket = activeBuckets.find((b) => b.sizeLitres === Number(bucketSizeLitres));
@@ -293,6 +295,12 @@ function NewSaleDialog({ bucketPrices }: { bucketPrices: WaterBucketPrice[] }) {
                 <FormItem><FormLabel>Email (optional)</FormLabel><FormControl><Input type="email" {...field} value={field.value ?? ""} data-testid="input-customer-email" /></FormControl><FormMessage /></FormItem>
               )} />
             </div>
+            <PaymentSmsPaste value={sms} onChange={setSms} testId="water-sale-sms" onRead={(d) => {
+              if (d.code) { form.setValue("paymentMethod", "mpesa"); form.setValue("paymentReference", d.code); }
+              if (d.paidOn && d.paidOn <= todayISO()) form.setValue("saleDate", d.paidOn);
+              if (d.payerName && !form.getValues("customerName")) form.setValue("customerName", d.payerName.replace(/\b\w+/g, (w) => w[0] + w.slice(1).toLowerCase()));
+              if (d.payerPhone && !form.getValues("customerPhone")) form.setValue("customerPhone", d.payerPhone.replace(/^254/, "0"));
+            }} />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField control={form.control} name="paymentMethod" render={({ field }) => (
                 <FormItem>

@@ -8,6 +8,8 @@
 //   "SJR7AB12CD Confirmed. Ksh500.00 sent to JOHN DOE 0712345678 on 27/9/26 at 10:15 AM. New M-PESA balance ..."
 //   Bank-paybill style (sent by the receiving bank to the payer):
 //   "Dear Esther, Your transaction of Ksh. 50.00 to THE CHEKATA HOTEL Account ****9914 has been received with M-Pesa Ref Number UJ5AI9DBBU. 05/10/26 14:27:55."
+//   Bank credit alert (sent by the bank to the business):
+//   "Dear THE CHEKATA HOTEL, We have received a credit of KES 1500.00 from CHARLES SHITANDA NDAYA for account ***9914 at 12 OCT 2026 3:29 PM. MPESA Ref UJCHE9UDY6"
 // Typical business-side (office) message:
 //   "SJR7AB12CD Confirmed. Ksh1,000.00 received from JANE WANJIKU 254712345678 on 27/9/26 at 10:15 AM ..."
 
@@ -32,6 +34,9 @@ const AMOUNT_RE = /(?:Kshs?\.?|KES)\s?([\d,]+(?:\.\d{1,2})?)/i;
 // "on 27/9/26 at 10:15 AM", "on 27-09-2026 at 22:15", "on 27/9/26 at 10:15AM"
 const DATE_RE = /\bon\s+(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\s*(?:at\s*)?(\d{1,2}):(\d{2})\s*([AP]\.?M\.?)?/i;
 // Bank-style "05/10/26 14:27:55" with no "on" in front.
+// "at 12 OCT 2026 3:29 PM", "on 12-Oct-2026 15:29", "12 October 2026 at 3:29 PM"
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+const DATE_NAMED_RE = /\b(\d{1,2})[\s\-\/]*(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEPT?|OCT|NOV|DEC)[A-Z]*\.?[\s\-\/,]*(\d{2,4})\s*(?:at\s*)?(\d{1,2}):(\d{2})(?::\d{2})?\s*([AP]\.?M\.?)?/i;
 const DATE_BARE_RE = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*(?:at\s*)?(\d{1,2}):(\d{2})(?::\d{2})?\s*([AP]\.?M\.?)?/i;
 
 export function parseMpesaMessage(raw: string): ParsedMpesa {
@@ -53,7 +58,11 @@ export function parseMpesaMessage(raw: string): ParsedMpesa {
     if (Number.isFinite(n) && n > 0) out.amount = n;
   }
 
-  const d = text.match(DATE_RE) ?? text.match(DATE_BARE_RE);
+  let d: RegExpMatchArray | null = text.match(DATE_RE) ?? text.match(DATE_BARE_RE);
+  if (!d) {
+    const n = text.match(DATE_NAMED_RE);
+    if (n) d = Object.assign([n[0], n[1], String(MONTHS.indexOf(n[2].toUpperCase().slice(0, 3)) + 1), n[3], n[4], n[5], n[6]], { index: n.index }) as unknown as RegExpMatchArray;
+  }
   if (d) {
     let [, dd, mm, yy, hh, mi, ap] = d;
     let year = Number(yy);
@@ -69,6 +78,23 @@ export function parseMpesaMessage(raw: string): ParsedMpesa {
       out.paidAt = ms;
       out.paidAtText = `${String(dd).padStart(2, "0")}/${String(mm).padStart(2, "0")}/${year} ${String(hour).padStart(2, "0")}:${mi}`;
     }
+  }
+
+  // Bank credit alert: "We have received a credit of KES 1500.00 from NAME for account ***9914 at …"
+  //  also "KES 1,500.00 has been credited to your account … from NAME …"
+  const credit = /\b(?:credit\s+of|credited|deposit\s+of)\b/i.test(text)
+    ? text.match(/\bfrom\s+(.+?)\s*(?:,|\.\s|\s(?:for|to)\s+(?:a\/c|acc(?:oun)?t?\.?(?:\s*no\.?)?)\b|\s(?:on|at)\s+\d|\s(?:M-?PESA\s+)?REF\b|$)/i) : null;
+  if (credit) {
+    out.direction = "received";
+    let who = credit[1].replace(/[.,]+$/, "").trim();
+    const phone = who.match(/\s(\+?\d[\d\s]{8,13}\d)$/);
+    if (phone) { out.counterpartyPhone = phone[1].replace(/\s/g, ""); who = who.slice(0, phone.index).trim(); }
+    out.counterpartyName = who || null;
+    const acc = text.match(/\b(?:for|to)\s+(?:a\/c|acc(?:oun)?t?\.?(?:\s*no\.?)?)\s*:?\s*([*xX\d][*xX\d\-]{2,})/i);
+    if (acc) out.account = acc[1];
+    const dear = text.match(/^\s*Dear\s+(.+?)\s*[,.]/i);
+    if (dear) out.recipient = dear[1].trim();
+    return out;
   }
 
   const received = text.match(/received\s+(?:Ksh\s?[\d,]+(?:\.\d{1,2})?\s+)?from\s+(.+?)(?:\s+(\+?\d[\d\s]{8,13}\d))?\s+on\s+\d/i);

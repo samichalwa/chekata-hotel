@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RecordPaymentButton } from "@/components/record-payment-button";
+import { PaymentSmsPaste, bankFromSmsAccount } from "@/components/payment-sms-paste";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
@@ -694,8 +695,12 @@ function DepositDialog({ customer, onClose }: { customer: Customer; onClose: () 
   const { data: acc } = useQuery<{ liabilities: any[]; banks: any[]; depositAccountId: number | null; depositBankAccountId: number | null }>({ queryKey: ["/api/water-billing/deposit-accounts"] });
   const [f, setF] = useState({ amount: "", paymentMethod: "mpesa", paymentReference: "", paidOn: todayISO(), bankAccountId: "" });
   const [replaces, setReplaces] = useState(false);
+  const [sms, setSms] = useState("");
+  const [smsAccount, setSmsAccount] = useState<string | null>(null);
   const [cancel, setCancel] = useState<DepositRow | null>(null);
   const [reason, setReason] = useState("");
+  // The SMS names the receiving account (e.g. "***9914"): pick that bank once the list has loaded.
+  useEffect(() => { const b = acc && bankFromSmsAccount(acc.banks ?? [], smsAccount); if (b) setF((x) => ({ ...x, bankAccountId: String(b.id) })); }, [acc, smsAccount]);
   useEffect(() => { if (acc && !f.bankAccountId && acc.depositBankAccountId) setF((x) => ({ ...x, bankAccountId: String(acc.depositBankAccountId) })); }, [acc]);
   const refresh = () => { queryClient.invalidateQueries({ queryKey: [`/api/water-billing/customers/${customer.id}/deposits`] }); queryClient.invalidateQueries({ queryKey: ["/api/water-billing/customers"] }); queryClient.invalidateQueries({ queryKey: ["/api/documents"] }); };
   const save = useMutation({
@@ -705,7 +710,7 @@ function DepositDialog({ customer, onClose }: { customer: Customer; onClose: () 
     onSuccess: (r: any) => {
       refresh();
       toast({ title: `Deposit ${formatKES(r.amount)} recorded`, description: `Receipt ${r.receiptNo} · journal ${r.entryNumber} · SMS ${r.sms} · email ${r.email ?? "—"}. Total deposit held ${formatKES(r.total)}.` });
-      setF((x) => ({ ...x, amount: "", paymentReference: "" })); setReplaces(false);
+      setF((x) => ({ ...x, amount: "", paymentReference: "" })); setReplaces(false); setSms(""); setSmsAccount(null);
     },
     onError: (e) => toast({ title: "Couldn't record the deposit", description: errMsg(e), variant: "destructive" }),
   });
@@ -731,6 +736,11 @@ function DepositDialog({ customer, onClose }: { customer: Customer; onClose: () 
           <p className="text-sm text-destructive" data-testid="text-deposit-not-setup">Choose the deposits held account first: Water sales → Metered → Tariffs → Deposits{me?.isAdmin ? "" : " (an admin must do this)"}.</p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 border rounded-md p-3">
+            <div className="sm:col-span-2"><PaymentSmsPaste value={sms} onChange={setSms} testId="deposit-sms" onRead={(d) => {
+              setSmsAccount(d.account);
+              setF((x) => ({ ...x, ...(d.amount != null ? { amount: String(d.amount) } : {}), ...(d.code ? { paymentReference: d.code, paymentMethod: "mpesa" } : {}),
+                ...(d.paidOn && d.paidOn <= todayISO() ? { paidOn: d.paidOn } : {}) }));
+            }} /></div>
             <div className="space-y-1.5"><Label htmlFor="dep-amt">Amount received (KES)</Label><Input id="dep-amt" type="number" min="0" value={f.amount} onChange={set("amount")} data-testid="input-deposit-amount" /></div>
             <div className="space-y-1.5"><Label>How they paid</Label>
               <Select value={f.paymentMethod} onValueChange={set("paymentMethod")}><SelectTrigger data-testid="select-deposit-method"><SelectValue /></SelectTrigger>

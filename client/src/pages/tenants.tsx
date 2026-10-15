@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { PaymentSmsPaste, bankFromSmsAccount } from "@/components/payment-sms-paste";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
@@ -761,8 +762,12 @@ function RecordPaymentDialog({ invoice, trigger }: { invoice: RentInvoice; trigg
   const [bankAccountId, setBankAccountId] = useState<number | undefined>();
   const [paymentMethod, setPaymentMethod] = useState("bank_transfer");
   const [paymentReference, setPaymentReference] = useState("");
+  const [sms, setSms] = useState("");
+  const [smsAccount, setSmsAccount] = useState<string | null>(null);
   const { toast } = useToast();
   const { data: bankAccounts = [] } = useQuery<BankAccount[]>({ queryKey: ["/api/tenants/bank-accounts"] });
+  // The SMS names the receiving account (e.g. "***9914"): pick that bank once the list has loaded.
+  useEffect(() => { const b = bankFromSmsAccount(bankAccounts, smsAccount); if (b) setBankAccountId(b.id); }, [bankAccounts, smsAccount]);
   const mutation = useMutation({
     mutationFn: () => apiRequest("POST", `/api/rent-invoices/${invoice.id}/payments`, { amount: Number(amount), bankAccountId, paymentMethod, paymentReference: paymentReference || undefined }),
     onSuccess: () => {
@@ -781,13 +786,18 @@ function RecordPaymentDialog({ invoice, trigger }: { invoice: RentInvoice; trigg
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">Outstanding balance: {formatKES(invoice.totalAmount - invoice.amountPaid)}</p>
           {invoice.shpmsInvoiceId ? <p className="text-sm rounded-md border bg-muted/50 p-3">This invoice comes from SHPMS. The payment is sent to SHPMS first, then posted to Finance; SHPMS emails the tenant's receipt.</p> : null}
+          <PaymentSmsPaste value={sms} onChange={setSms} testId="rent-payment-sms" onRead={(d) => {
+            if (d.amount != null) setAmount(String(d.amount));
+            if (d.code) { setPaymentReference(d.code); setPaymentMethod("mpesa"); }
+            setSmsAccount(d.account);
+          }} />
           <div>
             <label className="text-sm font-medium">Amount (KES)</label>
             <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-payment-amount" />
           </div>
           <div>
             <label className="text-sm font-medium">Bank/cash account</label>
-            <Select onValueChange={(v) => setBankAccountId(Number(v))} value={bankAccountId ? String(bankAccountId) : undefined}>
+            <Select onValueChange={(v) => setBankAccountId(Number(v))} value={bankAccountId ? String(bankAccountId) : ""}>
               <SelectTrigger data-testid="select-payment-bank-account"><SelectValue placeholder="Select account" /></SelectTrigger>
               <SelectContent>{bankAccounts.map((b) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}</SelectContent>
             </Select>
