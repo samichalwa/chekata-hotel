@@ -513,12 +513,13 @@ export function registerWaterBillingRoutes(app: Express) {
   app.get("/api/water-billing/customers", W, async (_req, res) => {
     const rows = await sql`SELECT c.*, t.name AS tariff_name,
         (SELECT r.current_reading FROM water_readings r WHERE r.customer_id = c.id ORDER BY r.period_month DESC LIMIT 1) AS last_reading,
-        (SELECT r.period_month FROM water_readings r WHERE r.customer_id = c.id ORDER BY r.period_month DESC LIMIT 1) AS last_month
+        (SELECT r.period_month FROM water_readings r WHERE r.customer_id = c.id ORDER BY r.period_month DESC LIMIT 1) AS last_month,
+        (SELECT COALESCE(SUM(d.amount), 0) FROM water_deposits d WHERE d.customer_id = c.id AND d.status = 'posted') AS deposit_posted
       FROM water_customers c LEFT JOIN water_tariffs t ON t.id = c.tariff_id ORDER BY c.status, c.name` as any[];
     const bal = await customerBalances();
     res.json(rows.map((c) => ({ id: c.id, accountNo: c.account_no, name: c.name, phone: c.phone, email: c.email, location: c.location, meterNumber: c.meter_number,
       tariffId: c.tariff_id, tariffName: c.tariff_name, openingReading: n(c.opening_reading), connectionDate: c.connection_date, status: c.status,
-      depositAmount: n(c.deposit_amount), depositReference: c.deposit_reference, depositDate: c.deposit_date, notes: c.notes,
+      depositAmount: n(c.deposit_amount), depositPosted: n(c.deposit_posted), depositReference: c.deposit_reference, depositDate: c.deposit_date, notes: c.notes,
       lastReading: c.last_reading === null ? null : n(c.last_reading), lastMonth: c.last_month, balance: bal.get(Number(c.id))?.balance ?? 0 })));
   });
   app.post("/api/water-billing/customers", W, async (req, res) => {

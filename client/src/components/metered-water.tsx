@@ -1,7 +1,7 @@
 // Metered water customers: monthly meter readings → monthly bills (m³), payments, statements.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, FileText, MessageCircle, Send, Ban, FileSpreadsheet, Gauge, Users, Wallet, AlertTriangle, Save, Receipt, Camera, ScanLine, ImageIcon, PiggyBank } from "lucide-react";
+import { Plus, Pencil, Trash2, FileText, MessageCircle, Send, Ban, FileSpreadsheet, Gauge, Users, Wallet, AlertTriangle, Save, Receipt, Camera, ScanLine, ImageIcon, PiggyBank, CheckCircle2 } from "lucide-react";
 import { StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -25,7 +25,7 @@ import { buildWhatsAppLink, buildDocumentPdfUrl } from "@/lib/whatsapp";
 import { calcWaterCharge, consumptionOf, validateTariff, monthLabel, type WaterBand } from "@shared/water-billing";
 
 type Tariff = { id: number; name: string; bands: WaterBand[]; serviceCharge: number; minimumCharge: number; active: number; notes: string | null; customers?: number };
-type Customer = { id: number; accountNo: string; name: string; phone: string | null; email: string | null; location: string | null; meterNumber: string | null; tariffId: number; tariffName: string | null; openingReading: number; connectionDate: string | null; status: "active" | "disconnected"; depositAmount: number; depositReference: string | null; depositDate: string | null; notes: string | null; lastReading: number | null; lastMonth: string | null; balance: number };
+type Customer = { id: number; accountNo: string; name: string; phone: string | null; email: string | null; location: string | null; meterNumber: string | null; tariffId: number; tariffName: string | null; openingReading: number; connectionDate: string | null; status: "active" | "disconnected"; depositAmount: number; depositPosted?: number; depositReference: string | null; depositDate: string | null; notes: string | null; lastReading: number | null; lastMonth: string | null; balance: number };
 type ReadingRow = { customerId: number; accountNo: string; name: string; location: string | null; meterNumber: string | null; status: string; tariff: { name: string; bands: WaterBand[]; serviceCharge: number; minimumCharge: number }; previousReading: number; laterMonth: string | null;
   reading: null | { id: number; currentReading: number; meterReplaced: boolean; oldMeterFinal: number | null; newMeterStart: number | null; consumption: number; readingDate: string; billId: number | null; billNumber: string | null; billStatus: string | null; photoUrl?: string | null; photoMeterNumber?: string | null; photoReading?: number | null; photoMeterVerified?: number | null; photoConfidence?: string | null } };
 type Bill = { id: number; billNumber: string; customerId: number; customerName: string; accountNo: string; phone: string | null; email: string | null; meterNumber: string | null; periodMonth: string; previousReading: number; currentReading: number; consumption: number; tariffName: string; currentCharges: number; balanceBroughtForward: number; totalDue: number; amountPaid: number; billDate: string; dueDate: string; status: string; cancelReason: string | null; smsStatus: string | null; emailStatus: string | null; documentId: number | null; documentToken: string | null; customerBalance: number };
@@ -426,7 +426,7 @@ function CustomersTab() {
                 <TableCell className="hidden md:table-cell text-sm"><div>{c.meterNumber ?? "—"}</div><div className="text-xs text-muted-foreground">{c.location ?? ""}</div></TableCell>
                 <TableCell className="hidden lg:table-cell text-sm">{c.tariffName}</TableCell>
                 <TableCell className="text-right tabular-nums text-sm">{c.lastReading ?? c.openingReading}<div className="text-xs text-muted-foreground">{c.lastMonth ? monthLabel(c.lastMonth) : "opening"}</div></TableCell>
-                <TableCell className={`text-right tabular-nums text-sm font-medium ${c.balance > 0.5 ? "text-destructive" : ""}`} data-testid={`text-balance-${c.id}`}>{c.balance < -0.5 ? `${formatKES(-c.balance)} cr` : formatKES(Math.max(0, c.balance))}<div className="text-xs font-normal text-muted-foreground whitespace-nowrap" data-testid={`text-deposit-${c.id}`}>Deposit {formatKES(c.depositAmount || 0)}</div></TableCell>
+                <TableCell className={`text-right tabular-nums text-sm font-medium ${c.balance > 0.5 ? "text-destructive" : ""}`} data-testid={`text-balance-${c.id}`}>{c.balance < -0.5 ? `${formatKES(-c.balance)} cr` : formatKES(Math.max(0, c.balance))}<DepositStatus c={c} /></TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end flex-wrap gap-1">
                     <RecordPaymentButton endpoint={`/api/water-billing/customers/${c.id}/record-payment`} due={c.balance} guestName={`${c.name} (${c.accountNo})`} summary="Account balance — applied to the oldest bill first" invalidate={[["/api/water-billing/bills"], ["/api/water-billing/customers"], ["/api/water-billing/summary"]]} testId={`wc-${c.id}`} compact />
@@ -688,6 +688,17 @@ function TariffDialog({ tariff, onClose }: { tariff: Tariff | null; onClose: () 
 type DepositRow = { id: number; amount: number; paid_on: string; payment_method: string; payment_reference: string | null; void_reference: string | null; bank_name: string | null; entry_number: string | null; reversal_number: string | null; status: string; cancel_reason: string | null; recorded_by: string | null; document_id: number | null };
 const METHOD_LABEL: Record<string, string> = { mpesa: "M-Pesa", cash: "Cash", card: "Card", bank_transfer: "Bank transfer" };
 
+/** "Deposit Ksh 1,500 · paid" when receipted and in Finance; "not receipted" when only typed in by hand; "No deposit yet" otherwise. */
+function DepositStatus({ c }: { c: Customer }) {
+  const total = c.depositAmount || 0, posted = c.depositPosted ?? 0;
+  const paid = posted > 0.5 && total - posted < 0.5;
+  return (
+    <div className={`text-xs font-normal whitespace-nowrap ${paid ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400"}`} data-testid={`text-deposit-${c.id}`}>
+      {total < 0.5 ? "No deposit yet" : paid ? <span className="inline-flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" />Deposit {formatKES(total)} paid</span> : `Deposit ${formatKES(total)} · not receipted`}
+    </div>
+  );
+}
+
 function DepositDialog({ customer, onClose }: { customer: Customer; onClose: () => void }) {
   const { toast } = useToast();
   const { data: me } = useCurrentUser();
@@ -695,6 +706,7 @@ function DepositDialog({ customer, onClose }: { customer: Customer; onClose: () 
   const { data: acc } = useQuery<{ liabilities: any[]; banks: any[]; depositAccountId: number | null; depositBankAccountId: number | null }>({ queryKey: ["/api/water-billing/deposit-accounts"] });
   const [f, setF] = useState({ amount: "", paymentMethod: "mpesa", paymentReference: "", paidOn: todayISO(), bankAccountId: "" });
   const [replaces, setReplaces] = useState(false);
+  const [another, setAnother] = useState(false);
   const [sms, setSms] = useState("");
   const [smsAccount, setSmsAccount] = useState<string | null>(null);
   const [cancel, setCancel] = useState<DepositRow | null>(null);
@@ -710,7 +722,7 @@ function DepositDialog({ customer, onClose }: { customer: Customer; onClose: () 
     onSuccess: (r: any) => {
       refresh();
       toast({ title: `Deposit ${formatKES(r.amount)} recorded`, description: `Receipt ${r.receiptNo} · journal ${r.entryNumber} · SMS ${r.sms} · email ${r.email ?? "—"}. Total deposit held ${formatKES(r.total)}.` });
-      setF((x) => ({ ...x, amount: "", paymentReference: "" })); setReplaces(false); setSms(""); setSmsAccount(null);
+      setF((x) => ({ ...x, amount: "", paymentReference: "" })); setReplaces(false); setSms(""); setSmsAccount(null); setAnother(false);
     },
     onError: (e) => toast({ title: "Couldn't record the deposit", description: errMsg(e), variant: "destructive" }),
   });
@@ -732,7 +744,15 @@ function DepositDialog({ customer, onClose }: { customer: Customer; onClose: () 
           <Card className="p-3"><div className="text-xs text-muted-foreground">Receipted &amp; in Finance</div><div className="font-semibold tabular-nums" data-testid="text-deposit-posted">{data ? formatKES(data.posted) : "…"}</div></Card>
           <Card className="p-3"><div className="text-xs text-muted-foreground">Typed in by hand only</div><div className="font-semibold tabular-nums" data-testid="text-deposit-hand">{data ? formatKES(data.handEntered) : "…"}</div></Card>
         </div>
-        {notSetUp ? (
+        {data && !notSetUp && data.posted > 0.5 && data.handEntered < 0.5 && !another ? (
+          <div className="rounded-md border border-emerald-600/30 bg-emerald-600/5 p-3 flex flex-wrap items-center justify-between gap-3" data-testid="box-deposit-paid">
+            <div className="text-sm">
+              <div className="font-medium flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />Deposit paid — {formatKES(data.posted)}</div>
+              <div className="text-muted-foreground text-xs mt-0.5">{data.deposits.filter((d) => d.status === "posted").map((d) => `${formatKES(d.amount)} on ${d.paid_on}${d.payment_reference ? ` (${d.payment_reference})` : ""}`).join(" · ")}. Receipted and posted to Finance — nothing more to record.</div>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setAnother(true)} data-testid="button-deposit-another">Record another deposit</Button>
+          </div>
+        ) : notSetUp ? (
           <p className="text-sm text-destructive" data-testid="text-deposit-not-setup">Choose the deposits held account first: Water sales → Metered → Tariffs → Deposits{me?.isAdmin ? "" : " (an admin must do this)"}.</p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 border rounded-md p-3">
