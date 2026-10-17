@@ -22,17 +22,25 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, todayISO } from "@/lib/format";
 import { buildWhatsAppLink, buildDocumentPdfUrl } from "@/lib/whatsapp";
-import { calcWaterCharge, consumptionOf, validateTariff, monthLabel, type WaterBand } from "@shared/water-billing";
+import { calcWaterCharge, calcWaterChargeStep, consumptionOf, validateTariff, monthLabel, type WaterBand } from "@shared/water-billing";
 
 type Tariff = { id: number; name: string; bands: WaterBand[]; serviceCharge: number; minimumCharge: number; active: number; notes: string | null; customers?: number };
 type Customer = { id: number; accountNo: string; name: string; phone: string | null; email: string | null; location: string | null; meterNumber: string | null; tariffId: number; tariffName: string | null; openingReading: number; connectionDate: string | null; status: "active" | "disconnected"; depositAmount: number; depositPosted?: number; depositReference: string | null; depositDate: string | null; notes: string | null; lastReading: number | null; lastMonth: string | null; balance: number };
-type ReadingRow = { customerId: number; accountNo: string; name: string; location: string | null; meterNumber: string | null; status: string; tariff: { name: string; bands: WaterBand[]; serviceCharge: number; minimumCharge: number }; previousReading: number; laterMonth: string | null;
+type ReadingRow = { customerId: number; accountNo: string; name: string; location: string | null; meterNumber: string | null; status: string; tariff: { name: string; bands: WaterBand[]; serviceCharge: number; minimumCharge: number }; previousReading: number; laterMonth: string | null; lastReadingDate?: string | null;
+  monthBilled: { used: number; charged: number; bills: number };
+  history: { id: number; readingDate: string; currentReading: number; consumption: number; meterReplaced: boolean; billId: number | null; billNumber: string | null; billStatus: string | null; billAmount: number | null }[];
   reading: null | { id: number; currentReading: number; meterReplaced: boolean; oldMeterFinal: number | null; newMeterStart: number | null; consumption: number; readingDate: string; billId: number | null; billNumber: string | null; billStatus: string | null; photoUrl?: string | null; photoMeterNumber?: string | null; photoReading?: number | null; photoMeterVerified?: number | null; photoConfidence?: string | null } };
 type Bill = { id: number; billNumber: string; customerId: number; customerName: string; accountNo: string; phone: string | null; email: string | null; meterNumber: string | null; periodMonth: string; previousReading: number; currentReading: number; consumption: number; tariffName: string; currentCharges: number; balanceBroughtForward: number; totalDue: number; amountPaid: number; billDate: string; dueDate: string; status: string; cancelReason: string | null; smsStatus: string | null; emailStatus: string | null; documentId: number | null; documentToken: string | null; customerBalance: number };
 
 const errMsg = (e: any) => { const m = String(e?.message ?? e); const body = m.replace(/^\d+:\s*/, ""); try { return JSON.parse(body).error ?? body; } catch { return body; } };
 const thisMonth = () => todayISO().slice(0, 7);
 const m3 = (v: number) => `${Math.round(v * 1000) / 1000} m³`;
+/** Default "date read" for a month: today in the current month, otherwise the month's last day. */
+export const defaultReadDate = (month: string) => {
+  const t = todayISO(); if (!/^\d{4}-\d{2}$/.test(month) || month >= t.slice(0, 7)) return t;
+  const [y, m] = month.split("-").map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+};
+const shortDate = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 const prettyDate = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 const STATUS: Record<string, { label: string; variant: "default" | "secondary" | "outline" | "destructive" }> = {
   unpaid: { label: "Unpaid", variant: "destructive" }, partially_paid: { label: "Part paid", variant: "default" }, paid: { label: "Paid", variant: "secondary" }, cancelled: { label: "Cancelled", variant: "outline" },
@@ -46,7 +54,7 @@ export function MeteredWater() {
     <div className="space-y-4">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard label="Active metered customers" value={String(summary?.activeCustomers ?? 0)} icon={Users} testId="stat-metered-customers" />
-        <StatCard label={`Read · ${monthLabel(thisMonth())}`} value={`${summary?.readings ?? 0} / ${summary?.activeCustomers ?? 0}`} hint={`${summary?.billed ?? 0} billed · ${m3(summary?.consumption ?? 0)}`} icon={Gauge} accent="muted" testId="stat-metered-read" />
+        <StatCard label={`Read · ${monthLabel(thisMonth())}`} value={`${summary?.readings ?? 0} / ${summary?.activeCustomers ?? 0}`} hint={`${summary?.billed ?? 0} bill${summary?.billed === 1 ? "" : "s"} · ${m3(summary?.consumption ?? 0)}`} icon={Gauge} accent="muted" testId="stat-metered-read" />
         <StatCard label="Outstanding on accounts" value={formatKES(summary?.outstanding ?? 0)} icon={Wallet} accent="warning" testId="stat-metered-outstanding" />
         <StatCard label="Overdue" value={formatKES(summary?.overdue ?? 0)} hint={`${summary?.overdueCustomers ?? 0} customer(s)`} icon={AlertTriangle} accent={summary?.overdue > 0 ? "warning" : "muted"} testId="stat-metered-overdue" />
       </div>
@@ -91,6 +99,7 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
   const { toast } = useToast();
   const [month, setMonth] = useState(thisMonth());
   const [readingDate, setReadingDate] = useState(todayISO());
+  useEffect(() => { setReadingDate(defaultReadDate(month)); }, [month]);
   const [billDate, setBillDate] = useState(todayISO());
   const [drafts, setDrafts] = useState<Record<number, Draft>>({});
   const [errors, setErrors] = useState<Record<number, string>>({});
@@ -122,7 +131,7 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
     const r = scan?.result; if (!r?.token || !r.customer) return;
     const row = rows.find((x) => x.customerId === r.customer!.id);
     if (!row) { toast({ title: "Customer isn't on this month's sheet", description: `${r.customer.name} is not active for ${monthLabel(month)}.`, variant: "destructive" }); return; }
-    if (billed(row) || row.laterMonth) { toast({ title: `${row.name} is already billed for ${monthLabel(month)}`, description: "Cancel that bill first if the reading must change.", variant: "destructive" }); return; }
+    if (billed(row) || row.laterMonth) { toast({ title: `${row.name}'s reading can't be changed here`, description: `A reading for ${monthLabel(row.laterMonth ?? month)} already exists.`, variant: "destructive" }); return; }
     const photo: PhotoScan = { token: r.token, url: r.photoUrl, reading: r.detected.reading, meterNumber: r.detected.meterNumber, verified: r.status === "matched", confidence: r.detected.confidence };
     set(row.customerId, { photo, ...(r.detected.reading !== null ? { current: String(r.detected.reading) } : {}) });
     setScan(null);
@@ -148,7 +157,8 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
     if (rep) { if (rep.oldFinal < r.previousReading) error = `Old meter final can't be below ${r.previousReading}`; else if (cur < rep.newStart) error = "Below the new meter's start"; }
     else if (cur < r.previousReading) error = `Lower than last reading (${r.previousReading}). Tick "Meter replaced" if it was changed or reset.`;
     const used = consumptionOf(r.previousReading, cur, rep);
-    return { used, charge: calcWaterCharge(used, r.tariff), error };
+    // Each reading is billed on its own; the price steps and minimum continue from this month's earlier bills.
+    return { used, charge: calcWaterChargeStep(r.monthBilled.used, r.monthBilled.charged, used, r.tariff, r.monthBilled.bills === 0), error };
   };
   const changed = rows.filter((r) => {
     if (billed(r) || r.laterMonth) return false;
@@ -221,7 +231,7 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
                     </div>
                   </div>
                   <div className="text-sm">
-                    {p ? (<><div className="tabular-nums"><span className="font-medium">{m3(p.used)}</span> used</div><div className="tabular-nums text-muted-foreground">{formatKES(p.charge.total)}</div></>) : <span className="text-muted-foreground text-xs">Not read yet</span>}
+                    {p ? (<><div className="tabular-nums"><span className="font-medium">{m3(p.used)}</span> used</div><div className="tabular-nums text-muted-foreground">{formatKES(p.charge.total)}</div></>) : <span className="text-muted-foreground text-xs">{r.laterMonth ? null : r.history.length ? "Enter the next reading when read again" : r.lastReadingDate ? `Last read ${shortDate(r.lastReadingDate)}` : "Not read yet"}</span>}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 md:justify-end">
                     {billed(r) ? <Badge variant="secondary">Billed {r.reading?.billNumber}</Badge> : r.laterMonth ? <Badge variant="outline">Locked — {monthLabel(r.laterMonth)} read</Badge> : r.reading ? <Badge variant="outline" data-testid={`badge-reading-status-${r.customerId}`}>{autoAt(r) ? `Saved · auto-bills ${autoAt(r)! <= Date.now() ? "shortly" : new Date(autoAt(r)!).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : "Saved · not billed"}</Badge> : null}
@@ -252,6 +262,19 @@ function ReadingsTab({ onBilled }: { onBilled: () => void }) {
                     </div>
                   );
                 })()}
+                {r.history.length > 0 && (
+                  <div className="mt-2 border-t pt-2 space-y-1" data-testid={`history-reading-${r.customerId}`}>
+                    <div className="text-xs text-muted-foreground">Read earlier in {monthLabel(month)}{r.monthBilled.bills ? ` · billed so far ${m3(r.monthBilled.used)}, ${formatKES(r.monthBilled.charged)}` : ""}</div>
+                    {r.history.map((h) => (
+                      <div key={h.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs tabular-nums">
+                        <span className="w-14 text-muted-foreground">{shortDate(h.readingDate)}</span>
+                        <span>Reading {h.currentReading}</span>
+                        <span>{m3(h.consumption)} used{h.meterReplaced ? " (meter replaced)" : ""}</span>
+                        <span className="text-muted-foreground">{h.billId && h.billStatus !== "cancelled" ? `Billed ${h.billNumber}${h.billAmount !== null ? ` · ${formatKES(h.billAmount)}` : ""}` : h.billStatus === "cancelled" ? `${h.billNumber} cancelled` : "Not billed"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {err && <p className="mt-2 text-xs text-destructive" data-testid={`error-reading-${r.customerId}`}>{err}</p>}
               </Card>
             );

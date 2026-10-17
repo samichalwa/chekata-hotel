@@ -290,7 +290,11 @@ export function registerMeterReadingRoutes(app: Express) {
     const cfg = await billingSettings();
     const rows = await waterReadingRows(month);
     res.json(rows.map((r: any) => ({
-      id: r.customerId, name: r.name, ref: r.accountNo, location: r.location, meterNumber: r.meterNumber, previousReading: r.previousReading, needsStart: false, laterMonth: r.laterMonth,
+      id: r.customerId, name: r.name, ref: r.accountNo, location: r.location, meterNumber: r.meterNumber, previousReading: r.previousReading, needsStart: false, laterMonth: r.laterMonth, lastReadingDate: r.lastReadingDate,
+      // Units only — no charges for meter readers.
+      history: r.history.map((h: any) => ({ id: h.id, readingDate: h.readingDate, currentReading: h.currentReading, consumption: h.consumption, meterReplaced: h.meterReplaced,
+        invoiced: !!h.billId && h.billStatus !== "cancelled", invoiceNumber: h.billNumber, awaitingStaff: !!h.billId && h.billStatus === "cancelled",
+        autoBillAt: h.billId ? null : autoBillAt(h.savedAt ?? 0, cfg) })),
       reading: r.reading ? {
         id: r.reading.id, currentReading: r.reading.currentReading, consumption: r.reading.consumption, readingDate: r.reading.readingDate,
         meterReplaced: r.reading.meterReplaced, oldMeterFinal: r.reading.oldMeterFinal, newMeterStart: r.reading.newMeterStart,

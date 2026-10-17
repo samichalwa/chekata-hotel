@@ -14,7 +14,7 @@ import { normalizeRef, isRealRef, inFlight, findReferenceUse, duplicateRefMessag
 import { companyDisplayName, drawCompanyHeaderName, LOGO_EXISTS, LOGO_PATH } from "./pdf";
 import { saveBase64Upload, UploadValidationError } from "./uploads";
 import { readMeterPhoto, normSerial } from "./meter-vision";
-import { calcWaterCharge, consumptionOf, validateTariff, normalizeBands, monthLabel, type WaterBand } from "@shared/water-billing";
+import { calcWaterCharge, calcWaterChargeStep, consumptionOf, validateTariff, normalizeBands, monthLabel, type WaterBand } from "@shared/water-billing";
 
 const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -52,18 +52,27 @@ async function customerBalances(): Promise<Map<number, { billed: number; paid: n
 }
 async function balanceOf(customerId: number) { return (await customerBalances()).get(customerId)?.balance ?? 0; }
 
-/** The reading a month starts from: last month's closing reading (or the opening reading). */
-async function previousReading(customerId: number, month: string, opening: number) {
-  const [r] = await sql`SELECT current_reading FROM water_readings WHERE customer_id = ${customerId} AND period_month < ${month} ORDER BY period_month DESC LIMIT 1` as any[];
-  return r ? n(r.current_reading) : opening;
+/** A customer's latest reading by date (meters can be read any time, more than once a month). */
+async function latestReading(customerId: number, exceptId: number | null = null) {
+  const [r] = await sql`SELECT r.*, b.status AS bill_status, b.bill_number FROM water_readings r LEFT JOIN water_bills b ON b.id = r.bill_id
+    WHERE r.customer_id = ${customerId} AND (${exceptId}::int IS NULL OR r.id <> ${exceptId}) ORDER BY r.reading_date DESC, r.id DESC LIMIT 1` as any[];
+  return r ?? null;
+}
+const editable = (r: any) => !!r && (!r.bill_id || r.bill_status === "cancelled");
+/** Units and charges already billed to a customer in a month (earlier, non-cancelled bills). */
+async function monthBilled(customerId: number, month: string, exceptBillId: number | null = null) {
+  const [x] = await sql`SELECT COALESCE(SUM(consumption),0) AS used, COALESCE(SUM(current_charges),0) AS charged, COUNT(*)::int AS bills FROM water_bills
+    WHERE customer_id = ${customerId} AND period_month = ${month} AND status <> 'cancelled' AND (${exceptBillId}::int IS NULL OR id <> ${exceptBillId})` as any[];
+  return { used: n(x.used), charged: n(x.charged), bills: Number(x.bills) };
 }
 
 function chargeLines(charge: any, bill: any) {
   const items = charge.lines.map((l: any) => ({ label: `Water: ${l.label.charAt(0).toLowerCase()}${l.label.slice(1)}`, detail: `${fmtM3(l.units)} × KES ${l.rate.toLocaleString("en-KE")}`, amount: l.amount }));
   if (!items.length) items.push({ label: "Water consumption", detail: fmtM3(0), amount: 0 });
-  items[0].detail = `Meter ${bill.previous_reading} to ${bill.current_reading} (${fmtM3(n(bill.consumption))} used) · ${items[0].detail}`;
+  items[0].detail = `Meter ${bill.previous_reading} to ${bill.current_reading} (${fmtM3(n(bill.consumption))} used)${n(charge.monthUsedBefore) > 0 ? ` · continues from ${fmtM3(n(charge.monthUsedBefore))} already billed this month` : ""} · ${items[0].detail}`;
   if (charge.serviceCharge > 0) items.push({ label: "Monthly service charge", amount: charge.serviceCharge });
   if (charge.minimumTopUp > 0) items.push({ label: "Minimum charge adjustment", detail: `Minimum monthly bill`, amount: charge.minimumTopUp });
+  if (charge.minimumTopUp < 0) items.push({ label: "Less minimum charge billed earlier this month", amount: charge.minimumTopUp });
   return items;
 }
 
@@ -78,7 +87,7 @@ async function issueBillDocument(bill: any, customer: any) {
     meterPhotoUrl: photo?.photo_url ?? null,
     meterPhotoCaption: photo?.photo_url ? `Meter ${customer.meter_number ?? ""} read ${prettyDate(photo.reading_date)}: ${bill.current_reading} m³${photo.photo_meter_verified === 0 ? " (meter number not readable in the photo)" : ""}.` : undefined,
     notes: [
-      `Water bill for ${monthLabel(bill.period_month)} · Account ${customer.account_no}${customer.meter_number ? ` · Meter ${customer.meter_number}` : ""}${customer.location ? ` · ${customer.location}` : ""}.`,
+      `Water bill for ${monthLabel(bill.period_month)}${photo?.reading_date ? ` (meter read ${prettyDate(photo.reading_date)})` : ""} · Account ${customer.account_no}${customer.meter_number ? ` · Meter ${customer.meter_number}` : ""}${customer.location ? ` · ${customer.location}` : ""}.`,
       `Please pay ${kes(Math.max(0, n(bill.total_due)))} by ${prettyDate(bill.due_date)}${Math.abs(bf) > 0.5 ? ` (this month's charges ${bf > 0 ? "plus arrears" : "less credit"} brought forward)` : ""}.`,
     ].filter(Boolean).join(" "),
   });
@@ -89,7 +98,7 @@ function billSms(settings: any, bill: any, customer: any, pdfUrl: string | null)
     ? settings.mpesaPaymentType === "paybill" ? ` Pay via M-Pesa Paybill ${settings.mpesaNumber}, Acc ${settings.mpesaAccountNumber || customer.account_no}.` : settings.mpesaPaymentType === "phone" ? ` Pay via M-Pesa to ${settings.mpesaNumber}.` : ` Pay via M-Pesa Till ${settings.mpesaNumber}.`
     : "";
   const bf = n(bill.balance_brought_forward);
-  return `Dear ${customer.name}, your ${settings.hotelName || "The Chekata"} water bill ${bill.bill_number} for ${monthLabel(bill.period_month)}: ${fmtM3(n(bill.consumption))}, ${kes(n(bill.current_charges))}.${Math.abs(bf) > 0.5 ? ` ${bf > 0 ? "Arrears" : "Credit"} ${kes(Math.abs(bf))}.` : ""} Total due ${kes(Math.max(0, n(bill.total_due)))} by ${prettyDate(bill.due_date)}.${pay}${pdfUrl ? ` Bill: ${pdfUrl}` : ""}`;
+  return `Dear ${customer.name}, your ${settings.hotelName || "The Chekata"} water bill ${bill.bill_number} for ${monthLabel(bill.period_month)}${bill.reading_date ? ` (meter read ${prettyDate(bill.reading_date)})` : ""}: ${fmtM3(n(bill.consumption))}, ${kes(n(bill.current_charges))}.${Math.abs(bf) > 0.5 ? ` ${bf > 0 ? "Arrears" : "Credit"} ${kes(Math.abs(bf))}.` : ""} Total due ${kes(Math.max(0, n(bill.total_due)))} by ${prettyDate(bill.due_date)}.${pay}${pdfUrl ? ` Bill: ${pdfUrl}` : ""}`;
 }
 
 /** Applies payments oldest-bill-first and rewrites each bill's amount_paid/status. */
@@ -109,11 +118,11 @@ async function reallocate(customerId: number) {
 async function statement(customerId: number) {
   const [c] = await sql`SELECT * FROM water_customers WHERE id = ${customerId}` as any[];
   if (!c) return null;
-  const bills = await sql`SELECT * FROM water_bills WHERE customer_id = ${customerId} AND status <> 'cancelled' ORDER BY bill_date, id` as any[];
+  const bills = await sql`SELECT b.*, r.reading_date FROM water_bills b LEFT JOIN water_readings r ON r.id = b.reading_id WHERE b.customer_id = ${customerId} AND b.status <> 'cancelled' ORDER BY b.bill_date, b.id` as any[];
   const pays = await sql`SELECT * FROM water_bill_payments WHERE customer_id = ${customerId} ORDER BY paid_at, id` as any[];
   const rows: { date: string; ref: string; description: string; charges: number; payments: number; balance: number }[] = [];
   const events = [
-    ...bills.map((b) => ({ t: Number(b.created_at), date: b.bill_date, ref: b.bill_number, description: `Water bill ${monthLabel(b.period_month)} · ${fmtM3(n(b.consumption))}`, charges: n(b.current_charges), payments: 0 })),
+    ...bills.map((b) => ({ t: Number(b.created_at), date: b.bill_date, ref: b.bill_number, description: `Water bill ${monthLabel(b.period_month)}${b.reading_date ? ` (read ${prettyDate(b.reading_date)})` : ""} · ${fmtM3(n(b.consumption))}`, charges: n(b.current_charges), payments: 0 })),
     ...pays.map((p) => ({ t: Number(p.paid_at), date: new Date(Number(p.paid_at) + TZ).toISOString().slice(0, 10), ref: p.payment_reference || `PAY-${p.id}`, description: `Payment · ${String(p.payment_method).replace("_", " ")}`, charges: 0, payments: n(p.amount) })),
   ].sort((a, b) => a.t - b.t);
   let bal = 0;
@@ -184,11 +193,11 @@ async function excelReport(fromMonth: string, toMonth: string, hotelName: string
     const r = ws.getRow(1); r.font = { bold: true, color: { argb: "FFFFFFFF" } }; r.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF2A2118" } };
     ws.views = [{ state: "frozen", ySplit: 1 }]; ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
   };
-  const bills = await sql`SELECT b.*, c.account_no, c.name, c.meter_number, c.location, c.phone, r.photo_url, r.photo_reading, r.photo_meter_verified FROM water_bills b JOIN water_customers c ON c.id = b.customer_id LEFT JOIN water_readings r ON r.id = b.reading_id
-    WHERE b.period_month BETWEEN ${fromMonth} AND ${toMonth} ORDER BY b.period_month, c.account_no` as any[];
+  const bills = await sql`SELECT b.*, c.account_no, c.name, c.meter_number, c.location, c.phone, r.photo_url, r.photo_reading, r.photo_meter_verified, r.reading_date FROM water_bills b JOIN water_customers c ON c.id = b.customer_id LEFT JOIN water_readings r ON r.id = b.reading_id
+    WHERE b.period_month BETWEEN ${fromMonth} AND ${toMonth} ORDER BY b.period_month, c.account_no, r.reading_date, b.id` as any[];
   const ws = wb.addWorksheet("Bills");
   head(ws, [
-    { header: "Month", key: "month", width: 10 }, { header: "Bill no.", key: "bill", width: 12 }, { header: "Account", key: "acc", width: 10 }, { header: "Customer", key: "name", width: 26 },
+    { header: "Month", key: "month", width: 10 }, { header: "Bill no.", key: "bill", width: 12 }, { header: "Date read", key: "read", width: 11 }, { header: "Account", key: "acc", width: 10 }, { header: "Customer", key: "name", width: 26 },
     { header: "Meter", key: "meter", width: 12 }, { header: "Location", key: "loc", width: 18 }, { header: "Tariff", key: "tariff", width: 14 },
     { header: "Previous", key: "prev", width: 10 }, { header: "Current", key: "cur", width: 10 }, { header: "Used (m³)", key: "used", width: 10 },
     { header: "Water (KES)", key: "water", width: 13, style: { numFmt: money } }, { header: "Service (KES)", key: "service", width: 13, style: { numFmt: money } },
@@ -200,7 +209,7 @@ async function excelReport(fromMonth: string, toMonth: string, hotelName: string
   for (const b of bills) {
     const ch = JSON.parse(b.charge_json);
     const cancelled = b.status === "cancelled";
-    ws.addRow({ month: b.period_month, bill: b.bill_number, acc: b.account_no, name: b.name, meter: b.meter_number, loc: b.location, tariff: b.tariff_name,
+    ws.addRow({ month: b.period_month, bill: b.bill_number, read: b.reading_date ?? "", acc: b.account_no, name: b.name, meter: b.meter_number, loc: b.location, tariff: b.tariff_name,
       prev: n(b.previous_reading), cur: n(b.current_reading), used: n(b.consumption), water: n(ch.consumptionAmount), service: n(ch.serviceCharge), min: n(ch.minimumTopUp),
       charges: n(b.current_charges), bf: n(b.balance_brought_forward), due: n(b.total_due), paid: n(b.amount_paid), bal: cancelled ? 0 : r2(n(b.current_charges) - n(b.amount_paid)),
       src: !b.photo_url ? "Typed" : `Photo${b.photo_meter_verified === 0 ? ", meter no. not verified" : ""}${b.photo_reading !== null && Math.abs(n(b.photo_reading) - n(b.current_reading)) > 0.0005 ? `, edited (photo ${n(b.photo_reading)})` : ""}`,
@@ -264,21 +273,32 @@ const customerSchema = z.object({
   depositAmount: z.number().min(0).default(0), depositReference: z.string().trim().nullable().optional(), depositDate: z.string().nullable().optional(), notes: z.string().nullable().optional(),
 });
 
+const readingOut = (r: any) => ({ id: r.id, currentReading: n(r.current_reading), previousReading: n(r.previous_reading), meterReplaced: !!r.meter_replaced, oldMeterFinal: r.old_meter_final === null ? null : n(r.old_meter_final), newMeterStart: r.new_meter_start === null ? null : n(r.new_meter_start), consumption: n(r.consumption), readingDate: r.reading_date, billId: r.bill_id, billNumber: r.bill_number ?? null, billStatus: r.bill_status ?? null, billAmount: r.bill_amount === null || r.bill_amount === undefined ? null : n(r.bill_amount), savedAt: Number(r.updated_at ?? r.created_at),
+  photoUrl: r.photo_url ?? null, photoMeterNumber: r.photo_meter_number ?? null, photoReading: r.photo_reading === null ? null : n(r.photo_reading), photoMeterVerified: r.photo_meter_verified === null ? null : Number(r.photo_meter_verified), photoConfidence: r.photo_confidence ?? null });
+
+/** One row per customer for a month. `reading` is the reading that can still be corrected (the customer's latest,
+ *  not yet billed); otherwise null and the row takes a new reading. `history` lists the month's readings. */
 export async function waterReadingRows(month: string) {
     const customers = await sql`SELECT c.*, t.name AS tariff_name, t.bands_json, t.service_charge, t.minimum_charge FROM water_customers c LEFT JOIN water_tariffs t ON t.id = c.tariff_id
       WHERE c.status = 'active' OR EXISTS (SELECT 1 FROM water_readings r WHERE r.customer_id = c.id AND r.period_month = ${month}) ORDER BY c.location NULLS LAST, c.name` as any[];
-    const readings = await sql`SELECT r.*, b.bill_number, b.status AS bill_status FROM water_readings r LEFT JOIN water_bills b ON b.id = r.bill_id WHERE r.period_month = ${month}` as any[];
-    const later = await sql`SELECT customer_id, MIN(period_month) AS m FROM water_readings WHERE period_month > ${month} GROUP BY customer_id` as any[];
-    const laterBy = new Map(later.map((l) => [Number(l.customer_id), l.m]));
+    const readings = await sql`SELECT r.*, b.bill_number, b.status AS bill_status, b.current_charges AS bill_amount FROM water_readings r LEFT JOIN water_bills b ON b.id = r.bill_id WHERE r.period_month = ${month} ORDER BY r.reading_date, r.id` as any[];
     const out = [];
     for (const c of customers) {
-      const r = readings.find((x) => Number(x.customer_id) === Number(c.id));
-      const prev = r ? n(r.previous_reading) : await previousReading(Number(c.id), month, n(c.opening_reading));
+      const mine = readings.filter((x) => Number(x.customer_id) === Number(c.id));
+      const last = await latestReading(Number(c.id));
+      const laterMonth = last && last.period_month > month ? last.period_month : null;
+      const r = last && !laterMonth && last.period_month === month && editable(last) ? mine.find((x) => Number(x.id) === Number(last.id)) ?? null : null;
+      const before = last && !r ? (laterMonth ? null : last) : r ? await latestReading(Number(c.id), Number(r.id)) : null;
+      const shown = laterMonth ? mine[mine.length - 1] : null; // locked month: show where the month ended
+      const prev = r ? n(r.previous_reading) : shown ? n(shown.current_reading) : before ? n(before.current_reading) : n(c.opening_reading);
+      const mb = await monthBilled(Number(c.id), month, r?.bill_id ? Number(r.bill_id) : null);
       out.push({ customerId: c.id, accountNo: c.account_no, name: c.name, location: c.location, meterNumber: c.meter_number, status: c.status,
         tariff: { name: c.tariff_name, bands: normalizeBands(JSON.parse(c.bands_json || "[]")), serviceCharge: n(c.service_charge), minimumCharge: n(c.minimum_charge) },
-        previousReading: prev, reading: r ? { id: r.id, currentReading: n(r.current_reading), meterReplaced: !!r.meter_replaced, oldMeterFinal: r.old_meter_final === null ? null : n(r.old_meter_final), newMeterStart: r.new_meter_start === null ? null : n(r.new_meter_start), consumption: n(r.consumption), readingDate: r.reading_date, billId: r.bill_id, billNumber: r.bill_number, billStatus: r.bill_status, savedAt: Number(r.updated_at ?? r.created_at),
-          photoUrl: r.photo_url ?? null, photoMeterNumber: r.photo_meter_number ?? null, photoReading: r.photo_reading === null ? null : n(r.photo_reading), photoMeterVerified: r.photo_meter_verified === null ? null : Number(r.photo_meter_verified), photoConfidence: r.photo_confidence ?? null } : null,
-        laterMonth: laterBy.get(Number(c.id)) ?? null });
+        previousReading: prev, lastReadingDate: (r ? before?.reading_date : last?.reading_date) ?? null,
+        reading: r ? readingOut(r) : null,
+        history: mine.filter((x) => !r || Number(x.id) !== Number(r.id)).map(readingOut),
+        monthBilled: mb,
+        laterMonth });
     }
     return out;
 }
@@ -294,16 +314,20 @@ export async function saveWaterReadings(input: unknown, by: string) {
       for (const r of body.readings) {
         const [c] = await sql`SELECT * FROM water_customers WHERE id = ${r.customerId}` as any[];
         if (!c) { errors.push({ customerId: r.customerId, error: "Customer not found" }); continue; }
-        const [existing] = await sql`SELECT id, bill_id FROM water_readings WHERE customer_id = ${c.id} AND period_month = ${body.month}` as any[];
-        if (existing?.bill_id) { const [b] = await sql`SELECT status FROM water_bills WHERE id = ${existing.bill_id}` as any[]; if (b && b.status !== "cancelled") { errors.push({ customerId: c.id, error: `${c.name}: already billed for this month — cancel the bill to correct the reading.` }); continue; } }
-        const [later] = await sql`SELECT period_month FROM water_readings WHERE customer_id = ${c.id} AND period_month > ${body.month} LIMIT 1` as any[];
-        if (later) { errors.push({ customerId: c.id, error: `${c.name}: a reading for ${monthLabel(later.period_month)} already exists — readings must be entered in order.` }); continue; }
-        const prev = await previousReading(Number(c.id), body.month, n(c.opening_reading));
+        if (r.readingDate.slice(0, 7) !== body.month) { errors.push({ customerId: c.id, error: `${c.name}: the date read (${prettyDate(r.readingDate)}) is not in ${monthLabel(body.month)}.` }); continue; }
+        if (r.readingDate > today()) { errors.push({ customerId: c.id, error: `${c.name}: the date read can't be in the future.` }); continue; }
+        // The latest reading is corrected while it is not billed yet; once billed, a new reading is added.
+        const last = await latestReading(Number(c.id));
+        if (last && last.period_month > body.month) { errors.push({ customerId: c.id, error: `${c.name}: a reading for ${monthLabel(last.period_month)} already exists — readings must be entered in order.` }); continue; }
+        const existing = last && last.period_month === body.month && editable(last) ? last : null;
+        const prior = existing ? await latestReading(Number(c.id), Number(existing.id)) : last;
+        if (prior && r.readingDate < prior.reading_date) { errors.push({ customerId: c.id, error: `${c.name}: the date read can't be before the last reading (${prettyDate(prior.reading_date)}).` }); continue; }
+        const prev = prior ? n(prior.current_reading) : n(c.opening_reading);
         const replaced = r.meterReplaced ? { oldFinal: n(r.oldMeterFinal), newStart: n(r.newMeterStart) } : null;
         if (replaced) {
           if (replaced.oldFinal < prev) { errors.push({ customerId: c.id, error: `${c.name}: the old meter's final reading can't be below the previous reading (${prev}).` }); continue; }
           if (r.currentReading < replaced.newStart) { errors.push({ customerId: c.id, error: `${c.name}: the new meter's reading can't be below its start reading.` }); continue; }
-        } else if (r.currentReading < prev) { errors.push({ customerId: c.id, error: `${c.name}: ${r.currentReading} is lower than last month's ${prev}. If the meter was replaced or reset, tick "Meter replaced".` }); continue; }
+        } else if (r.currentReading < prev) { errors.push({ customerId: c.id, error: `${c.name}: ${r.currentReading} is lower than the last reading (${prev}). If the meter was replaced or reset, tick "Meter replaced".` }); continue; }
         const used = consumptionOf(prev, r.currentReading, replaced);
         // A photo scan is attached via the one-time token the scan returned — only for the customer it was matched to.
         let photo: any = null;
@@ -315,7 +339,7 @@ export async function saveWaterReadings(input: unknown, by: string) {
         const keepPhoto = !r.photoToken && existing ? true : false;
         if (existing) {
           await sql`UPDATE water_readings SET previous_reading = ${prev}, current_reading = ${r.currentReading}, meter_replaced = ${replaced ? 1 : 0}, old_meter_final = ${replaced?.oldFinal ?? null},
-            new_meter_start = ${replaced?.newStart ?? null}, consumption = ${used}, reading_date = ${r.readingDate}, bill_id = NULL, recorded_by = ${by}, updated_at = ${Date.now()} WHERE id = ${existing.id}`;
+            new_meter_start = ${replaced?.newStart ?? null}, consumption = ${used}, reading_date = ${r.readingDate}, period_month = ${body.month}, bill_id = NULL, recorded_by = ${by}, updated_at = ${Date.now()} WHERE id = ${existing.id}`;
           if (photo) await sql`UPDATE water_readings SET photo_url = ${photo.photoUrl}, photo_meter_number = ${photo.meterNumber}, photo_reading = ${photo.reading}, photo_meter_verified = ${photo.verified === null ? null : photo.verified ? 1 : 0}, photo_confidence = ${photo.confidence} WHERE id = ${existing.id}`;
           else if (!keepPhoto) await sql`UPDATE water_readings SET photo_url = NULL, photo_meter_number = NULL, photo_reading = NULL, photo_meter_verified = NULL, photo_confidence = NULL WHERE id = ${existing.id}`;
         } else {
@@ -417,15 +441,17 @@ export async function raiseWaterBills(body: { month?: string; billDate?: string;
       const billDate = body.billDate || today();
       const dueDate = addDays(billDate, Number(settings.waterBillDueDays ?? 14));
       const pending = body.readingIds
-        ? await sql`SELECT r.*, c.tariff_id FROM water_readings r JOIN water_customers c ON c.id = r.customer_id WHERE r.id = ANY(${body.readingIds}) AND r.bill_id IS NULL ORDER BY r.period_month, r.id` as any[]
+        ? await sql`SELECT r.*, c.tariff_id FROM water_readings r JOIN water_customers c ON c.id = r.customer_id WHERE r.id = ANY(${body.readingIds}) AND r.bill_id IS NULL ORDER BY r.reading_date, r.id` as any[]
         : await sql`SELECT r.*, c.tariff_id FROM water_readings r JOIN water_customers c ON c.id = r.customer_id
-        WHERE r.period_month = ${body.month ?? ""} AND (r.bill_id IS NULL OR EXISTS (SELECT 1 FROM water_bills b WHERE b.id = r.bill_id AND b.status = 'cancelled'))` as any[];
+        WHERE r.period_month = ${body.month ?? ""} AND (r.bill_id IS NULL OR EXISTS (SELECT 1 FROM water_bills b WHERE b.id = r.bill_id AND b.status = 'cancelled')) ORDER BY r.reading_date, r.id` as any[];
       const results: any[] = [];
       for (const r of pending.filter((p) => !body.customerIds || body.customerIds.includes(Number(p.customer_id)))) {
         const [c] = await sql`SELECT * FROM water_customers WHERE id = ${r.customer_id}` as any[];
         const tariff = await getTariff(Number(c.tariff_id));
         if (!tariff) { results.push({ customer: c.name, error: "No tariff" }); continue; }
-        const charge = calcWaterCharge(n(r.consumption), tariff);
+        // Each reading is billed on its own; the price steps and the minimum run across the month's bills.
+        const mb = await monthBilled(Number(c.id), r.period_month);
+        const charge = calcWaterChargeStep(mb.used, mb.charged, n(r.consumption), tariff, mb.bills === 0);
         const bf = await balanceOf(Number(c.id));
         // Skip any number already used (a counter behind existing bills must never clash).
         let number = await storage.getNextSequenceNumber("water_bill");
@@ -439,7 +465,7 @@ export async function raiseWaterBills(body: { month?: string; billDate?: string;
         const pdfUrl = doc?.id && doc?.publicToken ? `${body.base}/api/public/documents/${doc.id}/pdf?token=${doc.publicToken}` : null;
         let sms = "skipped";
         if (settings.waterBillSms !== 0 && c.phone) {
-          const s = await sendSms({ source: "Water bill", settings, to: c.phone, message: billSms(settings, bill, c, pdfUrl) }).catch((e: any) => ({ ok: false, error: e?.message }));
+          const s = await sendSms({ source: "Water bill", settings, to: c.phone, message: billSms(settings, { ...bill, reading_date: r.reading_date }, c, pdfUrl) }).catch((e: any) => ({ ok: false, error: e?.message }));
           sms = s.ok ? "sent" : `failed: ${(s as any).error ?? ""}`;
         }
         await sql`UPDATE water_bills SET sms_status = ${sms} WHERE id = ${bill.id}`;
@@ -614,8 +640,8 @@ export function registerWaterBillingRoutes(app: Express) {
     const [r] = await sql`SELECT r.*, b.status FROM water_readings r LEFT JOIN water_bills b ON b.id = r.bill_id WHERE r.id = ${Number(req.params.id)}` as any[];
     if (!r) return res.status(404).json({ error: "Reading not found" });
     if (r.bill_id && r.status !== "cancelled") return res.status(409).json({ error: "This reading has been billed. Cancel the bill first." });
-    const [later] = await sql`SELECT 1 FROM water_readings WHERE customer_id = ${r.customer_id} AND period_month > ${r.period_month} LIMIT 1` as any[];
-    if (later) return res.status(409).json({ error: "A later month's reading exists, so this one can't be removed." });
+    const [later] = await sql`SELECT 1 FROM water_readings WHERE customer_id = ${r.customer_id} AND id <> ${r.id} AND (reading_date > ${r.reading_date} OR (reading_date = ${r.reading_date} AND id > ${r.id})) LIMIT 1` as any[];
+    if (later) return res.status(409).json({ error: "A later reading exists, so this one can't be removed." });
     await sql`DELETE FROM water_readings WHERE id = ${r.id}`;
     res.json({ ok: true });
   });
@@ -651,7 +677,7 @@ export function registerWaterBillingRoutes(app: Express) {
   });
   app.post("/api/water-billing/bills/:id/resend", W, async (req, res) => {
     try {
-      const [bill] = await sql`SELECT * FROM water_bills WHERE id = ${Number(req.params.id)}` as any[];
+      const [bill] = await sql`SELECT b.*, r.reading_date FROM water_bills b LEFT JOIN water_readings r ON r.id = b.reading_id WHERE b.id = ${Number(req.params.id)}` as any[];
       if (!bill || bill.status === "cancelled") return res.status(404).json({ error: "Bill not found" });
       const [c] = await sql`SELECT * FROM water_customers WHERE id = ${bill.customer_id}` as any[];
       const [orig] = await sql`SELECT id FROM documents WHERE category = 'water_bill' AND source_id = ${bill.id} AND doc_type = 'invoice' ORDER BY id LIMIT 1` as any[];
@@ -743,7 +769,7 @@ export function registerWaterBillingRoutes(app: Express) {
   app.get("/api/water-billing/summary", W, async (req, res) => {
     const month = isMonth(req.query.month) ? String(req.query.month) : today().slice(0, 7);
     const [cust] = await sql`SELECT COUNT(*) FILTER (WHERE status = 'active')::int AS active, COUNT(*)::int AS total FROM water_customers` as any[];
-    const [rd] = await sql`SELECT COUNT(*)::int AS read, COUNT(*) FILTER (WHERE bill_id IS NOT NULL AND EXISTS (SELECT 1 FROM water_bills b WHERE b.id = bill_id AND b.status <> 'cancelled'))::int AS billed, COALESCE(SUM(consumption),0) AS m3 FROM water_readings WHERE period_month = ${month}` as any[];
+    const [rd] = await sql`SELECT COUNT(DISTINCT customer_id)::int AS read, COUNT(*) FILTER (WHERE bill_id IS NOT NULL AND EXISTS (SELECT 1 FROM water_bills b WHERE b.id = bill_id AND b.status <> 'cancelled'))::int AS billed, COALESCE(SUM(consumption),0) AS m3 FROM water_readings WHERE period_month = ${month}` as any[];
     const [bl] = await sql`SELECT COALESCE(SUM(current_charges),0) AS billed, COALESCE(SUM(amount_paid),0) AS paid FROM water_bills WHERE period_month = ${month} AND status <> 'cancelled'` as any[];
     const bal = await customerBalances();
     const [overdue] = await sql`SELECT COALESCE(SUM(current_charges - amount_paid),0) AS amt, COUNT(DISTINCT customer_id)::int AS customers FROM water_bills WHERE status IN ('unpaid','partially_paid') AND due_date < ${today()}` as any[];

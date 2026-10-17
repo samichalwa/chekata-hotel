@@ -19,11 +19,12 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { todayISO } from "@/lib/format";
 import { monthLabel } from "@shared/water-billing";
-import { photoToJpeg } from "@/components/metered-water";
+import { photoToJpeg, defaultReadDate } from "@/components/metered-water";
 
 type Kind = "water" | "electricity";
 type Row = {
-  id: number; name: string; ref: string; location: string | null; meterNumber: string | null; previousReading: number | null; needsStart: boolean; laterMonth: string | null;
+  id: number; name: string; ref: string; location: string | null; meterNumber: string | null; previousReading: number | null; needsStart: boolean; laterMonth: string | null; lastReadingDate?: string | null;
+  history?: { id: number; readingDate: string; currentReading: number; consumption: number; meterReplaced: boolean; invoiced: boolean; invoiceNumber: string | null; awaitingStaff: boolean; autoBillAt: number | null }[];
   reading: null | {
     id: number; currentReading: number; startReading?: number; consumption: number; readingDate: string; meterReplaced?: boolean; oldMeterFinal?: number | null; newMeterStart?: number | null;
     invoiced: boolean; invoiceNumber: string | null; invoiceStatus: string | null; awaitingStaff: boolean; nothingToBill?: boolean; autoBillAt: number | null;
@@ -36,6 +37,7 @@ type Draft = { current: string; start: string; replaced: boolean; oldFinal: stri
 
 const errMsg = (e: any) => { const m = String(e?.message ?? e); const body = m.replace(/^\d+:\s*/, ""); try { return JSON.parse(body).error ?? body; } catch { return body; } };
 const thisMonth = () => todayISO().slice(0, 7);
+const shortDate = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 const UNIT: Record<Kind, string> = { water: "m³", electricity: "kWh" };
 const fmtUnits = (v: number, k: Kind) => `${Math.round(v * 1000) / 1000} ${UNIT[k]}`;
 const when = (ms: number) => {
@@ -55,7 +57,7 @@ export default function MeterReadingsPage() {
         <div>
           <h1 className="text-xl font-semibold" data-testid="text-page-title">Meter Readings</h1>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Record this month's water and electricity meter readings. Saved readings are billed automatically
+            Water meters can be read any time, even more than once a month; electricity meters once a month. Each saved reading is billed automatically
             {settings ? (settings.delayHours ? ` ${settings.delayHours} hour${settings.delayHours === 1 ? "" : "s"} after saving` : " shortly after saving") : " after a review window"}, so a mistake can be corrected before then.
           </p>
         </div>
@@ -77,6 +79,7 @@ function ReaderSheet({ kind, settings }: { kind: Kind; settings?: ReaderSettings
   const { toast } = useToast();
   const [month, setMonth] = useState(thisMonth());
   const [readingDate, setReadingDate] = useState(todayISO());
+  useEffect(() => { setReadingDate(defaultReadDate(month)); }, [month]);
   const [drafts, setDrafts] = useState<Record<number, Draft>>({});
   const [errors, setErrors] = useState<Record<number, string>>({});
   const key = `/api/meter-reader/${kind}`;
@@ -164,7 +167,7 @@ function ReaderSheet({ kind, settings }: { kind: Kind; settings?: ReaderSettings
     const r = scan?.result; if (!r?.token || !r.customer) return;
     const row = rows.find((x) => x.id === r.customer!.id);
     if (!row) { toast({ title: `Not on this month's sheet`, description: `${r.customer.name} is not active for ${monthLabel(month)}.`, variant: "destructive" }); return; }
-    if (locked(row)) { toast({ title: `${row.name} is already billed for ${monthLabel(month)}`, description: "The office must cancel that bill before the reading can change.", variant: "destructive" }); return; }
+    if (locked(row)) { toast({ title: `${row.name}'s reading can't be changed here`, description: row.laterMonth ? `A reading for ${monthLabel(row.laterMonth)} already exists.` : row.reading?.awaitingStaff ? "Its bill was cancelled — the office re-bills it." : "The office must cancel that bill before the reading can change.", variant: "destructive" }); return; }
     set(row.id, { photo: { token: r.token, url: r.photoUrl, reading: r.detected.reading, verified: r.status === "matched" }, ...(r.detected.reading !== null ? { current: String(r.detected.reading) } : {}) });
     setScan(null);
     setTimeout(() => document.getElementById(`mr-${kind}-${row.id}`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 50);
@@ -228,7 +231,7 @@ function ReaderSheet({ kind, settings }: { kind: Kind; settings?: ReaderSettings
                     </div>
                   </div>
                   <div className="text-sm">
-                    {p?.used != null ? <div className="tabular-nums" data-testid={`text-used-${kind}-${r.id}`}><span className="font-medium">{fmtUnits(p.used, kind)}</span> used</div> : r.reading ? null : <span className="text-muted-foreground text-xs">Not read yet</span>}
+                    {p?.used != null ? <div className="tabular-nums" data-testid={`text-used-${kind}-${r.id}`}><span className="font-medium">{fmtUnits(p.used, kind)}</span> used</div> : r.reading ? null : <span className="text-muted-foreground text-xs">{r.laterMonth ? null : r.history?.length ? "Enter the next reading when read again" : r.lastReadingDate ? `Last read ${shortDate(r.lastReadingDate)}` : "Not read yet"}</span>}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 md:justify-end">
                     {statusBadge(r)}
@@ -258,6 +261,19 @@ function ReaderSheet({ kind, settings }: { kind: Kind; settings?: ReaderSettings
                     </div>
                   );
                 })()}
+                {!!r.history?.length && (
+                  <div className="mt-2 border-t pt-2 space-y-1" data-testid={`history-${kind}-${r.id}`}>
+                    <div className="text-xs text-muted-foreground">Read earlier in {monthLabel(month)}</div>
+                    {r.history.map((h) => (
+                      <div key={h.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs tabular-nums">
+                        <span className="w-14 text-muted-foreground">{shortDate(h.readingDate)}</span>
+                        <span>Reading {h.currentReading}</span>
+                        <span>{fmtUnits(h.consumption, kind)} used{h.meterReplaced ? " (meter replaced)" : ""}</span>
+                        <span className="text-muted-foreground">{h.invoiced ? `Billed ${h.invoiceNumber}` : h.awaitingStaff ? "Bill cancelled" : h.autoBillAt ? `Bills ${h.autoBillAt <= Date.now() ? "shortly" : when(h.autoBillAt)}` : "Not billed"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {err && <p className="mt-2 text-xs text-destructive" data-testid={`error-${kind}-${r.id}`}>{err}</p>}
               </Card>
             );

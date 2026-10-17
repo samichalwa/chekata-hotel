@@ -1315,6 +1315,12 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
   await ensureColumn("water_readings", "photo_meter_verified", "INTEGER");
   await ensureColumn("water_readings", "photo_confidence", "TEXT");
   await ensureColumn("water_readings", "updated_at", "BIGINT");
+  // Water meters can be read any time, more than once a month: each reading is billed on its own.
+  await sql`DO $$ DECLARE c text; BEGIN
+    FOR c IN SELECT conname FROM pg_constraint WHERE conrelid = 'water_readings'::regclass AND contype = 'u' LOOP
+      EXECUTE format('ALTER TABLE water_readings DROP CONSTRAINT %I', c);
+    END LOOP; END $$`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_water_readings_customer ON water_readings(customer_id, reading_date, id)`;
   await ensureColumn("tenancy_leases", "meter_number", "TEXT");
   await ensureColumn("meter_readings", "updated_at", "BIGINT");
   await ensureColumn("meter_readings", "invoice_id", "INTEGER");

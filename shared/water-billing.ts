@@ -63,3 +63,31 @@ export const monthLabel = (m: string) => {
   const [y, mo] = m.split("-").map(Number);
   return new Date(Date.UTC(y, (mo || 1) - 1, 15)).toLocaleDateString("en-KE", { month: "long", year: "numeric", timeZone: "UTC" });
 };
+
+/** One more bill in a month that already has bills. The price steps continue from the units already billed this
+ *  month (`prevUsed`), the service charge is only on the month's first bill, and the minimum applies once a month:
+ *  this bill = month's charge for (prevUsed + used) − what the month's earlier bills already charged (`prevCharged`). */
+export function calcWaterChargeStep(prevUsed: number, prevCharged: number, used: number, tariff: WaterTariffLike, firstOfMonth: boolean): WaterCharge & { monthUsedBefore: number; monthChargedBefore: number } {
+  const u0 = Math.max(0, r3(prevUsed)); const u = Math.max(0, r3(used));
+  if (firstOfMonth && u0 === 0) return { ...calcWaterCharge(u, tariff), monthUsedBefore: 0, monthChargedBefore: 0 };
+  const whole = calcWaterCharge(u0 + u, tariff);
+  const bands = normalizeBands(tariff.bands);
+  const lines: WaterChargeLine[] = [];
+  let from = 0;
+  for (const b of bands) {
+    const to = b.upTo === null ? Infinity : b.upTo;
+    const lo = Math.max(from, u0), hi = Math.min(to, u0 + u);
+    const units = r3(hi - lo);
+    if (units > 0) {
+      const label = b.upTo === null ? (from === 0 ? "All units" : `Above ${from} m³`) : (from === 0 ? `First ${b.upTo} m³` : `${from}–${b.upTo} m³`);
+      lines.push({ label, units, rate: b.rate, amount: r2(units * b.rate) });
+    }
+    if (b.upTo === null) break;
+    from = b.upTo;
+  }
+  const consumptionAmount = r2(lines.reduce((t, l) => t + l.amount, 0));
+  const serviceCharge = firstOfMonth ? r2(Number(tariff.serviceCharge) || 0) : 0;
+  const total = r2(Math.max(0, whole.total - (Number(prevCharged) || 0)));
+  const minimumTopUp = r2(total - consumptionAmount - serviceCharge);
+  return { consumption: u, lines, consumptionAmount, serviceCharge, minimumTopUp, total, monthUsedBefore: u0, monthChargedBefore: r2(Number(prevCharged) || 0) };
+}

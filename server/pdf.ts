@@ -234,7 +234,10 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
     drawItemsHeader();
 
     for (const item of payload.lineItems) {
-      const rowH = item.detail ? 30 : 20;
+      // Long details wrap; the row grows to fit them.
+      const detailH = item.detail ? (doc.fontSize(8), doc.heightOfString(item.detail, { width: 330 })) : 0;
+      doc.fontSize(10);
+      const rowH = item.detail ? Math.max(30, 18 + detailH + 4) : 20;
       ensureSpace(rowH, true);
       doc.fillColor(dark).text(item.label, 58, y + 5, { width: 330 });
       if (item.detail) {
