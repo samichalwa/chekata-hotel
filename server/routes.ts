@@ -1406,6 +1406,30 @@ export async function registerRoutes(
   });
 
   // ---------- Maintenance (issue register — tracked separately from Expenses) ----------
+  // Maintenance ↔ Assets: an issue can be attached to an asset when reported or any time later.
+  const checkIssueAsset = async (assetId: unknown, current: number | null = null): Promise<string | null> => {
+    if (assetId === undefined || assetId === null) return null;
+    const id = Number(assetId);
+    if (!Number.isInteger(id) || id <= 0) return "Choose a valid asset.";
+    const [a] = await sql`SELECT status FROM assets WHERE id = ${id}` as any[];
+    if (!a) return "That asset no longer exists.";
+    if (a.status === "disposed" && id !== current) return "That asset has been disposed — choose another.";
+    return null;
+  };
+  // Asset picker for maintenance staff (they may not have the Assets module).
+  app.get("/api/maintenance/asset-options", requireAnyModule(["maintenance", "assets"]), async (_req, res) => {
+    const rows = await sql`SELECT id, asset_number, name, location, status FROM assets ORDER BY asset_number` as any[];
+    res.json(rows.map((a) => ({ id: Number(a.id), assetNumber: a.asset_number, name: a.name, location: a.location ?? null, status: a.status })));
+  });
+  app.get("/api/assets/maintenance-counts", requireAnyModule(["assets", "maintenance"]), async (_req, res) => {
+    const rows = await sql`SELECT asset_id, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status IN ('open','in_progress'))::int AS open FROM maintenance_issues WHERE asset_id IS NOT NULL GROUP BY asset_id` as any[];
+    res.json(Object.fromEntries(rows.map((r) => [Number(r.asset_id), { total: r.total, open: r.open }])));
+  });
+  app.get("/api/assets/:id/maintenance", requireAnyModule(["assets", "maintenance"]), async (req, res) => {
+    const rows = await sql`SELECT id, title, category, location, reported_by, priority, status, assigned_to, created_at, resolved_at, closed_at FROM maintenance_issues WHERE asset_id = ${Number(req.params.id)} ORDER BY created_at DESC` as any[];
+    res.json(rows.map((r) => ({ id: Number(r.id), title: r.title, category: r.category, location: r.location, reportedBy: r.reported_by, priority: r.priority, status: r.status, assignedTo: r.assigned_to,
+      createdAt: Number(r.created_at), resolvedAt: r.resolved_at ? Number(r.resolved_at) : null, closedAt: r.closed_at ? Number(r.closed_at) : null })));
+  });
   app.get("/api/maintenance-issues", requireModule("maintenance"), async (_req, res) => {
     res.json(await storage.listMaintenanceIssues());
   });
@@ -1425,6 +1449,8 @@ export async function registerRoutes(
       if (!(MAINTENANCE_CATEGORIES as readonly string[]).includes(data.category)) {
         return res.status(400).json({ error: "Invalid maintenance category." });
       }
+      const assetErr = await checkIssueAsset(data.assetId);
+      if (assetErr) return res.status(400).json({ error: assetErr });
       const created = await storage.createMaintenanceIssue(data);
       let smsResult: { status: "sent" | "skipped"; errorMessage?: string } | null = null;
       if (created.reportedPhone) {
@@ -1444,6 +1470,10 @@ export async function registerRoutes(
       const data = insertMaintenanceIssueSchema.partial().parse(req.body);
       if (data.category && !(MAINTENANCE_CATEGORIES as readonly string[]).includes(data.category)) {
         return res.status(400).json({ error: "Invalid maintenance category." });
+      }
+      if (data.assetId !== undefined) {
+        const assetErr = await checkIssueAsset(data.assetId, before.assetId ?? null);
+        if (assetErr) return res.status(400).json({ error: assetErr });
       }
       const currentUser = (req as any).user;
       const closingNow = data.status === "closed" && before.status !== "closed";
@@ -3274,6 +3304,8 @@ export async function registerRoutes(
   });
   app.delete("/api/assets/:id", requireAdmin, async (req, res) => {
     await storage.deleteAsset(Number(req.params.id));
+    // Its maintenance history stays, just no longer attached to an asset.
+    await sql`UPDATE maintenance_issues SET asset_id = NULL WHERE asset_id = ${Number(req.params.id)}`;
     res.status(204).end();
   });
 

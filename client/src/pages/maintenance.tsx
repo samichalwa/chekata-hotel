@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Wrench, AlertTriangle, CheckCircle2, Lock, Filter, MessageCircle, Trash2 } from "lucide-react";
+import { Plus, Wrench, AlertTriangle, CheckCircle2, Lock, Filter, MessageCircle, Trash2, Link2, Pencil } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -21,7 +21,17 @@ import { titleCase } from "@/lib/format";
 import { buildWhatsAppLink, buildMaintenancePdfUrl } from "@/lib/whatsapp";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { MAINTENANCE_CATEGORIES, MAINTENANCE_CATEGORY_LABELS, MAINTENANCE_STATUSES } from "@shared/schema";
-import type { MaintenanceIssue, MaintenanceCategory, MaintenanceStatus, Asset } from "@shared/schema";
+import type { MaintenanceIssue, MaintenanceCategory, MaintenanceStatus } from "@shared/schema";
+
+/** Asset picker list — available to Maintenance users even without the Assets module. */
+export type AssetOption = { id: number; assetNumber: string; name: string; location: string | null; status: string };
+export const ASSET_OPTIONS_KEY = "/api/maintenance/asset-options";
+const assetLabel = (a: AssetOption) => `${a.assetNumber} — ${a.name}${a.location ? ` (${a.location})` : ""}`;
+/** After an issue is attached/detached, refresh both pages' views. */
+export const invalidateMaintenanceLinks = () => {
+  for (const k of ["/api/maintenance-issues", "/api/assets/maintenance-counts"]) queryClient.invalidateQueries({ queryKey: [k] });
+  queryClient.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && /^\/api\/assets\/\d+\/maintenance$/.test(q.queryKey[0] as string) });
+};
 
 const PRIORITIES = ["low", "normal", "high", "urgent"] as const;
 
@@ -50,13 +60,14 @@ const issueFormSchema = z.object({
   assetId: z.string().optional(),
 });
 
-function ReportIssueDialog() {
+export function ReportIssueDialog({ presetAsset, trigger }: { presetAsset?: AssetOption; trigger?: React.ReactNode } = {}) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
-  const { data: assets = [] } = useQuery<Asset[]>({ queryKey: ["/api/assets"], enabled: open });
+  const { data: allAssets = [] } = useQuery<AssetOption[]>({ queryKey: [ASSET_OPTIONS_KEY], enabled: open });
+  const assets = allAssets.filter((a) => a.status !== "disposed" || a.id === presetAsset?.id);
   const form = useForm<z.input<typeof issueFormSchema>, any, z.output<typeof issueFormSchema>>({
     resolver: zodResolver(issueFormSchema),
-    defaultValues: { category: "electrical", title: "", location: "", description: "", reportedBy: "", reportedPhone: "", priority: "normal", assetId: "none" },
+    defaultValues: { category: "electrical", title: "", description: "", reportedBy: "", reportedPhone: "", priority: "normal", assetId: presetAsset ? String(presetAsset.id) : "none", location: presetAsset?.location ?? "" },
   });
 
   const mutation = useMutation({
@@ -67,11 +78,11 @@ function ReportIssueDialog() {
       return res.json();
     },
     onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/maintenance-issues"] });
+      invalidateMaintenanceLinks();
       toast({ title: "Issue reported", description: `Reference #${data.id}` });
       if (data?._sms?.status === "sent") toast({ title: "SMS sent", description: "The reporter was notified by SMS." });
       setOpen(false);
-      form.reset();
+      form.reset({ category: "electrical", title: "", location: presetAsset?.location ?? "", description: "", reportedBy: "", reportedPhone: "", priority: "normal", assetId: presetAsset ? String(presetAsset.id) : "none" });
     },
     onError: (err: Error) => toast({ title: "Something went wrong", description: err.message, variant: "destructive" }),
   });
@@ -79,10 +90,10 @@ function ReportIssueDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" data-testid="button-report-issue"><Plus className="h-4 w-4 mr-1" /> Report issue</Button>
+        {trigger ?? <Button size="sm" data-testid="button-report-issue"><Plus className="h-4 w-4 mr-1" /> Report issue</Button>}
       </DialogTrigger>
       <DialogContent className="max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Report a maintenance issue</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{presetAsset ? `Report an issue — ${presetAsset.name}` : "Report a maintenance issue"}</DialogTitle></DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit((v) => mutation.mutate(v))} className="space-y-4">
             <FormField control={form.control} name="title" render={({ field }) => (
@@ -134,12 +145,12 @@ function ReportIssueDialog() {
             )} />
             <FormField control={form.control} name="assetId" render={({ field }) => (
               <FormItem>
-                <FormLabel>Linked asset (optional)</FormLabel>
+                <FormLabel>Asset (optional)</FormLabel>
                 <Select onValueChange={field.onChange} value={field.value ?? "none"}>
                   <FormControl><SelectTrigger data-testid="select-issue-asset"><SelectValue placeholder="None" /></SelectTrigger></FormControl>
                   <SelectContent>
                     <SelectItem value="none">None</SelectItem>
-                    {assets.map((a) => <SelectItem key={a.id} value={String(a.id)}>{a.assetNumber} — {a.name}</SelectItem>)}
+                    {assets.map((a) => <SelectItem key={a.id} value={String(a.id)}>{assetLabel(a)}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <FormMessage />
@@ -173,14 +184,57 @@ function ReportIssueDialog() {
   );
 }
 
+/** Attach, change or remove the asset on an issue that is already logged. */
+function AttachAssetDialog({ issue, assets }: { issue: MaintenanceIssue; assets: AssetOption[] }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(issue.assetId ? String(issue.assetId) : "none");
+  const choices = assets.filter((a) => a.status !== "disposed" || a.id === issue.assetId);
+  const save = useMutation({
+    mutationFn: async () => (await apiRequest("PATCH", `/api/maintenance-issues/${issue.id}`, { assetId: value === "none" ? null : Number(value) })).json(),
+    onSuccess: () => { invalidateMaintenanceLinks(); setOpen(false); toast({ title: value === "none" ? "Asset removed from the issue" : "Asset attached", description: `Issue #${issue.id}` }); },
+    onError: (err: Error) => toast({ title: "Couldn't update the asset", description: err.message.replace(/^\d+:\s*/, "").replace(/^\{"error":"(.*)"\}$/, "$1"), variant: "destructive" }),
+  });
+  const current = assets.find((a) => a.id === issue.assetId);
+  return (
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (o) setValue(issue.assetId ? String(issue.assetId) : "none"); }}>
+      <DialogTrigger asChild>
+        {current ? (
+          <button type="button" className="inline-flex items-center gap-1 text-left hover:underline underline-offset-2" title="Change the asset" data-testid={`button-attach-asset-${issue.id}`}>
+            <span>{current.name}</span><Pencil className="h-3 w-3 text-muted-foreground shrink-0" />
+          </button>
+        ) : (
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-muted-foreground" data-testid={`button-attach-asset-${issue.id}`}><Link2 className="h-3.5 w-3.5 mr-1" />Attach</Button>
+        )}
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Asset for issue #{issue.id}</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">{issue.title}</p>
+        <Select value={value} onValueChange={setValue}>
+          <SelectTrigger data-testid={`select-attach-asset-${issue.id}`}><SelectValue placeholder="Choose an asset" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">No asset</SelectItem>
+            {choices.map((a) => <SelectItem key={a.id} value={String(a.id)}>{assetLabel(a)}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {!choices.length && <p className="text-xs text-muted-foreground">No assets registered yet. Assets are added in Assets → Register asset.</p>}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button disabled={save.isPending || value === (issue.assetId ? String(issue.assetId) : "none")} onClick={() => save.mutate()} data-testid={`button-save-attach-${issue.id}`}>{save.isPending ? "Saving…" : "Save"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Maintenance() {
   const { toast } = useToast();
   const { data: currentUser } = useCurrentUser();
   const canClose = Boolean(currentUser?.isAdmin || currentUser?.canCloseMaintenanceIssues);
   const { data: issues = [], isLoading } = useQuery<MaintenanceIssue[]>({ queryKey: ["/api/maintenance-issues"] });
-  const { data: assets = [] } = useQuery<Asset[]>({ queryKey: ["/api/assets"] });
-  const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
+  const { data: assets = [] } = useQuery<AssetOption[]>({ queryKey: [ASSET_OPTIONS_KEY] });
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [assetFilter, setAssetFilter] = useState<string>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
 
   const updateIssue = useMutation({
@@ -205,9 +259,11 @@ export default function Maintenance() {
     return issues.filter((i) => {
       if (statusFilter !== "all" && i.status !== statusFilter) return false;
       if (categoryFilter !== "all" && i.category !== categoryFilter) return false;
+      if (assetFilter === "none" && i.assetId) return false;
+      if (assetFilter !== "all" && assetFilter !== "none" && i.assetId !== Number(assetFilter)) return false;
       return true;
     });
-  }, [issues, statusFilter, categoryFilter]);
+  }, [issues, statusFilter, categoryFilter, assetFilter]);
 
   const sorted = [...filtered].sort((a, b) => b.createdAt - a.createdAt);
   const openCount = issues.filter((i) => i.status === "open").length;
@@ -253,8 +309,16 @@ export default function Maintenance() {
               {MAINTENANCE_CATEGORIES.map((c) => <SelectItem key={c} value={c}>{MAINTENANCE_CATEGORY_LABELS[c]}</SelectItem>)}
             </SelectContent>
           </Select>
-          {(statusFilter !== "all" || categoryFilter !== "all") && (
-            <Button variant="ghost" size="sm" onClick={() => { setStatusFilter("all"); setCategoryFilter("all"); }} data-testid="button-clear-issue-filters">
+          <Select value={assetFilter} onValueChange={setAssetFilter}>
+            <SelectTrigger className="w-52" data-testid="select-filter-asset"><SelectValue placeholder="All assets" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All assets</SelectItem>
+              <SelectItem value="none">No asset attached</SelectItem>
+              {assets.filter((a) => issues.some((i) => i.assetId === a.id)).map((a) => <SelectItem key={a.id} value={String(a.id)}>{assetLabel(a)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {(statusFilter !== "all" || categoryFilter !== "all" || assetFilter !== "all") && (
+            <Button variant="ghost" size="sm" onClick={() => { setStatusFilter("all"); setCategoryFilter("all"); setAssetFilter("all"); }} data-testid="button-clear-issue-filters">
               Clear filters
             </Button>
           )}
@@ -294,7 +358,7 @@ export default function Maintenance() {
                       <TableCell className="font-mono text-xs">#{issue.id}</TableCell>
                       <TableCell className="font-medium">{issue.title}</TableCell>
                       <TableCell><Badge variant="outline">{MAINTENANCE_CATEGORY_LABELS[issue.category as MaintenanceCategory] ?? titleCase(issue.category)}</Badge></TableCell>
-                      <TableCell className="text-sm" data-testid={`cell-issue-asset-${issue.id}`}>{issue.assetId ? (assetById.get(issue.assetId)?.name ?? `#${issue.assetId}`) : "—"}</TableCell>
+                      <TableCell className="text-sm" data-testid={`cell-issue-asset-${issue.id}`}><AttachAssetDialog issue={issue} assets={assets} /></TableCell>
                       <TableCell>{issue.location || "—"}</TableCell>
                       <TableCell>{issue.reportedBy}</TableCell>
                       <TableCell><Badge variant={priorityVariant[issue.priority]}>{titleCase(issue.priority)}</Badge></TableCell>
