@@ -15,7 +15,8 @@ export const ORIGINAL_DOC = (alias: string) => sql.unsafe(`(COALESCE(${alias}.pa
 // Shop-rent payments on a lease with a receivable account already post their own journal
 // (Dr bank, Cr receivable) in the Tenants module — never post those receipts a second time.
 // Water meter deposits post their own journal (Dr bank, Cr deposits held) and are never income.
-export const NOT_SELF_POSTED = (alias: string) => sql.unsafe(`NOT (${alias}.category = 'water_deposit' OR ${alias}.category = 'tenancy' AND ${alias}.doc_type = 'receipt' AND EXISTS (
+// Bar & restaurant customer bills (pos_bill) are statements only — the per-order receipts carry the money.
+export const NOT_SELF_POSTED = (alias: string) => sql.unsafe(`NOT (${alias}.category = 'water_deposit' OR ${alias}.category = 'pos_bill' OR ${alias}.category = 'tenancy' AND ${alias}.doc_type = 'receipt' AND EXISTS (
   SELECT 1 FROM journal_entries j WHERE j.source_module = 'tenants' AND j.source_id = ${alias}.source_id AND j.status = 'posted' AND j.description LIKE 'Payment received%'))`);
 
 const nairobiDate = (ms: number) => new Date(ms + 3 * 3600_000).toISOString().slice(0, 10);
@@ -51,13 +52,32 @@ export async function postReceiptToFinance(storage: IStorage, doc: PostableDoc, 
   if (!bank) return { status: "failed", reason: "The chosen cash/bank account no longer exists" };
   const incomeId = cfg.income[doc.category] || cfg.income.default;
   if (!incomeId) return { status: "failed", reason: `No income account chosen for ${doc.category} in Settings` };
+  // A room bill that includes bar/restaurant orders posted to the room: the payment is split so each
+  // part goes to its own income account (set on the document when it was issued).
+  let split: Record<string, number> | null = null;
+  try { const p = JSON.parse(doc.payloadJson || "{}"); if (p.incomeSplit && typeof p.incomeSplit === "object") split = p.incomeSplit; } catch { /* old row */ }
+  const creditLines: { accountId: number; debit: number; credit: number; description: string }[] = [];
+  if (split) {
+    let rest = r.amount;
+    for (const [cat, amt] of Object.entries(split)) {
+      const a = Math.round(Number(amt) * 100) / 100;
+      if (!(a > 0) || cat === doc.category) continue;
+      const acc = cfg.income[cat] || cfg.income.default;
+      if (!acc) return { status: "failed", reason: `No income account chosen for ${cat} in Settings` };
+      const take = Math.min(a, rest);
+      if (take > 0) { creditLines.push({ accountId: Number(acc), debit: 0, credit: take, description: `${cat} income (posted to room)` }); rest = Math.round((rest - take) * 100) / 100; }
+    }
+    if (rest > 0) creditLines.unshift({ accountId: Number(incomeId), debit: 0, credit: rest, description: `${doc.category} income` });
+  } else {
+    creditLines.push({ accountId: Number(incomeId), debit: 0, credit: r.amount, description: `${doc.category} income` });
+  }
   const label = `${doc.docType === "receipt" ? "Receipt" : "Payment on invoice"} #${doc.id} — ${doc.recipientName}${r.reference ? ` (${r.reference})` : ""}`;
   try {
     const entry = await storage.postJournalEntry(
       { entryDate: date, description: label, sourceModule: "receipts", sourceId: doc.id, createdBy: opts.by ?? "System (receipt posting)", createdAt: Date.now() } as any,
       [
         { accountId: bank.glAccountId, debit: r.amount, credit: 0, description: `${label} → ${bank.name}` },
-        { accountId: Number(incomeId), debit: 0, credit: r.amount, description: `${doc.category} income` },
+        ...creditLines,
       ],
     );
     return { status: "posted", entryId: entry.id };

@@ -735,7 +735,7 @@ export default function Accommodation() {
                         <Badge variant={statusVariant[b.status]} className="shrink-0">{titleCase(b.status)}</Badge>
                       </div>
                       <div className="mt-2 flex items-baseline justify-between gap-3 text-sm">
-                        <span className="text-muted-foreground">Total <span className="font-medium text-foreground tabular-nums">{formatKES(b.totalAmount)}</span></span>
+                        <span className="text-muted-foreground">Total <span className="font-medium text-foreground tabular-nums">{formatKES(b.totalAmount)}</span>{(b.posCharges ?? 0) > 0 && <span className="block text-xs" data-testid={`text-pos-charges-${b.id}`}>incl. bar/restaurant {formatKES(b.posCharges)}</span>}</span>
                         {balance > 0
                           ? <span className="font-medium tabular-nums text-amber-600 dark:text-amber-400">{formatKES(balance)} due</span>
                           : <span className="text-muted-foreground">Paid</span>}
@@ -769,7 +769,7 @@ export default function Accommodation() {
                           <TableCell>{room?.name ?? "—"}</TableCell>
                           <TableCell>{formatDate(b.checkIn)}</TableCell>
                           <TableCell>{formatDate(b.checkOut)}</TableCell>
-                          <TableCell className="text-right tabular-nums">{formatKES(b.totalAmount)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{formatKES(b.totalAmount)}{(b.posCharges ?? 0) > 0 && <span className="block text-xs text-muted-foreground" data-testid={`text-pos-charges-row-${b.id}`}>incl. bar/restaurant {formatKES(b.posCharges)}</span>}</TableCell>
                           <TableCell className="text-right tabular-nums">{balance > 0 ? formatKES(balance) : "Paid"}</TableCell>
                           <TableCell><Badge variant={statusVariant[b.status]}>{titleCase(b.status)}</Badge></TableCell>
                           <TableCell className="text-right">

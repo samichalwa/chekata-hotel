@@ -53,9 +53,10 @@ export const accommodationBookings = pgTable("accommodation_bookings", {
   // ---- Public online booking (#/book) ----
   bookingRef: text("booking_ref"), // e.g. RMS-ABC123 — set for online bookings
   source: text("source"), // "online" for bookings made on the public page; null = staff
+  posCharges: real("pos_charges").notNull().default(0), // bar/restaurant orders posted to this room (included in totalAmount)
 });
 
-export const insertAccommodationBookingSchema = createInsertSchema(accommodationBookings).omit({ id: true });
+export const insertAccommodationBookingSchema = createInsertSchema(accommodationBookings).omit({ id: true, posCharges: true });
 export type InsertAccommodationBooking = z.infer<typeof insertAccommodationBookingSchema>;
 export type AccommodationBooking = typeof accommodationBookings.$inferSelect;
 
@@ -197,11 +198,52 @@ export const orders = pgTable("orders", {
   creditedAmount: real("credited_amount").notNull().default(0), // total issued against this order's receipt via credit notes
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   payToken: text("pay_token"), // secret for the guest's "pay this bill by M-Pesa" link (#/pay/<token>); set by the server only
+  // ---- Customer-per-visit billing (additive-only) ----
+  customerId: integer("customer_id"), // pos_customers.id — the visit this order belongs to
+  orderNo: text("order_no"), // B-000001 (bar) / R-000001 (restaurant)
+  servedByStaffId: integer("served_by_staff_id"), // staff.id of the waiter / bartender
+  servedByName: text("served_by_name"),
+  billedBy: text("billed_by"), // logged-in user who entered the order
+  orderedAt: bigint("ordered_at", { mode: "number" }),
+  amountPaid: real("amount_paid").notNull().default(0), // allocated from customer payments (oldest order first)
+  roomBookingId: integer("room_booking_id"), // accommodation booking the order was posted to
 });
 
 export const insertOrderSchema = createInsertSchema(orders).omit({ id: true, payToken: true });
 export type InsertOrder = z.infer<typeof insertOrderSchema>;
 export type Order = typeof orders.$inferSelect;
+
+// ---------- Bar & Restaurant: one customer (visit) → many orders → one bill ----------
+export const posCustomers = pgTable("pos_customers", {
+  id: serial("id").primaryKey(),
+  customerNo: text("customer_no").notNull(), // C-000001 — system number per visit
+  name: text("name"),
+  phone: text("phone"),
+  email: text("email"),
+  tableId: integer("table_id"),
+  tableName: text("table_name"),
+  status: text("status").notNull().default("open"), // open | settled | closed_unpaid | room_posted
+  accommodationBookingId: integer("accommodation_booking_id"),
+  closeReason: text("close_reason"),
+  closedBy: text("closed_by"),
+  closedAt: bigint("closed_at", { mode: "number" }),
+  createdBy: text("created_by"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  payToken: text("pay_token"),
+});
+export type PosCustomer = typeof posCustomers.$inferSelect;
+
+export const posPayments = pgTable("pos_payments", {
+  id: serial("id").primaryKey(),
+  customerId: integer("customer_id").notNull(),
+  amount: real("amount").notNull(),
+  paymentMethod: text("payment_method").notNull(),
+  paymentReference: text("payment_reference"),
+  allocationsJson: text("allocations_json"), // [{ orderId, orderNo, amount }]
+  createdBy: text("created_by"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export type PosPayment = typeof posPayments.$inferSelect;
 
 export const orderItems = pgTable("order_items", {
   id: serial("id").primaryKey(),

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { orderRevenue } from "@shared/pos";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { TrendingUp, TrendingDown, Wallet, Filter, Download, FileSpreadsheet, Users2, Wrench, PiggyBank, Boxes } from "lucide-react";
@@ -69,7 +70,7 @@ export default function Reports() {
   const facilityById = useMemo(() => new Map(facilities.map((f) => [f.id, f])), [facilities]);
 
   const accommodationRevenue = useMemo(
-    () => bookings.filter((b) => b.status !== "cancelled" && inRange(b.checkIn)).reduce((s, b) => s + b.totalAmount - (b.creditedAmount ?? 0), 0),
+    () => bookings.filter((b) => b.status !== "cancelled" && inRange(b.checkIn)).reduce((s, b) => s + b.totalAmount - (b.posCharges ?? 0) - (b.creditedAmount ?? 0), 0),
     [bookings, fromDate, toDate]
   );
 
@@ -87,11 +88,11 @@ export default function Reports() {
   const facilityRevenue = Array.from(facilityRevenueByName.values()).reduce((s, v) => s + v, 0);
 
   const barRevenue = useMemo(
-    () => orders.filter((o) => o.outlet === "bar" && o.status === "paid" && inRange(o.orderDate)).reduce((s, o) => s + o.totalAmount - (o.creditedAmount ?? 0), 0),
+    () => orders.filter((o) => o.outlet === "bar" && inRange(o.orderDate)).reduce((s, o) => s + orderRevenue(o), 0),
     [orders, fromDate, toDate]
   );
   const restaurantRevenue = useMemo(
-    () => orders.filter((o) => o.outlet === "restaurant" && o.status === "paid" && inRange(o.orderDate)).reduce((s, o) => s + o.totalAmount - (o.creditedAmount ?? 0), 0),
+    () => orders.filter((o) => o.outlet === "restaurant" && inRange(o.orderDate)).reduce((s, o) => s + orderRevenue(o), 0),
     [orders, fromDate, toDate]
   );
 

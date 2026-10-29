@@ -61,7 +61,7 @@ const STREAMS: StreamDef[] = [
   {
     key: "accommodation", label: "Accommodation", module: "accommodation", link: "/accommodation",
     query: async ({ from, to }) => {
-      const [r] = await sql`SELECT COALESCE(SUM(total_amount - credited_amount),0) AS amount, COUNT(*)::int AS count
+      const [r] = await sql`SELECT COALESCE(SUM(total_amount - COALESCE(pos_charges, 0) - credited_amount),0) AS amount, COUNT(*)::int AS count
         FROM accommodation_bookings WHERE status <> 'cancelled' AND check_in BETWEEN ${from} AND ${to}`;
       return { amount: n(r.amount), count: n(r.count) };
     },
@@ -86,16 +86,16 @@ const STREAMS: StreamDef[] = [
   {
     key: "bar", label: "Bar", module: "bar-restaurant", link: "/bar-restaurant",
     query: async ({ from, to }) => {
-      const [r] = await sql`SELECT COALESCE(SUM(total_amount - credited_amount),0) AS amount, COUNT(*)::int AS count
-        FROM orders WHERE outlet = 'bar' AND status = 'paid' AND order_date BETWEEN ${from} AND ${to}`;
+      const [r] = await sql`SELECT COALESCE(SUM(CASE WHEN status = 'closed_unpaid' THEN GREATEST(0, amount_paid - credited_amount) ELSE total_amount - credited_amount END),0) AS amount, COUNT(*)::int AS count
+        FROM orders WHERE outlet = 'bar' AND status IN ('paid','room_posted','closed_unpaid') AND order_date BETWEEN ${from} AND ${to}`;
       return { amount: n(r.amount), count: n(r.count) };
     },
   },
   {
     key: "restaurant", label: "Restaurant", module: "bar-restaurant", link: "/bar-restaurant",
     query: async ({ from, to }) => {
-      const [r] = await sql`SELECT COALESCE(SUM(total_amount - credited_amount),0) AS amount, COUNT(*)::int AS count
-        FROM orders WHERE outlet = 'restaurant' AND status = 'paid' AND order_date BETWEEN ${from} AND ${to}`;
+      const [r] = await sql`SELECT COALESCE(SUM(CASE WHEN status = 'closed_unpaid' THEN GREATEST(0, amount_paid - credited_amount) ELSE total_amount - credited_amount END),0) AS amount, COUNT(*)::int AS count
+        FROM orders WHERE outlet = 'restaurant' AND status IN ('paid','room_posted','closed_unpaid') AND order_date BETWEEN ${from} AND ${to}`;
       return { amount: n(r.amount), count: n(r.count) };
     },
   },

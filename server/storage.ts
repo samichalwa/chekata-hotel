@@ -1106,6 +1106,27 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await ensureColumn("settings", "integrity_check_time", "TEXT NOT NULL DEFAULT '02:00'");
   await ensureColumn("settings", "integrity_tax_day", "INTEGER NOT NULL DEFAULT 1");
   await ensureColumn("orders", "pay_token", "TEXT");
+  // ---- Bar & Restaurant: customer per visit, numbered orders, part payments, post to room ----
+  await sql`CREATE TABLE IF NOT EXISTS pos_customers (
+    id SERIAL PRIMARY KEY, customer_no TEXT NOT NULL UNIQUE, name TEXT, phone TEXT, email TEXT,
+    table_id INTEGER, table_name TEXT, status TEXT NOT NULL DEFAULT 'open', accommodation_booking_id INTEGER,
+    close_reason TEXT, closed_by TEXT, closed_at BIGINT, created_by TEXT, created_at BIGINT NOT NULL, pay_token TEXT UNIQUE)`;
+  await sql`CREATE TABLE IF NOT EXISTS pos_payments (
+    id SERIAL PRIMARY KEY, customer_id INTEGER NOT NULL, amount REAL NOT NULL, payment_method TEXT NOT NULL,
+    payment_reference TEXT, allocations_json TEXT, created_by TEXT, created_at BIGINT NOT NULL)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS pos_payments_ref_uq ON pos_payments (UPPER(REPLACE(payment_reference, ' ', ''))) WHERE COALESCE(payment_reference, '') <> ''`;
+  await ensureColumn("orders", "customer_id", "INTEGER");
+  await ensureColumn("orders", "order_no", "TEXT");
+  await ensureColumn("orders", "served_by_staff_id", "INTEGER");
+  await ensureColumn("orders", "served_by_name", "TEXT");
+  await ensureColumn("orders", "billed_by", "TEXT");
+  await ensureColumn("orders", "ordered_at", "BIGINT");
+  await ensureColumn("orders", "amount_paid", "REAL NOT NULL DEFAULT 0");
+  await ensureColumn("orders", "room_booking_id", "INTEGER");
+  await ensureColumn("accommodation_bookings", "pos_charges", "REAL NOT NULL DEFAULT 0");
+  await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('pos_customer', 'C', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
+  await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('bar_order', 'B', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
+  await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('restaurant_order', 'R', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
   await ensureColumn("tables", "pay_token", "TEXT");
   await ensureColumn("settings", "company_legal_name", "TEXT");
   await ensureColumn("settings", "company_registration_number", "TEXT");

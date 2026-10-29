@@ -19,7 +19,7 @@ export const DOC_CATEGORY_TO_TAX_CATEGORY: Record<string, TaxCategory> = {
 
 export interface IssueDocumentInput {
   docType: "invoice" | "receipt" | "credit_note";
-  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy" | "water" | "water_bill" | "water_deposit";
+  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy" | "water" | "water_bill" | "water_deposit" | "pos_bill";
   sourceId: number;
   customDocNumber?: string; // e.g. a module's own sequence number like RENT-000012
   recipientName: string;
@@ -43,11 +43,18 @@ export interface IssueDocumentInput {
   relatedDocumentId?: number;
   relatedDocNumber?: string;
   reason?: string;
+  // Mixed documents: tax worked out per revenue stream (e.g. { bar: 1200, restaurant: 800 }).
+  taxSplit?: Record<string, number>;
+  // Payment split by income stream for Finance posting (room bills with bar/restaurant orders).
+  incomeSplit?: Record<string, number>;
 }
 
 // Generates a PDF, attempts to email it, and always logs the outcome to the
 // documents table so it shows up in the Invoices & Receipts page.
 export async function issueDocument(storage: IStorage, input: IssueDocumentInput): Promise<DocumentRecord> {
+  if (input.category === "accommodation" && (input.docType === "receipt" || input.docType === "invoice")) {
+    try { input = await applyRoomPosCharges(input); } catch (e: any) { console.warn(`[pos→room] booking ${input.sourceId}: ${e?.message ?? e}`); }
+  }
   const doc = await issueDocumentCore(storage, input);
   // Receipts → Finance (Settings). Never blocks or fails the receipt itself.
   if (doc && (input.docType === "receipt" || input.docType === "invoice")) {
@@ -68,7 +75,9 @@ async function issueDocumentCore(storage: IStorage, input: IssueDocumentInput): 
   // were shown at the time it was issued, instead of silently omitting them.
   const allTaxesForSnapshot = await storage.listTaxes();
   const taxCategoryForSnapshot = DOC_CATEGORY_TO_TAX_CATEGORY[input.category];
-  const taxBreakdownForSnapshot = computeInclusiveTaxBreakdown(input.totalAmount, allTaxesForSnapshot, taxCategoryForSnapshot);
+  const taxBreakdownForSnapshot = input.taxSplit
+    ? mergeTaxBreakdowns(Object.entries(input.taxSplit).map(([cat, amt]) => computeInclusiveTaxBreakdown(amt, allTaxesForSnapshot, DOC_CATEGORY_TO_TAX_CATEGORY[cat])))
+    : computeInclusiveTaxBreakdown(input.totalAmount, allTaxesForSnapshot, taxCategoryForSnapshot);
   const inputWithTax: IssueDocumentInput & { taxBreakdown: ReturnType<typeof computeInclusiveTaxBreakdown> } = {
     ...input,
     taxBreakdown: taxBreakdownForSnapshot,
@@ -289,4 +298,63 @@ export async function issueCreditNote(storage: IStorage, params: IssueCreditNote
   });
 
   return { ok: true, document, newCreditedAmount, newBalance };
+}
+
+
+type TaxBreakdown = ReturnType<typeof computeInclusiveTaxBreakdown>;
+function mergeTaxBreakdowns(parts: TaxBreakdown[]): TaxBreakdown {
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const lines = new Map<string, { name: string; ratePercent: number; amount: number }>();
+  let preTaxBase = 0, totalTax = 0;
+  for (const p of parts) {
+    preTaxBase += p.preTaxBase; totalTax += p.totalTax;
+    for (const l of p.lines) {
+      const k = `${l.name}|${l.ratePercent}`;
+      const cur = lines.get(k);
+      if (cur) cur.amount = r2(cur.amount + l.amount); else lines.set(k, { ...l });
+    }
+  }
+  return { ...(parts[0] ?? {}), preTaxBase: r2(preTaxBase), totalTax: r2(totalTax), lines: Array.from(lines.values()) } as TaxBreakdown;
+}
+
+// Bar/restaurant orders posted to a room are part of that booking's bill (pos_charges, included in
+// totalAmount). Payments on the room bill settle the room first, then the posted orders oldest
+// first; the bar/restaurant part is recorded against those orders and posted as bar/restaurant income.
+async function applyRoomPosCharges(input: IssueDocumentInput): Promise<IssueDocumentInput> {
+  const { sql } = await import("./storage");
+  const b = (await sql`SELECT total_amount, pos_charges FROM accommodation_bookings WHERE id = ${input.sourceId}` as any[])[0];
+  const pos = Number(b?.pos_charges ?? 0);
+  if (!(pos > 0)) return input;
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const posted = await sql`SELECT id, order_no, outlet, total_amount, credited_amount, amount_paid FROM orders
+    WHERE room_booking_id = ${input.sourceId} AND status = 'room_posted' ORDER BY COALESCE(ordered_at, created_at), id` as any[];
+  const byOutlet: Record<string, number> = {};
+  for (const o of posted) { const k = o.outlet === "bar" ? "bar" : "restaurant"; byOutlet[k] = r2((byOutlet[k] ?? 0) + Number(o.total_amount) - Number(o.credited_amount ?? 0)); }
+  const roomTotal = r2(Math.max(0, input.totalAmount - pos));
+  // Tax per stream: the posted amount split across bar/restaurant in proportion to their orders.
+  const sumNet = Object.values(byOutlet).reduce((a, b) => a + b, 0);
+  const taxSplit: Record<string, number> = { accommodation: roomTotal };
+  for (const [k, v] of Object.entries(byOutlet)) taxSplit[k] = sumNet > 0 ? r2((pos * v) / sumNet) : 0;
+  const posNote = `Includes bar & restaurant charges ${"KES " + pos.toLocaleString("en-KE", { maximumFractionDigits: 2 })}${posted.length ? ` (${posted.map((o: any) => o.order_no ?? `#${o.id}`).join(", ")})` : ""}.`;
+  const out: IssueDocumentInput = { ...input, taxSplit, notes: input.notes?.includes("Includes bar & restaurant") ? input.notes : [input.notes, posNote].filter(Boolean).join("\n") };
+  if (input.resendOf) return out;
+  const received = input.docType === "receipt" ? Number(input.paymentAmount ?? 0) : Number(input.amountPaid ?? 0);
+  if (!(received > 0)) return out;
+  const after = Number(input.amountPaid ?? 0);
+  const before = Math.max(0, after - received);
+  const roomPart = r2(Math.max(0, Math.min(after, roomTotal) - Math.min(before, roomTotal)));
+  let posPart = r2(received - roomPart);
+  const split: Record<string, number> = { accommodation: roomPart };
+  for (const o of posted) {
+    if (!(posPart > 0)) break;
+    const owed = r2(Number(o.total_amount) - Number(o.credited_amount ?? 0) - Number(o.amount_paid ?? 0));
+    if (!(owed > 0)) continue;
+    const take = Math.min(owed, posPart);
+    const k = o.outlet === "bar" ? "bar" : "restaurant";
+    split[k] = r2((split[k] ?? 0) + take);
+    posPart = r2(posPart - take);
+    await sql`UPDATE orders SET amount_paid = amount_paid + ${take} WHERE id = ${o.id}`;
+  }
+  if (posPart > 0) split.accommodation = r2(split.accommodation + posPart);
+  return { ...out, incomeSplit: split };
 }

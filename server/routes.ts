@@ -1,4 +1,5 @@
 import { registerWaterBillingRoutes } from "./water-billing";
+import { registerPosRoutes, recomputeOrderTotal, getCustomer } from "./pos";
 import { registerWaterDepositRoutes } from "./water-deposits";
 import { registerShpmsPublicRoutes, registerShpmsRoutes, shpmsWriteGuard } from "./shpms";
 import { registerMeterReadingRoutes, saveElectricityReadings } from "./meter-readings";
@@ -542,6 +543,11 @@ export async function registerRoutes(
       const data = insertAccommodationBookingSchema.partial().parse(req.body);
       if (data.numberOfGuests !== undefined && data.numberOfGuests > 2) {
         return res.status(400).json({ error: "A booking cannot have more than 2 guests. Please create a separate booking for additional guests." });
+      }
+      // The edit form sends the room charge only (nights × rate); bar/restaurant orders posted to
+      // the room stay on the bill.
+      if (data.totalAmount !== undefined && (before.posCharges ?? 0) > 0) {
+        data.totalAmount = Math.round((data.totalAmount + (before.posCharges ?? 0)) * 100) / 100;
       }
       // Payment-gated confirmation: block a direct attempt to set status to
       // "confirmed" from a pending_payment booking unless a payment is part
@@ -1277,10 +1283,12 @@ export async function registerRoutes(
   app.get("/api/orders", requireModule("bar-restaurant"), async (_req, res) => {
     res.json(await storage.listOrders());
   });
+  // Orders are created per customer visit (POST /api/pos/customers/:id/orders); this keeps older
+  // integrations working for bills without a customer.
   app.post("/api/orders", requireModule("bar-restaurant"), async (req, res) => {
     try {
       const data = insertOrderSchema.parse(req.body);
-      res.status(201).json(await storage.createOrder(data));
+      res.status(201).json(await storage.createOrder({ ...data, amountPaid: 0 } as any));
     } catch (err) { handleZodError(res, err); }
   });
   app.patch("/api/orders/:id", requireModule("bar-restaurant"), async (req, res) => {
@@ -1289,6 +1297,27 @@ export async function registerRoutes(
       const before = await storage.getOrder(id);
       if (!before) return res.status(404).json({ error: "Order not found" });
       const data = insertOrderSchema.partial().parse(req.body);
+      // Money and numbering are server-controlled.
+      delete (data as any).amountPaid; delete (data as any).totalAmount; delete (data as any).orderNo; delete (data as any).customerId;
+      delete (data as any).roomBookingId; delete (data as any).creditedAmount;
+      if (before.customerId) {
+        // Visit orders: notes / server can change; the only status change allowed here is cancelling an unpaid order.
+        if (data.status && data.status !== before.status) {
+          if (data.status !== "cancelled" || before.status !== "open" || (before.amountPaid ?? 0) > 0) {
+            return res.status(400).json({ error: "Payments, closing and posting to a room are done on the customer's bill." });
+          }
+        }
+        const allowed: any = {};
+        if (data.notes !== undefined) allowed.notes = data.notes;
+        if (data.status === "cancelled") allowed.status = "cancelled";
+        if (data.servedByStaffId !== undefined && data.servedByStaffId) {
+          const st = (await sql`SELECT id, name FROM staff WHERE id = ${data.servedByStaffId} AND status = 'active'` as any[])[0];
+          if (!st) return res.status(400).json({ error: "Choose who is serving from the staff register." });
+          allowed.servedByStaffId = Number(st.id); allowed.servedByName = st.name;
+        }
+        const updated = await storage.updateOrder(id, allowed);
+        return res.json(updated);
+      }
       if (before.status === "open" && data.status && data.status !== "open" && await hasPendingBillPayment(id)) {
         return res.status(409).json({ error: "The guest has paid this bill by M-Pesa and it is waiting in Online bookings & payments. Verify or reject that payment first." });
       }
@@ -1296,17 +1325,19 @@ export async function registerRoutes(
       if (!updated) return res.status(404).json({ error: "Order not found" });
       let docResult: any = null;
       if (updated.status === "paid" && before.status !== "paid") {
+        await sql`UPDATE orders SET amount_paid = total_amount WHERE id = ${id}`;
         docResult = await issueOrderReceipt(storage, updated);
       }
       res.json({ ...updated, _document: docResult });
     } catch (err) { handleZodError(res, err); }
   });
   app.delete("/api/orders/:id", requireModule("bar-restaurant"), async (req, res) => {
+    const o = await storage.getOrder(Number(req.params.id));
+    if (o && (o.status !== "open" || (o.amountPaid ?? 0) > 0)) return res.status(400).json({ error: "Only an unpaid open order can be deleted." });
     await storage.deleteOrder(Number(req.params.id));
     res.status(204).end();
   });
-  // Orders never get a separate "invoice" step — only a receipt once marked paid (see the
-  // PATCH route above) — so a credit note can only be issued once the order has been paid.
+  // A credit note can only be issued against money received on the order (its receipts).
   app.post("/api/orders/:id/credit-note", requireModule("bar-restaurant"), async (req, res) => {
     try {
       const id = Number(req.params.id);
@@ -1314,6 +1345,8 @@ export async function registerRoutes(
       if (!order) return res.status(404).json({ error: "Order not found" });
       const { amount, reason } = z.object({ amount: z.number(), reason: z.string().optional() }).parse(req.body);
       const category = order.outlet === "bar" ? "bar" : "restaurant";
+      const received = order.customerId ? (order.amountPaid ?? 0) : order.totalAmount;
+      if (!(received > 0)) return res.status(400).json({ error: "Nothing has been paid on this order yet, so there is nothing to credit." });
       const result = await issueCreditNote(storage, {
         category,
         sourceId: order.id,
@@ -1322,9 +1355,9 @@ export async function registerRoutes(
         recipientName: order.customerName || "Guest",
         recipientEmail: order.customerEmail,
         currentCreditedAmount: order.creditedAmount ?? 0,
-        totalAmount: order.totalAmount,
-        amountPaid: order.totalAmount,
-        lineItemLabel: `Order #${order.id} \u2014 credit note`,
+        totalAmount: received,
+        amountPaid: received,
+        lineItemLabel: `${order.orderNo ?? `Order #${order.id}`} \u2014 credit note`,
       });
       if (!result.ok) return res.status(400).json({ error: result.error });
       await storage.updateOrder(id, { creditedAmount: result.newCreditedAmount });
@@ -1334,28 +1367,53 @@ export async function registerRoutes(
   });
 
   // ---------- Order Items ----------
-  // Items may only be added/removed while the order is still "open" — once an
-  // order is closed (status becomes "paid") or cancelled its receipt has
-  // already been generated from a fixed snapshot, so the line items are locked.
+  // Items may only be added/removed while the order is open and its customer's bill is open; the
+  // order total always follows its items (worked out here, never sent by the browser).
+  async function orderEditable(orderId: number): Promise<string | null> {
+    const order = await storage.getOrder(orderId);
+    if (!order) return "Order not found";
+    if (order.status !== "open") return "This order is closed — items can no longer be changed.";
+    if (order.customerId) {
+      const c = await getCustomer(order.customerId);
+      if (!c || c.status !== "open") return "This customer's bill is closed — items can no longer be changed.";
+    }
+    return null;
+  }
   app.get("/api/orders/:orderId/items", requireModule("bar-restaurant"), async (req, res) => {
     res.json(await storage.listOrderItems(Number(req.params.orderId)));
   });
   app.post("/api/order-items", requireModule("bar-restaurant"), async (req, res) => {
     try {
       const data = insertOrderItemSchema.parse(req.body);
-      const order = await storage.getOrder(data.orderId);
-      if (!order) return res.status(404).json({ error: "Order not found" });
-      if (order.status !== "open") return res.status(400).json({ error: "This order is closed — items can no longer be added." });
-      res.status(201).json(await storage.createOrderItem(data));
+      const why = await orderEditable(data.orderId);
+      if (why) return res.status(why === "Order not found" ? 404 : 400).json({ error: why });
+      const target = await storage.getOrder(data.orderId);
+      if ((target?.amountPaid ?? 0) > 0) return res.status(400).json({ error: "Part of this order is already paid — start a new order for more items." });
+      if (!((data.quantity ?? 1) > 0)) return res.status(400).json({ error: "Quantity must be at least 1." });
+      if (data.menuItemId) {
+        // Name and price always come from the menu, never from the browser.
+        const m = (await sql`SELECT name, price, category, active FROM menu_items WHERE id = ${data.menuItemId}` as any[])[0];
+        if (!m) return res.status(400).json({ error: "That menu item no longer exists." });
+        if (target?.customerId && m.category !== target.outlet) return res.status(400).json({ error: `That item is not on the ${target.outlet} menu.` });
+        data.itemName = m.name; data.price = Number(m.price);
+      }
+      const item = await storage.createOrderItem({ ...data, subtotal: Math.round(data.price * (data.quantity ?? 1) * 100) / 100 });
+      await recomputeOrderTotal(data.orderId);
+      res.status(201).json(item);
     } catch (err) { handleZodError(res, err); }
   });
   app.delete("/api/order-items/:id", requireModule("bar-restaurant"), async (req, res) => {
     const item = await storage.getOrderItem(Number(req.params.id));
     if (item) {
+      const why = await orderEditable(item.orderId);
+      if (why) return res.status(400).json({ error: why });
       const order = await storage.getOrder(item.orderId);
-      if (order && order.status !== "open") return res.status(400).json({ error: "This order is closed — items can no longer be removed." });
+      if (order && (order.amountPaid ?? 0) > order.totalAmount - item.subtotal + 0.004) {
+        return res.status(400).json({ error: "Part of this order has already been paid — removing this item would take it below what was paid." });
+      }
+      await storage.deleteOrderItem(item.id);
+      await recomputeOrderTotal(item.orderId);
     }
-    await storage.deleteOrderItem(Number(req.params.id));
     res.status(204).end();
   });
 
@@ -3443,6 +3501,7 @@ export async function registerRoutes(
 
   // ---------- Owner / Director briefing + in-app notifications ----------
   registerWaterBillingRoutes(app);
+  registerPosRoutes(app, { checkRecordPayment });
   registerWaterDepositRoutes(app);
   registerMeterReadingRoutes(app);
   registerShpmsRoutes(app);

@@ -12,6 +12,8 @@ import { sendSms } from "./sms";
 import { issueDocument } from "./documents";
 import { issueOrderReceipt } from "./order-receipt";
 import { randomBytes } from "crypto";
+import { customerBill, customerByNo, customerByToken, ensureCustomerToken, getCustomer, hasPendingCustomerPayment, applyCustomerPayment, timeLabel } from "./pos";
+import type { PosCustomer } from "@shared/schema";
 
 // ---------- helpers ----------
 function nairobiNow() {
@@ -190,6 +192,38 @@ async function publicBillList(rows: any[]) {
   return bills;
 }
 const outletName = (o: string) => (o === "bar" ? "Bar" : "Restaurant");
+// Customer visits (C-000001): one bill across bar and restaurant orders.
+async function publicCustomerList(list: PosCustomer[]) {
+  const bills = [];
+  for (const c of list) {
+    const b = await customerBill(c);
+    if (!(b.balance > 0)) continue;
+    const items = b.orders.flatMap((o) => o.items);
+    const summary = items.slice(0, 3).map((i) => `${i.itemName} × ${i.quantity}`).join(", ") + (items.length > 3 ? ` +${items.length - 3} more` : "");
+    const outlets = Array.from(new Set(b.orders.filter((o) => o.net > 0).map((o) => outletName(o.outlet))));
+    bills.push({ token: await ensureCustomerToken(c), ref: c.customerNo, outletName: outlets.join(" & ") || "Bar & Restaurant", total: b.balance,
+      orderDate: new Date(c.createdAt + 3 * 3600_000).toISOString().slice(0, 10), createdAt: c.createdAt, pending: await hasPendingCustomerPayment(c),
+      label: String(c.name ?? "").trim().split(/\s+/)[0] || null, itemsSummary: summary });
+  }
+  return bills;
+}
+async function publicCustomerBill(c: PosCustomer) {
+  const b = await customerBill(c);
+  const pendingRows = await sql`SELECT mpesa_code, amount FROM online_payments WHERE kind = 'bill' AND target_ref = ${c.customerNo} AND status = 'pending' ORDER BY created_at DESC LIMIT 1` as any[];
+  const shown = b.orders.filter((o) => o.net > 0);
+  const outlets = Array.from(new Set(shown.map((o) => outletName(o.outlet))));
+  return {
+    ref: c.customerNo, outlet: "both", outletName: outlets.join(" & ") || "Bar & Restaurant", reference: c.tableName,
+    orderDate: new Date(c.createdAt + 3 * 3600_000).toISOString().slice(0, 10),
+    status: c.status === "open" ? "open" : c.status === "settled" ? "paid" : "closed",
+    total: b.balance, billTotal: b.total, paid: b.paid,
+    items: shown.flatMap((o) => o.items.map((i) => ({ name: i.itemName, quantity: i.quantity, subtotal: i.subtotal }))),
+    orders: shown.map((o) => ({ orderNo: o.orderNo, outletName: outletName(o.outlet), time: timeLabel(o.orderedAt ?? o.createdAt), servedBy: o.servedByName, total: o.net,
+      items: o.items.map((i) => ({ name: i.itemName, quantity: i.quantity, subtotal: i.subtotal })) })),
+    pending: pendingRows[0] ? { mpesaCode: pendingRows[0].mpesa_code, amount: Number(pendingRows[0].amount) } : null,
+    paidReference: null,
+  };
+}
 const billSummary = (o: { outlet: string; reference: string | null }) => `${outletName(o.outlet)} bill${o.reference ? ` — ${o.reference}` : ""}`;
 
 export function registerPublicBookingRoutes(app: Express) {
@@ -198,6 +232,8 @@ export function registerPublicBookingRoutes(app: Express) {
   // Guest view of one bill (no login) — reached only through the secret link staff share.
   app.get("/api/public/bill/:token", rateLimit(60, 15 * 60_000), async (req, res) => {
     try {
+      const cust = await customerByToken(req.params.token);
+      if (cust) return res.json(await publicCustomerBill(cust));
       const o = await orderByToken(req.params.token);
       if (!o) return res.status(404).json({ error: "This payment link is not valid. Please ask our staff for a new one." });
       const items = await storage.listOrderItems(o.id);
@@ -225,9 +261,14 @@ export function registerPublicBookingRoutes(app: Express) {
       const names = (await storage.listTables()).map((t) => t.name.trim().toLowerCase());
       const since = Date.now() - 24 * 3600_000; // today's bills only, so old open bills aren't listed
       const rows = (await sql`SELECT id, outlet, reference, order_date, total_amount, created_at, pay_token, customer_name FROM orders
-        WHERE status = 'open' AND total_amount > 0 AND outlet = ${row.outlet} AND created_at >= ${since}
+        WHERE status = 'open' AND total_amount > 0 AND outlet = ${row.outlet} AND created_at >= ${since} AND customer_id IS NULL
         ORDER BY created_at DESC LIMIT 40` as any[]).filter((r) => !r.reference || !names.includes(String(r.reference).trim().toLowerCase()));
-      res.json({ tableName: outletName(row.outlet), bills: await publicBillList(rows) });
+      const custIds = (await sql`SELECT DISTINCT c.id FROM pos_customers c JOIN orders o ON o.customer_id = c.id
+        WHERE c.status = 'open' AND c.table_id IS NULL AND o.outlet = ${row.outlet} AND c.created_at >= ${since} LIMIT 40` as any[]).map((r) => Number(r.id));
+      const custs = [];
+      for (const id of custIds) { const c = await getCustomer(id); if (c) custs.push(c); }
+      custs.sort((a, b) => b.createdAt - a.createdAt);
+      res.json({ tableName: outletName(row.outlet), bills: [...await publicCustomerList(custs), ...await publicBillList(rows)] });
     } catch (err: any) {
       console.error("[public-bill] outlet lookup failed:", err);
       res.status(500).json({ error: "Couldn't load the bills. Please try again." });
@@ -242,9 +283,12 @@ export function registerPublicBookingRoutes(app: Express) {
       const t = (await sql`SELECT id, name, outlet FROM tables WHERE pay_token = ${tk} LIMIT 1` as any[])[0];
       if (!t) return res.status(404).json({ error: "This QR code is not valid. Please ask our staff." });
       const rows = await sql`SELECT id, outlet, reference, order_date, total_amount, created_at, pay_token, customer_name FROM orders
-        WHERE status = 'open' AND total_amount > 0 AND LOWER(TRIM(COALESCE(reference, ''))) = LOWER(TRIM(${t.name}))
+        WHERE status = 'open' AND total_amount > 0 AND LOWER(TRIM(COALESCE(reference, ''))) = LOWER(TRIM(${t.name})) AND customer_id IS NULL
         ORDER BY created_at DESC LIMIT 20` as any[];
-      const bills = await publicBillList(rows);
+      const custs = (await sql`SELECT id FROM pos_customers WHERE status = 'open' AND table_id = ${t.id} ORDER BY created_at DESC LIMIT 20` as any[]);
+      const list = [];
+      for (const r of custs) { const c = await getCustomer(Number(r.id)); if (c) list.push(c); }
+      const bills = [...await publicCustomerList(list), ...await publicBillList(rows)];
       res.json({ tableName: t.name, bills });
     } catch (err: any) {
       console.error("[public-bill] table lookup failed:", err);
@@ -257,6 +301,29 @@ export function registerPublicBookingRoutes(app: Express) {
     let lockedCode: string | null = null;
     try {
       const b = req.body ?? {};
+      const cust = await customerByToken(b.token);
+      if (cust) {
+        if (cust.status === "settled") return res.status(409).json({ error: "This bill has already been paid. Thank you." });
+        if (cust.status !== "open") return res.status(409).json({ error: "This bill is closed. Please ask our staff." });
+        const bill = await customerBill(cust);
+        if (!(bill.balance > 0)) return res.status(409).json({ error: "This bill has nothing to pay right now. Please ask our staff." });
+        if (await hasPendingCustomerPayment(cust)) return res.status(409).json({ error: "A payment for this bill is already waiting for our staff to confirm." });
+        const guestName = str(b.guestName, 80) || cust.name || "";
+        const guestPhone = cleanPhone(b.guestPhone);
+        if (guestName.length < 2) return res.status(400).json({ error: "Enter your name." });
+        if (!PHONE_RE.test(guestPhone)) return res.status(400).json({ error: "Enter a valid Kenyan mobile number, e.g. 0712 345 678." });
+        const c = await checkMpesa(b.mpesaMessage, bill.balance);
+        if (!c.ok) return res.status(400).json({ error: c.error });
+        lockedCode = c.code;
+        inFlight.add(lockedCode);
+        const summary = `Bill ${cust.customerNo}${cust.tableName ? ` — ${cust.tableName}` : ""}`;
+        await insertPayment({ kind: "bill", targetRef: cust.customerNo, guestName, guestPhone, guestEmail: cust.email ?? null, check: c, amountDue: bill.balance, rawMessage: str(b.mpesaMessage, 1000), summary });
+        if (!cust.phone || !cust.name) await sql`UPDATE pos_customers SET phone = COALESCE(phone, ${guestPhone}), name = COALESCE(name, ${guestName}) WHERE id = ${cust.id}`;
+        void notifyModuleUsers("bar-restaurant", { category: "booking", title: `Bill paid by M-Pesa — verify ${c.code}`, body: `${guestName}: ${summary}, ${kes(c.amount)} of ${kes(bill.balance)}. Verify it under Online bookings & payments.`, linkPath: "/online-bookings" });
+        const s = await storage.getSettings();
+        void sendSms({ source: "Online payment", settings: s, to: guestPhone, message: `Hi ${guestName}, we received your M-Pesa ${c.code} for ${summary} (${kes(c.amount)}). Our staff will confirm it shortly. - ${s.hotelName}` }).catch(() => {});
+        return res.status(201).json({ ref: cust.customerNo, status: "pending", summary, amount: c.amount, mpesaCode: c.code });
+      }
       const o = await orderByToken(b.token);
       if (!o) return res.status(404).json({ error: "This payment link is not valid. Please ask our staff for a new one." });
       if (o.status === "paid") return res.status(409).json({ error: "This bill has already been paid. Thank you." });
@@ -602,7 +669,12 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
         if (!bk || bk.status === "cancelled") return res.status(409).json({ error: "This room booking was cancelled in Accommodation. Reject the payment instead and refund the guest if needed." });
       }
       let billOrder: Awaited<ReturnType<typeof storage.getOrder>> | null = null;
-      if (p.kind === "bill") {
+      const billCustomer = p.kind === "bill" ? await customerByNo(p.targetRef) : undefined;
+      if (billCustomer) {
+        if (billCustomer.status !== "open") return res.status(409).json({ error: "This bill is already closed. Reject the payment instead and refund the guest if needed." });
+        const bal = (await customerBill(billCustomer)).balance;
+        if (p.amount + 0.5 < bal) return res.status(409).json({ error: `The bill is now ${kes(bal)} but the guest paid ${kes(p.amount)}. Collect the balance in Bar & Restaurant, or reject this payment.` });
+      } else if (p.kind === "bill") {
         billOrder = (await storage.getOrder(Number(p.targetRef.replace(/^ORD-/, "")))) ?? null;
         if (!billOrder) return res.status(409).json({ error: "This bill was deleted. Reject the payment instead and refund the guest if needed." });
         if (billOrder.status !== "open") return res.status(409).json({ error: `This bill is already ${billOrder.status}. Reject the payment instead and refund the guest if needed.` });
@@ -633,6 +705,10 @@ export function registerOnlineBookingStaffRoutes(app: Express) {
           docResult = { status: doc.status, id: doc.id, publicToken: doc.publicToken };
         }
         void sendSms({ source: "Online booking", settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your Movie Room booking ${p.targetRef} is CONFIRMED: ${p.summary}. M-Pesa ${p.mpesaCode} received. Enjoy the show! - ${s.hotelName}` }).catch(() => {});
+      } else if (p.kind === "bill" && billCustomer) {
+        const r = await applyCustomerPayment(billCustomer, { amount: p.amount, method: "mpesa", reference: p.mpesaCode, by: who, note: `Paid online — M-Pesa ${p.mpesaCode} verified by ${who}` });
+        docResult = r.receipts[0] ?? null;
+        void sendSms({ source: "Online payment", settings: s, to: p.guestPhone, message: `Hi ${p.guestName}, your payment for ${p.summary} is CONFIRMED. M-Pesa ${p.mpesaCode} received. Thank you! - ${s.hotelName}` }).catch(() => {});
       } else if (p.kind === "bill" && billOrder) {
         const updated = await storage.updateOrder(billOrder.id, {
           status: "paid", paymentMethod: "mpesa", paymentReference: p.mpesaCode,

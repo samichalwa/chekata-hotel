@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { orderRevenue } from "@shared/pos";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
@@ -45,7 +46,7 @@ export default function Dashboard() {
   const facilityById = useMemo(() => new Map(facilities.map((f) => [f.id, f])), [facilities]);
 
   const accommodationRevenue = useMemo(
-    () => bookings.filter((b) => b.status !== "cancelled" && inRange(b.checkIn)).reduce((s, b) => s + b.totalAmount, 0),
+    () => bookings.filter((b) => b.status !== "cancelled" && inRange(b.checkIn)).reduce((s, b) => s + b.totalAmount - (b.posCharges ?? 0), 0),
     [bookings, fromDate, toDate]
   );
   const facilityRevenue = useMemo(
@@ -53,11 +54,11 @@ export default function Dashboard() {
     [facilityBookings, fromDate, toDate]
   );
   const barRevenue = useMemo(
-    () => orders.filter((o) => o.outlet === "bar" && o.status === "paid" && inRange(o.orderDate)).reduce((s, o) => s + o.totalAmount, 0),
+    () => orders.filter((o) => o.outlet === "bar" && inRange(o.orderDate)).reduce((s, o) => s + orderRevenue(o), 0),
     [orders, fromDate, toDate]
   );
   const restaurantRevenue = useMemo(
-    () => orders.filter((o) => o.outlet === "restaurant" && o.status === "paid" && inRange(o.orderDate)).reduce((s, o) => s + o.totalAmount, 0),
+    () => orders.filter((o) => o.outlet === "restaurant" && inRange(o.orderDate)).reduce((s, o) => s + orderRevenue(o), 0),
     [orders, fromDate, toDate]
   );
   const movieShowById = useMemo(() => new Map(movieShows.map((s) => [s.id, s])), [movieShows]);

@@ -51,7 +51,7 @@ export interface DocLineItem {
 export interface DocPayload {
   docType: "invoice" | "receipt" | "credit_note";
   docNumber: number;
-  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy" | "water" | "water_bill" | "water_deposit";
+  category: "accommodation" | "facility" | "bar" | "restaurant" | "movie" | "tenancy" | "water" | "water_bill" | "water_deposit" | "pos_bill";
   customDocNumber?: string; // overrides the auto "INV-00001"/"RCT-00001" label (e.g. a module's own sequence number like RENT-000012)
   recipientName: string;
   recipientEmail?: string | null;
@@ -88,6 +88,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   water: "Water Sales",
   water_bill: "Metered Water Bill",
   water_deposit: "Water Meter Deposit",
+  pos_bill: "Bar & Restaurant",
 };
 
 // Company identifiers printed under the hotel contact lines on invoices, receipts and
@@ -237,11 +238,12 @@ export function buildDocumentPdf(settings: Settings, payload: DocPayload): Promi
       // Long details wrap; the row grows to fit them.
       const detailH = item.detail ? (doc.fontSize(8), doc.heightOfString(item.detail, { width: 330 })) : 0;
       doc.fontSize(10);
-      const rowH = item.detail ? Math.max(30, 18 + detailH + 4) : 20;
+      const labelH = Math.max(12, doc.heightOfString(item.label, { width: 330 }));
+      const rowH = item.detail ? Math.max(30, 6 + labelH + detailH + 4) : Math.max(20, labelH + 8);
       ensureSpace(rowH, true);
       doc.fillColor(dark).text(item.label, 58, y + 5, { width: 330 });
       if (item.detail) {
-        doc.fillColor(muted).fontSize(8).text(item.detail, 58, y + 18, { width: 330 });
+        doc.fillColor(muted).fontSize(8).text(item.detail, 58, y + 6 + labelH, { width: 330 });
         doc.fontSize(10);
       }
       doc.fillColor(dark).text(fmtKES(item.amount), 400, y + 5, { width: 137, align: "right" });

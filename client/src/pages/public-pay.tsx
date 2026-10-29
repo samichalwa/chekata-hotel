@@ -15,6 +15,8 @@ import { type Info, type Result, publicApi, PayInstructions, MpesaPaste, mpesaRe
 interface Bill {
   ref: string; outlet: string; outletName: string; reference: string | null; orderDate: string; status: string; total: number;
   items: { name: string; quantity: number; subtotal: number }[];
+  billTotal?: number; paid?: number;
+  orders?: { orderNo: string; outletName: string; time: string; servedBy: string | null; total: number; items: { name: string; quantity: number; subtotal: number }[] }[];
   pending: { mpesaCode: string; amount: number } | null; paidReference: string | null;
 }
 
@@ -59,13 +61,34 @@ export default function PublicPayPage({ token, onBack }: { token: string; onBack
                   <h1 className="text-lg font-semibold">{bill.outletName} bill{bill.reference ? ` · ${bill.reference}` : ""}</h1>
                   <p className="text-xs text-muted-foreground">Ref {bill.ref} · {bill.orderDate}</p>
                 </div>
-                <p className="text-right"><span className="block text-xs text-muted-foreground">Total</span><span className="text-lg font-semibold tabular-nums" data-testid="text-bill-total">{formatKES(bill.total)}</span></p>
+                <p className="text-right"><span className="block text-xs text-muted-foreground">{(bill.paid ?? 0) > 0 ? "Balance" : "Total"}</span><span className="text-lg font-semibold tabular-nums" data-testid="text-bill-total">{formatKES(bill.total)}</span></p>
               </div>
-              <div className="divide-y divide-border rounded-md border border-border text-sm">
+              {bill.orders && bill.orders.length > 0 ? (
+                <div className="space-y-2">
+                  {bill.orders.map((o) => (
+                    <div key={o.orderNo} className="rounded-md border border-border text-sm" data-testid={`bill-order-${o.orderNo}`}>
+                      <div className="flex justify-between gap-3 border-b border-border bg-muted/40 p-2.5">
+                        <span><span className="block font-medium">{o.orderNo} · {o.outletName}</span><span className="text-xs text-muted-foreground">{o.time}{o.servedBy ? ` · Served by ${o.servedBy}` : ""}</span></span>
+                        <span className="font-medium tabular-nums">{formatKES(o.total)}</span>
+                      </div>
+                      <div className="divide-y divide-border">
+                        {o.items.map((i, k) => <div key={k} className="flex justify-between gap-3 px-2.5 py-2"><span>{i.name} <span className="text-muted-foreground">× {i.quantity}</span></span><span className="tabular-nums">{formatKES(i.subtotal)}</span></div>)}
+                      </div>
+                    </div>
+                  ))}
+                  {(bill.paid ?? 0) > 0 && (
+                    <div className="space-y-1 rounded-md bg-muted p-2.5 text-sm">
+                      <div className="flex justify-between"><span className="text-muted-foreground">Bill total</span><span className="tabular-nums">{formatKES(bill.billTotal ?? 0)}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Already paid</span><span className="tabular-nums">{formatKES(bill.paid ?? 0)}</span></div>
+                      <div className="flex justify-between font-semibold"><span>Balance to pay</span><span className="tabular-nums">{formatKES(bill.total)}</span></div>
+                    </div>
+                  )}
+                </div>
+              ) : <div className="divide-y divide-border rounded-md border border-border text-sm">
                 {bill.items.length === 0 ? <p className="p-3 text-center text-muted-foreground">No items yet.</p> : bill.items.map((i, k) => (
                   <div key={k} className="flex justify-between gap-3 p-2.5" data-testid={`row-bill-item-${k}`}><span>{i.name} <span className="text-muted-foreground">× {i.quantity}</span></span><span className="tabular-nums">{formatKES(i.subtotal)}</span></div>
                 ))}
-              </div>
+              </div>}
             </Card>
 
             {bill.status === "paid" ? (

@@ -26,6 +26,7 @@ const SOURCES: { table: string; label: string }[] = [
   { table: "facility_bookings", label: "a facility/event booking" },
   { table: "movie_seat_bookings", label: "a movie seat booking" },
   { table: "orders", label: "a bar/restaurant order" },
+  { table: "pos_payments", label: "a bar/restaurant bill payment" },
   { table: "payment_vouchers", label: "a payment voucher" },
   { table: "rent_invoice_payments", label: "a rent payment" },
   { table: "shpms_payments", label: "an SHPMS rent payment" },

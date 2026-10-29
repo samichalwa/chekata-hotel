@@ -134,7 +134,7 @@ async function checkDuplicateRefs(): Promise<CheckResult> {
   };
   const T: [string, string, string, string | null][] = [
     ["accommodation_bookings", "Room booking", "id", "booking_ref"], ["facility_bookings", "Event booking", "id", null],
-    ["movie_seat_bookings", "Movie booking", "booking_ref", "booking_ref"], ["orders", "Bar/restaurant order", "id", null],
+    ["movie_seat_bookings", "Movie booking", "booking_ref", "booking_ref"], ["orders", "Bar/restaurant order", "id", null], ["pos_payments", "Bar/restaurant bill payment", "id", null],
     ["payment_vouchers", "Payment voucher", "id", null], ["rent_invoice_payments", "Rent payment", "id", null],
     ["water_sales", "Water sale", "id", null], ["water_bill_payments", "Metered water payment", "id", null], ["table_reservations", "Table reservation", "reservation_ref", "reservation_ref"],
   ];
@@ -147,7 +147,7 @@ async function checkDuplicateRefs(): Promise<CheckResult> {
   for (const [ref, list] of Array.from(uses.entries())) if (list.length > 1) items.push({ label: ref, detail: `Used on ${list.map((x) => x.label).join("; ")}.` });
   for (const o of op) {
     const list = uses.get(normalizeRef(o.mpesa_code)) ?? [];
-    const foreign = list.filter((x) => !(x.refs.includes(String(o.target_ref))) && !(o.kind === "bill" && x.owner.startsWith("orders:")));
+    const foreign = list.filter((x) => !(x.refs.includes(String(o.target_ref))) && !(o.kind === "bill" && (x.owner.startsWith("orders:") || x.owner.startsWith("pos_payments:"))));
     if (foreign.length) items.push({ label: normalizeRef(o.mpesa_code), detail: `Online payment for ${o.target_ref} and also ${foreign.map((x) => x.label).join("; ")}.`, link: "/online-bookings" });
   }
   return result(B, "B5", "No payment reference is used twice", "Each M-Pesa code / bank reference belongs to one booking, order, voucher or sale only.", items, "fail", `${uses.size} payment references checked — no duplicates.`, (k) => `${k} reference${k === 1 ? "" : "s"} used more than once.`);
@@ -295,7 +295,7 @@ export async function runTaxCheck(month: string, ranBy: string): Promise<Integri
   const earlier = await sql`SELECT DISTINCT category, source_id FROM documents WHERE doc_type IN ('invoice','receipt') AND created_at < ${start}` as any[];
   const before = new Set(earlier.map((e) => `${e.category}:${e.source_id}`));
   for (const d of docs) {
-    if (d.doc_type === "credit_note") continue;
+    if (d.doc_type === "credit_note" || d.category === "pos_bill") continue; // pos_bill = statement of orders already counted
     const k = `${d.category}:${d.source_id}`;
     if (before.has(k)) continue;
     const cur = firstSale.get(k);
@@ -334,7 +334,7 @@ export async function runTaxCheck(month: string, ranBy: string): Promise<Integri
   for (const [cat, table] of cmp) {
     const ids = Array.from(firstSale.values()).filter((d) => d.category === cat && d.doc_type === "invoice").map((d) => Number(d.source_id));
     if (!ids.length) continue;
-    const bs = await sql.unsafe(`SELECT id, total_amount, status FROM ${table} WHERE id = ANY($1::int[])`, [ids]) as any[];
+    const bs = await sql.unsafe(`SELECT id, total_amount${table === "accommodation_bookings" ? " - COALESCE(pos_charges, 0)" : ""} AS total_amount, status FROM ${table} WHERE id = ANY($1::int[])`, [ids]) as any[];
     const latestInv = await sql`SELECT DISTINCT ON (source_id) source_id, payload_json FROM documents d WHERE d.doc_type = 'invoice' AND d.category = ${cat} AND d.source_id IN ${sql(ids)} AND ${ORIGINAL_DOC("d")} ORDER BY source_id, id DESC` as any[];
     const inv = new Map(latestInv.map((x) => [Number(x.source_id), n(parse(x.payload_json).totalAmount)]));
     for (const b of bs) {

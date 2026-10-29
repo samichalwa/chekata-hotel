@@ -1,5 +1,7 @@
+import { orderRevenue, isSoldOrder } from "@shared/pos";
 import ExcelJS from "exceljs";
 import type { IStorage } from "./storage";
+import { sql } from "./storage";
 import { computeInclusiveTaxBreakdown } from "./tax";
 import type { TaxCategory } from "@shared/schema";
 import { getCurrentEnvironment } from "./db-context";
@@ -115,7 +117,7 @@ async function buildOverviewSheet(wb: ExcelJS.Workbook, storage: IStorage, hotel
 
   const accommodationRevenue = bookings
     .filter((b) => b.status !== "cancelled" && inRange(b.checkIn, from, to))
-    .reduce((s, b) => s + b.totalAmount - (b.creditedAmount ?? 0), 0);
+    .reduce((s, b) => s + b.totalAmount - (b.posCharges ?? 0) - (b.creditedAmount ?? 0), 0);
 
   const facilityRevenueByName = new Map<string, number>();
   facilityBookings
@@ -127,11 +129,11 @@ async function buildOverviewSheet(wb: ExcelJS.Workbook, storage: IStorage, hotel
   const facilityRevenue = Array.from(facilityRevenueByName.values()).reduce((s, v) => s + v, 0);
 
   const barRevenue = orders
-    .filter((o) => o.outlet === "bar" && o.status === "paid" && inRange(o.orderDate, from, to))
-    .reduce((s, o) => s + o.totalAmount - (o.creditedAmount ?? 0), 0);
+    .filter((o) => o.outlet === "bar" && inRange(o.orderDate, from, to))
+    .reduce((s, o) => s + orderRevenue(o), 0);
   const restaurantRevenue = orders
-    .filter((o) => o.outlet === "restaurant" && o.status === "paid" && inRange(o.orderDate, from, to))
-    .reduce((s, o) => s + o.totalAmount - (o.creditedAmount ?? 0), 0);
+    .filter((o) => o.outlet === "restaurant" && inRange(o.orderDate, from, to))
+    .reduce((s, o) => s + orderRevenue(o), 0);
 
   const movieRevenue = movieSeatBookings
     .filter((b) => b.status !== "cancelled" && inRange(movieShowById.get(b.showId)?.showDate ?? "", from, to))
@@ -349,49 +351,53 @@ async function buildFacilitiesSheet(wb: ExcelJS.Workbook, storage: IStorage, hot
 
 async function buildBarRestaurantSheets(wb: ExcelJS.Workbook, storage: IStorage, hotelName: string, from?: string, to?: string) {
   const ordersWs = wb.addWorksheet("Bar & Restaurant Orders");
-  const cols = ["Order ID", "Outlet", "Reference", "Customer", "Email", "Date", "Payment method", "Payment reference", "Status", "Total (KES)", "Credited (KES)", "Net (KES)"];
-  addTitleBlock(ordersWs, hotelName, "Bar & Restaurant Orders", from, to, "J");
+  const cols = ["Order No", "Customer No", "Outlet", "Table / ref", "Customer", "Phone", "Email", "Date", "Order time", "Served by", "Billed by",
+    "Payment method", "Status", "Total (KES)", "Paid (KES)", "Credited (KES)", "Unpaid closed (KES)", "Sales (KES)"];
+  addTitleBlock(ordersWs, hotelName, "Bar & Restaurant Orders", from, to, "R");
 
-  const [orders, allItems] = await Promise.all([storage.listOrders(), Promise.resolve<null>(null)]);
-  const filtered = orders.filter((o) => inRange(o.orderDate, from, to)).sort((a, b) => a.orderDate.localeCompare(b.orderDate));
+  const [orders, custRows] = await Promise.all([storage.listOrders(), sql`SELECT id, customer_no FROM pos_customers` as Promise<any[]>]);
+  const custNo = new Map<number, string>((custRows as any[]).map((r) => [Number(r.id), r.customer_no]));
+  const filtered = orders.filter((o) => inRange(o.orderDate, from, to)).sort((a, b) => (a.orderedAt ?? a.createdAt) - (b.orderedAt ?? b.createdAt));
+  const tm = (ms: number) => new Date(ms).toLocaleString("en-GB", { timeZone: "Africa/Nairobi", hour: "2-digit", minute: "2-digit" });
+  const statusLabel: Record<string, string> = { open: "Open", paid: "Paid", cancelled: "Cancelled", closed_unpaid: "Closed unpaid", room_posted: "Posted to room" };
 
   const header = ordersWs.addRow(cols);
   styleHeaderRow(header);
 
-  let barTotal = 0, restaurantTotal = 0, grandTotal = 0;
+  let barTotal = 0, restaurantTotal = 0, grandTotal = 0, unpaidTotal = 0;
   filtered.forEach((o) => {
     const credited = o.creditedAmount ?? 0;
-    const net = o.totalAmount - credited;
-    if (o.status === "paid") {
-      if (o.outlet === "bar") barTotal += net; else if (o.outlet === "restaurant") restaurantTotal += net;
-      grandTotal += net;
-    }
+    const sales = orderRevenue(o);
+    const unpaid = o.status === "closed_unpaid" ? Math.max(0, o.totalAmount - credited - (o.amountPaid ?? 0)) : 0;
+    if (o.outlet === "bar") barTotal += sales; else if (o.outlet === "restaurant") restaurantTotal += sales;
+    grandTotal += sales; unpaidTotal += unpaid;
     const row = ordersWs.addRow([
-      o.id, titleCase(o.outlet), o.reference ?? "—", o.customerName ?? "—", o.customerEmail ?? "",
-      o.orderDate, o.paymentMethod ? titleCase(o.paymentMethod) : "—", o.paymentReference ?? "—", titleCase(o.status), o.totalAmount, credited, net,
+      o.orderNo ?? `#${o.id}`, o.customerId ? custNo.get(o.customerId) ?? "" : "", titleCase(o.outlet), o.reference ?? "—", o.customerName ?? "—", o.customerPhone ?? "", o.customerEmail ?? "",
+      o.orderDate, tm(o.orderedAt ?? o.createdAt), o.servedByName ?? "", o.billedBy ?? "",
+      o.paymentMethod ? titleCase(o.paymentMethod) : "—", statusLabel[o.status] ?? titleCase(o.status), o.totalAmount, o.amountPaid ?? 0, credited, unpaid, sales,
     ]);
-    [10, 11, 12].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
+    [14, 15, 16, 17, 18].forEach((c) => { row.getCell(c).numFmt = KES_FMT; row.getCell(c).alignment = { horizontal: "right" }; });
     if (o.status === "cancelled") row.eachCell((c) => { c.font = { color: { argb: MUTED }, strike: true }; });
   });
 
   if (filtered.length === 0) {
     ordersWs.addRow(["No bar/restaurant orders in this period."]);
   } else {
-    const totalsRow = ordersWs.addRow(["", "", "", "", "", "", "", "", "Paid total (net)", "", "", grandTotal]);
-    totalsRow.getCell(12).numFmt = KES_FMT;
-    totalsRow.getCell(12).alignment = { horizontal: "right" };
+    const pad = Array(16).fill("");
+    const totalsRow = ordersWs.addRow([...pad.slice(0, 12), "Sales total", "", "", "", unpaidTotal, grandTotal]);
+    [17, 18].forEach((c) => { totalsRow.getCell(c).numFmt = KES_FMT; totalsRow.getCell(c).alignment = { horizontal: "right" }; });
     styleTotalsRow(totalsRow);
-    ordersWs.addRow(["", "", "", "", "", "", "", "", "Bar (paid, net)", "", "", barTotal]).getCell(12).numFmt = KES_FMT;
-    ordersWs.addRow(["", "", "", "", "", "", "", "", "Restaurant (paid, net)", "", "", restaurantTotal]).getCell(12).numFmt = KES_FMT;
+    ordersWs.addRow([...pad.slice(0, 12), "Bar sales", "", "", "", "", barTotal]).getCell(18).numFmt = KES_FMT;
+    ordersWs.addRow([...pad.slice(0, 12), "Restaurant sales", "", "", "", "", restaurantTotal]).getCell(18).numFmt = KES_FMT;
   }
 
   ordersWs.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: cols.length } };
   ordersWs.views = [{ state: "frozen", ySplit: 4 }];
-  autosizeColumns(ordersWs, [8, 12, 14, 18, 22, 11, 14, 18, 10, 12, 12, 12]);
+  autosizeColumns(ordersWs, [11, 11, 11, 12, 18, 13, 20, 11, 9, 16, 16, 13, 13, 12, 12, 12, 13, 12]);
 
   // Line-item detail — useful for menu performance analysis
   const itemsWs = wb.addWorksheet("Order Items Detail");
-  const itemCols = ["Order ID", "Outlet", "Date", "Item", "Unit price (KES)", "Qty", "Subtotal (KES)"];
+  const itemCols = ["Order No", "Outlet", "Date", "Item", "Unit price (KES)", "Qty", "Subtotal (KES)"];
   addTitleBlock(itemsWs, hotelName, "Order Items Detail", from, to, "G");
   const itemHeader = itemsWs.addRow(itemCols);
   styleHeaderRow(itemHeader);
@@ -403,7 +409,7 @@ async function buildBarRestaurantSheets(wb: ExcelJS.Workbook, storage: IStorage,
     const items = await storage.listOrderItems(o.id);
     for (const it of items) {
       itemRowCount++;
-      const row = itemsWs.addRow([o.id, titleCase(o.outlet), o.orderDate, it.itemName, it.price, it.quantity, it.subtotal]);
+      const row = itemsWs.addRow([o.orderNo ?? `#${o.id}`, titleCase(o.outlet), o.orderDate, it.itemName, it.price, it.quantity, it.subtotal]);
       row.getCell(5).numFmt = KES_FMT; row.getCell(5).alignment = { horizontal: "right" };
       row.getCell(7).numFmt = KES_FMT; row.getCell(7).alignment = { horizontal: "right" };
       const agg = itemTotalsByName.get(it.itemName) ?? { qty: 0, subtotal: 0 };
@@ -623,9 +629,9 @@ async function buildTaxesSheet(wb: ExcelJS.Workbook, storage: IStorage, hotelNam
 
   // Credit notes reduce the revenue actually retained (and therefore the tax collected on it),
   // so each category's taxed base nets out any creditedAmount before apply() computes the split.
-  bookings.filter((b) => b.status !== "cancelled" && inRange(b.checkIn, from, to)).forEach((b) => apply(b.totalAmount - (b.creditedAmount ?? 0), "accommodation"));
+  bookings.filter((b) => b.status !== "cancelled" && inRange(b.checkIn, from, to)).forEach((b) => apply(b.totalAmount - (b.posCharges ?? 0) - (b.creditedAmount ?? 0), "accommodation"));
   facilityBookings.filter((b) => b.status !== "cancelled" && inRange(b.eventDate, from, to)).forEach((b) => apply(b.totalAmount - (b.creditedAmount ?? 0), "facilities"));
-  orders.filter((o) => o.status === "paid" && inRange(o.orderDate, from, to)).forEach((o) => apply(o.totalAmount - (o.creditedAmount ?? 0), o.outlet === "bar" ? "bar" : "restaurant"));
+  orders.filter((o) => isSoldOrder(o) && inRange(o.orderDate, from, to)).forEach((o) => apply(orderRevenue(o), o.outlet === "bar" ? "bar" : "restaurant"));
   // Movie room bookings share the "facilities" tax mapping, matching invoice/receipt generation (see DOC_CATEGORY_TO_TAX_CATEGORY in documents.ts).
   movieSeatBookings
     .filter((b) => b.status !== "cancelled" && b.amountPaid > 0 && inRange(movieShowById.get(b.showId)?.showDate ?? "", from, to))
