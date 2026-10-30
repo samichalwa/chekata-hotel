@@ -3,7 +3,7 @@
 // full payment, manual close with a reason, and posting to an accommodation guest's room bill.
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Plus, UtensilsCrossed, Wine, Receipt, X, MessageCircle, Info, Undo2, Users, Printer, BedDouble, Lock, QrCode as QrIcon, Clock, ExternalLink, Copy } from "lucide-react";
+import { Plus, UtensilsCrossed, Wine, Receipt, X, MessageCircle, Undo2, Users, Printer, BedDouble, Lock, QrCode as QrIcon, Clock, ExternalLink, Copy } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -25,9 +25,10 @@ import { PayQrCodesDialog } from "@/components/pay-qr";
 import { QrCode, printQrCard } from "@/components/qr-code";
 import { RecordPaymentButton, usePendingOnlinePayments } from "@/components/record-payment-button";
 import { ScanTableButton } from "@/components/scan-table-qr";
+import { MenuBuilder, ChoiceDialog, useMenuDishes } from "@/components/menu-builder";
 import { orderRevenue } from "@shared/pos";
 import { Link } from "wouter";
-import type { MenuItem, Order, OrderItem, PosCustomer, TableRow as TableEntity } from "@shared/schema";
+import type { MenuDish, Order, OrderItem, PosCustomer, TableRow as TableEntity } from "@shared/schema";
 
 const errMsg = (e: any) => { const m = String(e?.message ?? e); const body = m.replace(/^\d+:\s*/, ""); try { return JSON.parse(body).error ?? body; } catch { return body; } };
 const NO_TABLE = "__none__";
@@ -48,7 +49,7 @@ const CUSTOMER_STATUS: Record<string, { label: string; variant: "default" | "sec
 const ORDER_STATUS: Record<string, string> = { open: "Open", paid: "Paid", cancelled: "Cancelled", closed_unpaid: "Closed unpaid", room_posted: "Posted to room" };
 
 function invalidatePos() {
-  for (const k of [["/api/pos/customers"], ["/api/orders"], ["/api/documents"], ["/api/online-payments"], ["/api/accommodation-bookings"], ["/api/director/summary"]]) queryClient.invalidateQueries({ queryKey: k });
+  for (const k of [["/api/pos/customers"], ["/api/orders"], ["/api/kitchen/tickets"], ["/api/documents"], ["/api/online-payments"], ["/api/accommodation-bookings"], ["/api/director/summary"]]) queryClient.invalidateQueries({ queryKey: k });
 }
 
 // ---------- Table picker: scan the table QR, or choose from the list ----------
@@ -107,21 +108,27 @@ function NewCustomerDialog({ open, onOpenChange, onCreated }: { open: boolean; o
 }
 
 // ---------- One order inside the customer's bill ----------
-function OrderBlock({ order, menuItems, editable }: { order: BillOrder; menuItems: MenuItem[]; editable: boolean }) {
+const KITCHEN_LABEL: Record<string, string> = { new: "Sent to kitchen", preparing: "Preparing", ready: "Ready", served: "Served" };
+
+function OrderBlock({ order, dishes, editable }: { order: BillOrder; dishes: MenuDish[]; editable: boolean }) {
   const { toast } = useToast();
   const [menuId, setMenuId] = useState("");
   const [qty, setQty] = useState(1);
+  const [choosing, setChoosing] = useState<MenuDish | null>(null);
   const canEdit = editable && order.status === "open" && (order.amountPaid ?? 0) <= 0;
-  const menu = menuItems.filter((m) => m.category === order.outlet && m.active === 1).sort((a, b) => a.name.localeCompare(b.name));
+  const menu = dishes.filter((m) => m.category === order.outlet && m.active === 1).sort((a, b) => (a.section ?? "").localeCompare(b.section ?? "") || a.name.localeCompare(b.name));
   const add = useMutation({
-    mutationFn: async () => {
-      const m = menuItems.find((x) => x.id === Number(menuId));
-      if (!m) throw new Error("Choose an item first");
-      await apiRequest("POST", "/api/order-items", { orderId: order.id, menuItemId: m.id, itemName: m.name, price: m.price, quantity: qty, subtotal: m.price * qty });
+    mutationFn: async (v: { dish: MenuDish; choices?: { groupId: number; optionIds: number[] }[]; notes?: string }) => {
+      await apiRequest("POST", "/api/order-items", { orderId: order.id, menuItemId: v.dish.id, itemName: v.dish.name, price: v.dish.price, quantity: qty, subtotal: v.dish.price * qty, choices: v.choices, notes: v.notes || null });
     },
-    onSuccess: () => { setMenuId(""); setQty(1); invalidatePos(); },
+    onSuccess: () => { setMenuId(""); setQty(1); setChoosing(null); invalidatePos(); },
     onError: (e) => toast({ title: "Couldn't add the item", description: errMsg(e), variant: "destructive" }),
   });
+  const startAdd = () => {
+    const d = dishes.find((x) => x.id === Number(menuId));
+    if (!d) return;
+    if (d.groups.length > 0 || d.sendToKitchen === 1) setChoosing(d); else add.mutate({ dish: d });
+  };
   const remove = useMutation({
     mutationFn: async (id: number) => apiRequest("DELETE", `/api/order-items/${id}`),
     onSuccess: () => invalidatePos(),
@@ -155,10 +162,18 @@ function OrderBlock({ order, menuItems, editable }: { order: BillOrder; menuItem
       <div className="divide-y divide-border text-sm">
         {order.items.length === 0 ? <p className="p-2.5 text-center text-muted-foreground">No items yet.</p> : order.items.map((it) => (
           <div key={it.id} className="flex items-center justify-between gap-2 px-2.5 py-2" data-testid={`row-order-item-${it.id}`}>
-            <span className="min-w-0">{it.itemName} <span className="text-muted-foreground">× {it.quantity}</span></span>
+            <span className="min-w-0">
+              {it.itemName} <span className="text-muted-foreground">× {it.quantity}</span>
+              {(it.kitchenStatus || it.notes) && (
+                <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  {it.kitchenStatus && <Badge variant={it.kitchenStatus === "ready" ? "default" : "outline"} className="px-1.5 py-0 text-[11px]" data-testid={`badge-kitchen-${it.id}`}>{KITCHEN_LABEL[it.kitchenStatus] ?? it.kitchenStatus}</Badge>}
+                  {it.notes && <span>Note: {it.notes}</span>}
+                </span>
+              )}
+            </span>
             <span className="flex items-center gap-1">
               <span className="tabular-nums">{formatKES(it.subtotal)}</span>
-              {canEdit && <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => remove.mutate(it.id)} title="Remove" data-testid={`button-remove-order-item-${it.id}`}><X className="h-3.5 w-3.5" /></Button>}
+              {canEdit && (!it.kitchenStatus || it.kitchenStatus === "new") && <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => remove.mutate(it.id)} title="Remove" data-testid={`button-remove-order-item-${it.id}`}><X className="h-3.5 w-3.5" /></Button>}
             </span>
           </div>
         ))}
@@ -168,10 +183,11 @@ function OrderBlock({ order, menuItems, editable }: { order: BillOrder; menuItem
           <div className="flex items-center gap-2 border-t border-border p-2.5">
             <Select value={menuId} onValueChange={setMenuId}>
               <SelectTrigger className="min-w-0 flex-1" data-testid={`select-add-item-${order.id}`}><SelectValue placeholder="Add an item" /></SelectTrigger>
-              <SelectContent>{menu.map((m) => <SelectItem key={m.id} value={String(m.id)}>{m.name} — {formatKES(m.price)}</SelectItem>)}</SelectContent>
+              <SelectContent>{menu.map((m) => <SelectItem key={m.id} value={String(m.id)}>{m.section ? `${m.section} · ` : ""}{m.name} — {formatKES(m.price)}{m.groups.length ? " (choices)" : ""}</SelectItem>)}</SelectContent>
             </Select>
             <Input type="number" min={1} value={qty} onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))} className="w-16" aria-label="Quantity" data-testid={`input-item-qty-${order.id}`} />
-            <Button size="icon" onClick={() => add.mutate()} disabled={!menuId || add.isPending} title="Add item" data-testid={`button-add-item-${order.id}`}><Plus className="h-4 w-4" /></Button>
+            <Button size="icon" onClick={startAdd} disabled={!menuId || add.isPending} title="Add item" data-testid={`button-add-item-${order.id}`}><Plus className="h-4 w-4" /></Button>
+            {choosing && <ChoiceDialog dish={choosing} pending={add.isPending} onCancel={() => setChoosing(null)} onConfirm={(choices, notes) => add.mutate({ dish: choosing, choices, notes })} />}
           </div>
         )
       )}
@@ -187,8 +203,9 @@ function OrderBlock({ order, menuItems, editable }: { order: BillOrder; menuItem
 }
 
 // ---------- The customer's bill ----------
-function CustomerDialog({ customerId, onClose, menuItems }: { customerId: number; onClose: () => void; menuItems: MenuItem[] }) {
+function CustomerDialog({ customerId, onClose }: { customerId: number; onClose: () => void }) {
   const { toast } = useToast();
+  const { data: dishes = [] } = useMenuDishes();
   const { data: me } = useCurrentUser();
   const { data: c } = useQuery<CustomerView>({ queryKey: ["/api/pos/customers", customerId], refetchInterval: 30000 });
   const { data: servers = [] } = useQuery<Server[]>({ queryKey: ["/api/pos/servers"] });
@@ -282,7 +299,7 @@ function CustomerDialog({ customerId, onClose, menuItems }: { customerId: number
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold">Orders</h3>
                 {c.orders.length === 0 && <p className="rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground">No orders yet. Start a bar or restaurant order below.</p>}
-                {c.orders.map((o) => <OrderBlock key={o.id} order={o} menuItems={menuItems} editable={isOpen} />)}
+                {c.orders.map((o) => <OrderBlock key={o.id} order={o} dishes={dishes} editable={isOpen} />)}
                 {isOpen && (
                   <div className="flex flex-col gap-2 rounded-md border border-border p-2.5 sm:flex-row sm:items-center">
                     <Select value={outlet} onValueChange={setOutlet}>
@@ -449,7 +466,6 @@ function CustomerCard({ c, onOpen }: { c: CustomerView; onOpen: () => void }) {
 }
 
 export default function BarRestaurant() {
-  const { data: menuItems = [], isLoading: menuLoading } = useQuery<MenuItem[]>({ queryKey: ["/api/menu-items"] });
   const { data: orders = [] } = useQuery<Order[]>({ queryKey: ["/api/orders"] });
   const { data: open = [], isLoading: openLoading } = useQuery<CustomerView[]>({ queryKey: ["/api/pos/customers"], refetchInterval: 30000 });
   const [closedDays, setClosedDays] = useState("7");
@@ -468,8 +484,6 @@ export default function BarRestaurant() {
   const match = (c: CustomerView) => !q || [c.customerNo, c.name, c.phone, c.tableName, ...c.orders.map((o) => o.orderNo)].some((v) => String(v ?? "").toLowerCase().includes(q));
   const openShown = useMemo(() => open.filter(match), [open, q]);
   const closedShown = useMemo(() => closed.filter(match), [closed, q]);
-  const barMenu = menuItems.filter((m) => m.category === "bar").sort((a, b) => a.name.localeCompare(b.name));
-  const restaurantMenu = menuItems.filter((m) => m.category === "restaurant").sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
@@ -547,43 +561,13 @@ export default function BarRestaurant() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="menu" className="mt-4 space-y-6">
-          <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
-            <Info className="h-4 w-4 shrink-0" />
-            Menu items are managed on the <Link href="/lists" className="font-medium text-foreground underline underline-offset-2">Lists</Link> page. This view is read-only.
-          </div>
-          {([{ key: "bar", label: "Bar menu", list: barMenu, icon: Wine }, { key: "restaurant", label: "Restaurant menu", list: restaurantMenu, icon: UtensilsCrossed }] as const).map(({ key, label, list, icon: Icon }) => (
-            <Card key={key}>
-              <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
-                <h2 className="text-lg font-semibold flex items-center gap-2"><Icon className="h-4 w-4" /> {label}</h2>
-              </div>
-              {menuLoading ? (
-                <div className="p-6 text-sm text-muted-foreground">Loading menu…</div>
-              ) : list.length === 0 ? (
-                <div className="p-8 text-center text-sm text-muted-foreground">No items yet. Add some from the Lists page.</div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader><TableRow><TableHead>Item</TableHead><TableHead className="text-right">Price</TableHead><TableHead>Availability</TableHead></TableRow></TableHeader>
-                    <TableBody>
-                      {list.map((m) => (
-                        <TableRow key={m.id} data-testid={`row-menu-item-${m.id}`}>
-                          <TableCell className="font-medium">{m.name}</TableCell>
-                          <TableCell className="text-right tabular-nums">{formatKES(m.price)}</TableCell>
-                          <TableCell><Badge variant={m.active ? "secondary" : "outline"}>{m.active ? "On menu" : "Hidden"}</Badge></TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-            </Card>
-          ))}
+        <TabsContent value="menu" className="mt-4">
+          <MenuBuilder />
         </TabsContent>
       </Tabs>
 
       <NewCustomerDialog open={newOpen} onOpenChange={setNewOpen} onCreated={(id) => setOpenId(id)} />
-      {openId != null && <CustomerDialog customerId={openId} menuItems={menuItems} onClose={() => setOpenId(null)} />}
+      {openId != null && <CustomerDialog customerId={openId} onClose={() => setOpenId(null)} />}
     </div>
   );
 }

@@ -175,7 +175,46 @@ export const menuItems = pgTable("menu_items", {
   category: text("category").notNull(), // bar | restaurant
   price: real("price").notNull(),
   active: integer("active").notNull().default(1),
+  section: text("section"), // chef-defined menu section, e.g. Breakfast, Mains, Hot drinks
+  description: text("description"),
+  sendToKitchen: integer("send_to_kitchen").notNull().default(0), // 1 = shows on the kitchen screen when ordered
+  sortOrder: integer("sort_order").notNull().default(0),
 });
+
+// What a dish is made of. A component is either a plain item (rice, chicken stew) or another
+// dish from the menu (a combo, e.g. English breakfast includes a black coffee).
+export const menuComponents = pgTable("menu_components", {
+  id: serial("id").primaryKey(),
+  menuItemId: integer("menu_item_id").notNull(),
+  name: text("name").notNull(),
+  includedMenuItemId: integer("included_menu_item_id"),
+  portion: text("portion"), // e.g. 1 plate, 2 pcs, 250 ml
+  preparation: text("preparation").notNull().default("cooked"), // cooked | uncooked
+  serving: text("serving").notNull().default("separate"), // mixed | separate
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+export type MenuComponent = typeof menuComponents.$inferSelect;
+
+// Chef-defined choices the guest makes when ordering (e.g. Eggs: fried / scrambled). Dishes without
+// groups are served exactly as defined.
+export const menuOptionGroups = pgTable("menu_option_groups", {
+  id: serial("id").primaryKey(),
+  menuItemId: integer("menu_item_id").notNull(),
+  name: text("name").notNull(),
+  required: integer("required").notNull().default(1),
+  maxChoices: integer("max_choices").notNull().default(1),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+export type MenuOptionGroup = typeof menuOptionGroups.$inferSelect;
+export const menuOptions = pgTable("menu_options", {
+  id: serial("id").primaryKey(),
+  groupId: integer("group_id").notNull(),
+  name: text("name").notNull(),
+  extraPrice: real("extra_price").notNull().default(0),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+export type MenuOption = typeof menuOptions.$inferSelect;
+export type MenuDish = MenuItem & { components: MenuComponent[]; groups: (MenuOptionGroup & { options: MenuOption[] })[] };
 
 export const insertMenuItemSchema = createInsertSchema(menuItems).omit({ id: true });
 export type InsertMenuItem = z.infer<typeof insertMenuItemSchema>;
@@ -253,9 +292,16 @@ export const orderItems = pgTable("order_items", {
   price: real("price").notNull(),
   quantity: integer("quantity").notNull().default(1),
   subtotal: real("subtotal").notNull(),
+  choicesJson: text("choices_json"), // [{group, options:[name]}] chosen when ordering
+  componentsText: text("components_text"), // snapshot of the dish's components, for the kitchen
+  notes: text("notes"), // special request, e.g. no onions
+  kitchenStatus: text("kitchen_status"), // null (not a kitchen item) | new | preparing | ready | served
+  kitchenSentAt: bigint("kitchen_sent_at", { mode: "number" }),
+  kitchenReadyAt: bigint("kitchen_ready_at", { mode: "number" }),
+  kitchenServedAt: bigint("kitchen_served_at", { mode: "number" }),
 });
 
-export const insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: true });
+export const insertOrderItemSchema = createInsertSchema(orderItems).omit({ id: true, kitchenStatus: true, kitchenSentAt: true, kitchenReadyAt: true, kitchenServedAt: true, componentsText: true, choicesJson: true });
 export type InsertOrderItem = z.infer<typeof insertOrderItemSchema>;
 export type OrderItem = typeof orderItems.$inferSelect;
 
@@ -662,6 +708,7 @@ export const MODULE_KEYS = [
   "hr",
   "integrity",
   "meter-readings",
+  "kitchen",
 ] as const;
 export type ModuleKey = typeof MODULE_KEYS[number];
 
@@ -694,6 +741,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   hr: "HR: Temporary Labor Requisitions",
   integrity: "Integrity Checks",
   "meter-readings": "Meter Readings",
+  kitchen: "Kitchen Screen",
 };
 
 // Cosmetic grouping used both by the Settings > Users module-access checkboxes
@@ -703,7 +751,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
 // group here — all 25 operational modules, covered exactly once.
 export const MODULE_CATEGORY_GROUPS: { label: string; keys: ModuleKey[] }[] = [
   { label: "Operations", keys: ["dashboard", "accommodation", "maintenance", "meter-readings"] },
-  { label: "Facilities", keys: ["facilities", "movie-room", "bar-restaurant", "fnb-costing"] },
+  { label: "Facilities", keys: ["facilities", "movie-room", "bar-restaurant", "kitchen", "fnb-costing"] },
   { label: "Water", keys: ["water-sales"] },
   { label: "Finance & Accounting", keys: ["finance", "budgeting", "documents", "expenses"] },
   { label: "HR", keys: ["staff", "attendance", "leave", "payroll", "hr"] },

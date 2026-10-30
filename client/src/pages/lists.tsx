@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Link } from "wouter";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
@@ -306,9 +307,8 @@ function MenuItemsTab({ canManage }: { canManage: boolean }) {
       <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-card-border">
         <div>
           <h2 className="text-lg font-semibold">Menu items</h2>
-          {!canManage && <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1"><Lock className="h-3 w-3" /> View-only — ask an administrator for edit rights.</p>}
+          <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1"><Lock className="h-3 w-3" /><span>The menu is now built in <Link href="/bar-restaurant" className="font-medium text-foreground underline underline-offset-2">Bar & Restaurant → Menu</Link>.</span></p>
         </div>
-        {canManage && <MenuItemFormDialog trigger={<Button size="sm" data-testid="button-new-menu-item"><Plus className="h-4 w-4 mr-1" /> Add item</Button>} />}
       </div>
       {isLoading ? (
         <div className="p-6 text-sm text-muted-foreground">Loading menu…</div>
@@ -385,7 +385,7 @@ export default function Lists() {
           <TablesTab canManage={canManageTables} />
         </TabsContent>
         <TabsContent value="menu-items" className="mt-4">
-          <MenuItemsTab canManage={canManageMenuItems} />
+          <MenuItemsTab canManage={false} />
         </TabsContent>
       </Tabs>
     </div>

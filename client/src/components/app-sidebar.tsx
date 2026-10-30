@@ -54,7 +54,7 @@ import chekataLogo from "@/assets/chekata-logo.jpg";
 import { useCurrentUser, useLogout, canAccess, useSetupStatus } from "@/hooks/use-auth";
 import type { ModuleKey, Settings } from "@shared/schema";
 import { MODULE_CATEGORY_GROUPS } from "@shared/schema";
-import { CheckSquare, FlaskConical } from "lucide-react";
+import { CheckSquare, FlaskConical, CookingPot } from "lucide-react";
 import { useDirectorSummary, hasAnyApprovalModule } from "@/lib/director";
 
 const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
@@ -63,6 +63,7 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Conference & Movie Room", url: "/facilities", icon: PartyPopper, key: "facilities" },
   { title: "Movie Room (Seats)", url: "/movie-room", icon: Clapperboard, key: "movie-room" },
   { title: "Bar & Restaurant", url: "/bar-restaurant", icon: UtensilsCrossed, key: "bar-restaurant" },
+  { title: "Kitchen", url: "/kitchen", icon: CookingPot, key: "kitchen" },
   { title: "F&B Costing", url: "/fnb-costing", icon: ChefHat, key: "fnb-costing" },
   { title: "Tenants", url: "/tenants", icon: Building2, key: "tenants" },
   { title: "Staff", url: "/staff", icon: Users, key: "staff" },

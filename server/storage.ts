@@ -1127,6 +1127,31 @@ CREATE TABLE IF NOT EXISTS asset_depreciation_schedules (
   await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('pos_customer', 'C', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
   await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('bar_order', 'B', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
   await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('restaurant_order', 'R', 1, 6) ON CONFLICT (sequence_key) DO NOTHING`;
+  // ---- Menu builder (components, chef-defined choices) and the kitchen screen ----
+  await ensureColumn("menu_items", "section", "TEXT");
+  await ensureColumn("menu_items", "description", "TEXT");
+  {
+    // First run only: restaurant dishes go to the kitchen by default (bar drinks don't).
+    const had = (await sql`SELECT 1 FROM information_schema.columns WHERE table_name = 'menu_items' AND column_name = 'send_to_kitchen'`).length > 0;
+    await ensureColumn("menu_items", "send_to_kitchen", "INTEGER NOT NULL DEFAULT 0");
+    if (!had) await sql`UPDATE menu_items SET send_to_kitchen = 1 WHERE category = 'restaurant'`;
+  }
+  await ensureColumn("menu_items", "sort_order", "INTEGER NOT NULL DEFAULT 0");
+  await sql`CREATE TABLE IF NOT EXISTS menu_components (
+    id SERIAL PRIMARY KEY, menu_item_id INTEGER NOT NULL, name TEXT NOT NULL, included_menu_item_id INTEGER,
+    portion TEXT, preparation TEXT NOT NULL DEFAULT 'cooked', serving TEXT NOT NULL DEFAULT 'separate', sort_order INTEGER NOT NULL DEFAULT 0)`;
+  await sql`CREATE TABLE IF NOT EXISTS menu_option_groups (
+    id SERIAL PRIMARY KEY, menu_item_id INTEGER NOT NULL, name TEXT NOT NULL, required INTEGER NOT NULL DEFAULT 1,
+    max_choices INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0)`;
+  await sql`CREATE TABLE IF NOT EXISTS menu_options (
+    id SERIAL PRIMARY KEY, group_id INTEGER NOT NULL, name TEXT NOT NULL, extra_price REAL NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0)`;
+  await ensureColumn("order_items", "choices_json", "TEXT");
+  await ensureColumn("order_items", "components_text", "TEXT");
+  await ensureColumn("order_items", "notes", "TEXT");
+  await ensureColumn("order_items", "kitchen_status", "TEXT");
+  await ensureColumn("order_items", "kitchen_sent_at", "BIGINT");
+  await ensureColumn("order_items", "kitchen_ready_at", "BIGINT");
+  await ensureColumn("order_items", "kitchen_served_at", "BIGINT");
   await ensureColumn("tables", "pay_token", "TEXT");
   await ensureColumn("settings", "company_legal_name", "TEXT");
   await ensureColumn("settings", "company_registration_number", "TEXT");

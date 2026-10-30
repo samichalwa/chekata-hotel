@@ -1,5 +1,6 @@
 import { registerWaterBillingRoutes } from "./water-billing";
 import { registerPosRoutes, recomputeOrderTotal, getCustomer } from "./pos";
+import { registerMenuRoutes, priceDish } from "./menu";
 import { registerWaterDepositRoutes } from "./water-deposits";
 import { registerShpmsPublicRoutes, registerShpmsRoutes, shpmsWriteGuard } from "./shpms";
 import { registerMeterReadingRoutes, saveElectricityReadings } from "./meter-readings";
@@ -1234,16 +1235,16 @@ export async function registerRoutes(
   });
 
   // ---------- Menu Items (managed from the Lists module; read from Bar & Restaurant too) ----------
-  app.get("/api/menu-items", requireAnyModule(["bar-restaurant", "lists"]), async (_req, res) => {
+  app.get("/api/menu-items", requireAnyModule(["bar-restaurant", "lists", "kitchen"]), async (_req, res) => {
     res.json(await storage.listMenuItems());
   });
-  app.post("/api/menu-items", requireModule("lists"), requireCanManageMenuItemsList, async (req, res) => {
+  app.post("/api/menu-items", requireAnyModule(["bar-restaurant", "lists"]), requireCanManageMenuItemsList, async (req, res) => {
     try {
       const data = insertMenuItemSchema.parse(req.body);
       res.status(201).json(await storage.createMenuItem(data));
     } catch (err) { handleZodError(res, err); }
   });
-  app.patch("/api/menu-items/:id", requireModule("lists"), requireCanManageMenuItemsList, async (req, res) => {
+  app.patch("/api/menu-items/:id", requireAnyModule(["bar-restaurant", "lists"]), requireCanManageMenuItemsList, async (req, res) => {
     try {
       const data = insertMenuItemSchema.partial().parse(req.body);
       const updated = await storage.updateMenuItem(Number(req.params.id), data);
@@ -1251,7 +1252,7 @@ export async function registerRoutes(
       res.json(updated);
     } catch (err) { handleZodError(res, err); }
   });
-  app.delete("/api/menu-items/:id", requireModule("lists"), requireCanManageMenuItemsList, async (req, res) => {
+  app.delete("/api/menu-items/:id", requireAnyModule(["bar-restaurant", "lists"]), requireCanManageMenuItemsList, async (req, res) => {
     await storage.deleteMenuItem(Number(req.params.id));
     res.status(204).end();
   });
@@ -1306,6 +1307,9 @@ export async function registerRoutes(
           if (data.status !== "cancelled" || before.status !== "open" || (before.amountPaid ?? 0) > 0) {
             return res.status(400).json({ error: "Payments, closing and posting to a room are done on the customer's bill." });
           }
+        }
+        if (data.status === "cancelled" && (await sql`SELECT 1 FROM order_items WHERE order_id = ${id} AND kitchen_status IN ('preparing','ready','served') LIMIT 1` as any[]).length) {
+          return res.status(400).json({ error: "The kitchen has already started on this order, so it can't be cancelled. Close the bill with a reason instead." });
         }
         const allowed: any = {};
         if (data.notes !== undefined) allowed.notes = data.notes;
@@ -1390,14 +1394,18 @@ export async function registerRoutes(
       const target = await storage.getOrder(data.orderId);
       if ((target?.amountPaid ?? 0) > 0) return res.status(400).json({ error: "Part of this order is already paid — start a new order for more items." });
       if (!((data.quantity ?? 1) > 0)) return res.status(400).json({ error: "Quantity must be at least 1." });
+      let extra: Record<string, any> = {};
       if (data.menuItemId) {
-        // Name and price always come from the menu, never from the browser.
-        const m = (await sql`SELECT name, price, category, active FROM menu_items WHERE id = ${data.menuItemId}` as any[])[0];
-        if (!m) return res.status(400).json({ error: "That menu item no longer exists." });
-        if (target?.customerId && m.category !== target.outlet) return res.status(400).json({ error: `That item is not on the ${target.outlet} menu.` });
-        data.itemName = m.name; data.price = Number(m.price);
+        // Name, price and chosen options always come from the menu, never from the browser.
+        let priced;
+        try { priced = await priceDish(data.menuItemId, Array.isArray(req.body?.choices) ? req.body.choices : undefined); }
+        catch (e: any) { return res.status(e?.status ?? 400).json({ error: e?.message ?? "Couldn't add that dish." }); }
+        if (target?.customerId && priced.dish.category !== target.outlet) return res.status(400).json({ error: `That item is not on the ${target.outlet} menu.` });
+        data.itemName = priced.itemName; data.price = priced.price;
+        extra = { choicesJson: priced.choicesJson, componentsText: priced.componentsText, ...(priced.dish.sendToKitchen ? { kitchenStatus: "new", kitchenSentAt: Date.now() } : {}) };
       }
-      const item = await storage.createOrderItem({ ...data, subtotal: Math.round(data.price * (data.quantity ?? 1) * 100) / 100 });
+      const notes = typeof req.body?.notes === "string" && req.body.notes.trim() ? req.body.notes.trim().slice(0, 300) : null;
+      const item = await storage.createOrderItem({ ...data, ...extra, notes, subtotal: Math.round(data.price * (data.quantity ?? 1) * 100) / 100 } as any);
       await recomputeOrderTotal(data.orderId);
       res.status(201).json(item);
     } catch (err) { handleZodError(res, err); }
@@ -1407,6 +1415,9 @@ export async function registerRoutes(
     if (item) {
       const why = await orderEditable(item.orderId);
       if (why) return res.status(400).json({ error: why });
+      if (item.kitchenStatus && item.kitchenStatus !== "new") {
+        return res.status(400).json({ error: `The kitchen has already ${item.kitchenStatus === "preparing" ? "started" : item.kitchenStatus === "ready" ? "prepared" : "served"} this item, so it can't be removed.` });
+      }
       const order = await storage.getOrder(item.orderId);
       if (order && (order.amountPaid ?? 0) > order.totalAmount - item.subtotal + 0.004) {
         return res.status(400).json({ error: "Part of this order has already been paid — removing this item would take it below what was paid." });
@@ -3502,6 +3513,7 @@ export async function registerRoutes(
   // ---------- Owner / Director briefing + in-app notifications ----------
   registerWaterBillingRoutes(app);
   registerPosRoutes(app, { checkRecordPayment });
+  registerMenuRoutes(app);
   registerWaterDepositRoutes(app);
   registerMeterReadingRoutes(app);
   registerShpmsRoutes(app);
