@@ -411,7 +411,7 @@ export default function WaterSales() {
   const bulkSalesCount = completedSales.filter((s) => s.saleType === "bulk").length;
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader
         title="Water Sales"
         description="Bulk and bucket water sales with a receipt on every sale, plus monthly billing for metered customers."

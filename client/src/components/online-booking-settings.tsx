@@ -56,7 +56,7 @@ export function OnlineBookingSettingsTab() {
   const url = `${window.location.origin}/#/book`;
 
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div className="space-y-4 w-full">
       <Card className="p-4 space-y-2">
         <h3 className="font-semibold">Public booking link</h3>
         <p className="text-sm text-muted-foreground">Share this link (website, WhatsApp, QR code). Guests can book rooms, view scheduled shows, pick movie seats and reserve tables. Nothing is held until they paste a valid M-Pesa message; your office then verifies it under Online bookings & payments.</p>

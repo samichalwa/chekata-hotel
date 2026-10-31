@@ -194,7 +194,7 @@ export default function OnlineBookingsPage() {
   const pending = rows.filter((r) => r.status === "pending");
   const publicUrl = `${window.location.origin}/#/book`;
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-6xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader title="Online bookings & payments" description="Verify M-Pesa payments pasted by guests for rooms, movie seats, tables and bar & restaurant bills, and manage table reservations." />
       <Card className="p-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm"><span className="text-muted-foreground">Public booking link: </span><span className="font-medium break-all" data-testid="text-public-link">{publicUrl}</span></div>

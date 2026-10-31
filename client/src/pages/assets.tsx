@@ -527,7 +527,7 @@ export default function Assets() {
   const totalCost = assets.reduce((s, a) => s + a.acquisitionCost, 0);
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader
         title="Assets"
         description="Fixed asset register with automatic straight-line depreciation, posted to Finance as journal entries each period."

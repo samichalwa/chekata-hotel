@@ -333,7 +333,7 @@ export default function ApprovalsPage() {
 
   if (!hasAnyApprovalModule(user)) {
     return (
-      <div className="p-4 sm:p-6 max-w-3xl mx-auto">
+   <div className="p-4 sm:p-6 w-full">
         <PageHeader title="Approvals" />
         <Card className="p-6 text-sm text-muted-foreground">None of your modules have an approval workflow.</Card>
       </div>
@@ -341,7 +341,7 @@ export default function ApprovalsPage() {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-4 max-w-3xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-4 w-full">
       <PageHeader title="Approvals" description="Everything waiting for a decision, across all your modules."
         action={<Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching} data-testid="button-approvals-refresh"><RefreshCw className={`h-4 w-4 mr-1 ${isFetching ? "animate-spin" : ""}`} />Refresh</Button>} />
 

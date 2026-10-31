@@ -142,7 +142,7 @@ export default function Budgeting() {
   const streamLabel = (code: string) => activeStreams.find((s) => s.code === code)?.label ?? streams.find((s) => s.code === code)?.label ?? code;
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader
         title="Budgeting"
         description="Set monthly income-stream budgets and track variance against posted Finance actuals. Income streams are fully configurable in Lists."

@@ -641,7 +641,7 @@ export default function SystemAdmin() {
   const { data: lists = [] } = useQuery<DefinitionList[]>({ queryKey: ["/api/admin/definitions"] });
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader title="System Administration" description="Approval matrix, table-level permissions, and admin-editable option lists used across every module." />
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">

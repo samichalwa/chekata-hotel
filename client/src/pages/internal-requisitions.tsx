@@ -438,7 +438,7 @@ export default function InternalRequisitions() {
   const loanCount = irs.filter((i) => i.type === "loan" && i.status === "issued").length;
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader title="Internal Requisitions" description="Request, approve, and issue stock for internal use — permanent consumption or returnable loans." />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">

@@ -482,7 +482,7 @@ export default function Payroll() {
   const lastApproved = [...runs].filter((r) => r.status === "approved").sort((a, b) => b.id - a.id)[0];
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader title="Payroll" description="Statutory rates, PAYE bands, pay runs, payslips and bank-advice exports." />
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">

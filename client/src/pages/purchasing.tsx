@@ -1006,7 +1006,7 @@ export default function Purchasing() {
   const openPos = orders.filter((o) => o.status === "approved" || o.status === "partially_received").length;
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader title="Purchasing" description="Suppliers, purchase requisitions, purchase orders, and goods receipts." />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">

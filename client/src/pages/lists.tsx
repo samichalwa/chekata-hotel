@@ -373,7 +373,7 @@ export default function Lists() {
   const canManageMenuItems = Boolean(currentUser?.isAdmin || currentUser?.canManageMenuItemsList);
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader title="Lists" description="Manage the shared reference lists used across Bar & Restaurant — tables and menu items." />
 
       <Tabs defaultValue="tables">

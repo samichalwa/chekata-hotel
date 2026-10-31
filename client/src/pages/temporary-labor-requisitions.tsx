@@ -314,7 +314,7 @@ export default function TemporaryLaborRequisitions() {
   const draftCount = tlrs.filter((t) => t.status === "draft").length;
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader title="Temporary Labor Requisitions" description="Request temporary workers ahead of time, by role, headcount, and duration — approval auto-creates placeholder staff slots for HR to fill in." />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">

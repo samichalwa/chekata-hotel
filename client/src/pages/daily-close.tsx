@@ -123,7 +123,7 @@ export default function DailyClosePage() {
   const go = (d: string) => { if (isDate(d) && (!today || d <= today)) navigate(`/daily-close/${d}`); };
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 p-4 sm:p-6">
+  <div className="w-full space-y-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Link href="/dashboard"><Button variant="ghost" size="icon" title="Open the Dashboard" data-testid="button-daily-dashboard"><LayoutDashboard className="h-4 w-4" /></Button></Link>

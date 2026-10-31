@@ -71,7 +71,7 @@ export function CompanyInfoSettingsTab({ onOpenOnlineBooking, onOpenHotel }: { o
   );
 
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div className="space-y-4 w-full">
       <p className="text-sm text-muted-foreground">
         The company's official details in one place. They print on invoices, receipts and credit notes, including those sent by email and WhatsApp.
         {onOpenHotel && <> The trading name, address, phone and email are under <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={onOpenHotel} data-testid="button-open-hotel-tab">Hotel &amp; Email</button>.</>}

@@ -503,7 +503,7 @@ export default function Leave() {
   const approved = requests.filter((r) => r.status === "approved").length;
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader title="Leave" description="Configure leave types, review requests, and track leave balances." />
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">

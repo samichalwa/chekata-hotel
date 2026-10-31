@@ -278,7 +278,7 @@ export default function Maintenance() {
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader
         title="Maintenance"
         description="Track every reported maintenance issue from report through to resolution and closure."

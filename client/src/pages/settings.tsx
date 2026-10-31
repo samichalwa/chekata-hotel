@@ -952,7 +952,7 @@ export default function SettingsPage() {
   const [tab, setTab] = useState("hotel");
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-4xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader title="Settings" description="Hotel and company details, taxes, email, SMS log and user access." />
 
       <Tabs value={tab} onValueChange={setTab}>

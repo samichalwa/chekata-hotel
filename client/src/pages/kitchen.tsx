@@ -93,7 +93,7 @@ export default function KitchenPage() {
   const served = shown.flatMap((t) => t.items.filter((i) => i.status === "served").map((i) => ({ t, i }))).sort((a, b) => (b.i.servedAt ?? 0) - (a.i.servedAt ?? 0)).slice(0, 12);
 
   return (
-    <div className="mx-auto max-w-[1600px] space-y-4 p-4 sm:p-6">
+  <div className="w-full space-y-4 p-4 sm:p-6">
       <PageHeader title="Kitchen" description="New orders appear here automatically. Move each ticket along as you cook." action={
         <div className="flex flex-wrap items-center gap-2">
           <Select value={outlet} onValueChange={setOutlet}>

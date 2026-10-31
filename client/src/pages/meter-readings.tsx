@@ -51,7 +51,7 @@ export default function MeterReadingsPage() {
   const { data: settings } = useQuery<ReaderSettings>({ queryKey: ["/api/meter-reader/settings"] });
   const [tab, setTab] = useState<Kind>("water");
   return (
-    <div className="p-4 sm:p-6 space-y-4 max-w-6xl">
+    <div className="p-4 sm:p-6 space-y-4 w-full">
       <div className="flex items-start gap-3">
         <Gauge className="h-6 w-6 text-primary mt-1 shrink-0" />
         <div>

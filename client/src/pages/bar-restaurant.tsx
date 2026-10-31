@@ -486,7 +486,7 @@ export default function BarRestaurant() {
   const closedShown = useMemo(() => closed.filter(match), [closed, q]);
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-6 w-full">
       <PageHeader title="Bar & Restaurant" description="Open a customer, assign a table, take bar and restaurant orders, and settle one bill." action={<div className="flex flex-wrap gap-2"><Button asChild data-testid="link-order-pad"><Link href="/order-pad"><Tablet className="h-4 w-4" />Order pad</Link></Button><PayQrCodesDialog /></div>} />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">

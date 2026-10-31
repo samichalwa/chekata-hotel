@@ -58,10 +58,10 @@ export function ReceiptPostingSettingsTab() {
   });
 
   if (l1 || l2 || l3 || !settings) {
-    return <div className="space-y-4 max-w-3xl" data-testid="receipt-posting-loading">{[0, 1, 2].map((i) => <Card key={i} className="p-4 h-28 animate-pulse bg-muted/40" />)}</div>;
+    return <div className="space-y-4 w-full" data-testid="receipt-posting-loading">{[0, 1, 2].map((i) => <Card key={i} className="p-4 h-28 animate-pulse bg-muted/40" />)}</div>;
   }
   return (
-    <div className="space-y-4 max-w-3xl" data-testid="receipt-posting-settings">
+    <div className="space-y-4 w-full" data-testid="receipt-posting-settings">
       <Card className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-4">
           <div>

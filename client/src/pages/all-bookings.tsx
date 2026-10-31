@@ -141,7 +141,7 @@ export default function AllBookingsPage() {
   const dueTotal = visible.reduce((a, b) => a + b.due, 0);
 
   return (
-    <div className="p-4 sm:p-6 space-y-5 max-w-5xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-5 w-full">
       <PageHeader title="All bookings" description="Rooms, conference & events and movie room seats in one list." />
 
       {kinds.length === 0 ? (

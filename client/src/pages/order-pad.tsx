@@ -379,7 +379,7 @@ export default function OrderPad() {
     .sort((a, b) => (a.tableName ?? "~").localeCompare(b.tableName ?? "~", undefined, { numeric: true }) || a.createdAt - b.createdAt);
 
   return (
-    <div className="mx-auto flex h-[calc(100dvh-7rem)] max-w-[1600px] flex-col p-3 sm:p-4">
+  <div className="w-full flex h-[calc(100dvh-7rem)] flex-col p-3 sm:p-4">
       {customerId ? (
         <OrderScreen customerId={customerId} server={server} onChooseServer={() => setServerOpen(true)} onBack={() => setCustomerId(null)} />
       ) : (

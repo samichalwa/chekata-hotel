@@ -223,7 +223,7 @@ function TaxTab() {
 export default function Integrity() {
   const { data: user } = useCurrentUser();
   return (
-    <div className="p-4 sm:p-6 space-y-5 max-w-5xl mx-auto">
+  <div className="p-4 sm:p-6 space-y-5 w-full">
       <PageHeader title="Integrity checks" description="Read-only checks that the money, bookings, stock, payroll and tax all agree. Nothing is changed — each problem links to the record to fix." />
       <Tabs defaultValue="daily">
         <TabsList>
