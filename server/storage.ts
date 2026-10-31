@@ -1339,6 +1339,27 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
   await sql`INSERT INTO document_sequences (sequence_key, prefix, next_number, pad_length) VALUES ('water_customer', 'WC', 1, 4) ON CONFLICT (sequence_key) DO NOTHING`;
   await ensureColumn("settings", "water_bill_due_days", "INTEGER NOT NULL DEFAULT 14");
   await ensureColumn("settings", "water_bill_sms", "INTEGER NOT NULL DEFAULT 1");
+  // Water: daily payment reminders and late-payment penalties (configurable in Water → Tariffs & settings).
+  await ensureColumn("settings", "water_reminder_enabled", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("settings", "water_reminder_time", "TEXT NOT NULL DEFAULT '09:00'");
+  await ensureColumn("settings", "water_reminder_sms", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("settings", "water_reminder_email", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("settings", "water_penalty_enabled", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("settings", "water_penalty_percent", "REAL NOT NULL DEFAULT 5");
+  await ensureColumn("settings", "water_penalty_grace_days", "INTEGER NOT NULL DEFAULT 10");
+  await ensureColumn("settings", "water_penalty_from", "TEXT");
+  // Penalties only apply to bills falling due from the day the feature arrived, unless moved earlier in settings.
+  await sql`UPDATE settings SET water_penalty_from = ${new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10)} WHERE water_penalty_from IS NULL`;
+  // A penalty is a water_bills row of kind 'penalty' (no meter reading) so balances, payments, statements and reports include it.
+  await ensureColumn("water_bills", "kind", "TEXT NOT NULL DEFAULT 'water'");
+  await ensureColumn("water_bills", "penalty_for_bill_id", "INTEGER");
+  await sql.unsafe(`ALTER TABLE water_bills ALTER COLUMN reading_id DROP NOT NULL`);
+  // One penalty per overdue bill, ever (a waived penalty is not charged again).
+  await sql.unsafe(`CREATE UNIQUE INDEX IF NOT EXISTS uq_water_penalty_for_bill ON water_bills (penalty_for_bill_id) WHERE penalty_for_bill_id IS NOT NULL`);
+  await sql.unsafe(`CREATE TABLE IF NOT EXISTS water_reminder_log (
+    run_date TEXT NOT NULL, customer_id INTEGER NOT NULL, balance REAL NOT NULL DEFAULT 0, sms_status TEXT, email_status TEXT, sent_at BIGINT NOT NULL,
+    PRIMARY KEY (run_date, customer_id)
+  )`);
   await sql`CREATE TABLE IF NOT EXISTS water_deposits (
     id SERIAL PRIMARY KEY, customer_id INTEGER NOT NULL, amount REAL NOT NULL, paid_on TEXT NOT NULL,
     payment_method TEXT NOT NULL, payment_reference TEXT, void_reference TEXT, bank_account_id INTEGER NOT NULL,

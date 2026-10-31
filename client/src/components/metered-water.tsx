@@ -1,7 +1,7 @@
 // Metered water customers: monthly meter readings → monthly bills (m³), payments, statements.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, FileText, MessageCircle, Send, Ban, FileSpreadsheet, Gauge, Users, Wallet, AlertTriangle, Save, Receipt, Camera, ScanLine, ImageIcon, PiggyBank, CheckCircle2 } from "lucide-react";
+import { Plus, Pencil, Trash2, FileText, MessageCircle, Send, Ban, FileSpreadsheet, Gauge, Users, Wallet, AlertTriangle, Save, Receipt, Camera, ScanLine, ImageIcon, PiggyBank, CheckCircle2, BellRing } from "lucide-react";
 import { StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -30,7 +30,8 @@ type ReadingRow = { customerId: number; accountNo: string; name: string; locatio
   monthBilled: { used: number; charged: number; bills: number };
   history: { id: number; readingDate: string; currentReading: number; consumption: number; meterReplaced: boolean; billId: number | null; billNumber: string | null; billStatus: string | null; billAmount: number | null }[];
   reading: null | { id: number; currentReading: number; meterReplaced: boolean; oldMeterFinal: number | null; newMeterStart: number | null; consumption: number; readingDate: string; billId: number | null; billNumber: string | null; billStatus: string | null; photoUrl?: string | null; photoMeterNumber?: string | null; photoReading?: number | null; photoMeterVerified?: number | null; photoConfidence?: string | null } };
-type Bill = { id: number; billNumber: string; customerId: number; customerName: string; accountNo: string; phone: string | null; email: string | null; meterNumber: string | null; periodMonth: string; previousReading: number; currentReading: number; consumption: number; tariffName: string; currentCharges: number; balanceBroughtForward: number; totalDue: number; amountPaid: number; billDate: string; dueDate: string; status: string; cancelReason: string | null; smsStatus: string | null; emailStatus: string | null; documentId: number | null; documentToken: string | null; customerBalance: number };
+type Bill = { id: number; billNumber: string; customerId: number; customerName: string; accountNo: string; phone: string | null; email: string | null; meterNumber: string | null; periodMonth: string; previousReading: number; currentReading: number; consumption: number; tariffName: string; currentCharges: number; balanceBroughtForward: number; totalDue: number; amountPaid: number; billDate: string; dueDate: string; status: string; cancelReason: string | null; smsStatus: string | null; emailStatus: string | null; documentId: number | null; documentToken: string | null; customerBalance: number; kind?: "water" | "penalty"; charge?: any };
+const penaltyText = (b: Bill) => `${b.charge?.percent ?? 0}% of ${formatKES(b.charge?.base ?? 0)} unpaid on ${b.charge?.forBillNumber ?? "an earlier bill"}`;
 
 const errMsg = (e: any) => { const m = String(e?.message ?? e); const body = m.replace(/^\d+:\s*/, ""); try { return JSON.parse(body).error ?? body; } catch { return body; } };
 const thisMonth = () => todayISO().slice(0, 7);
@@ -340,13 +341,13 @@ function BillsTab() {
   });
   const doCancel = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/water-billing/bills/${cancel!.id}/cancel`, { reason })).json(),
-    onSuccess: () => { invalidateAll(); toast({ title: "Bill cancelled", description: "A credit note was issued. The reading can now be corrected and billed again." }); setCancel(null); setReason(""); },
+    onSuccess: () => { invalidateAll(); toast(cancel?.kind === "penalty" ? { title: "Penalty waived", description: "A credit note was issued. It won't be charged again." } : { title: "Bill cancelled", description: "A credit note was issued (and for any penalty on it). The reading can now be corrected and billed again." }); setCancel(null); setReason(""); },
     onError: (e) => toast({ title: "Couldn't cancel", description: errMsg(e), variant: "destructive" }),
   });
   const whatsapp = (b: Bill) => {
-    let msg = `Dear ${b.customerName}, your water bill ${b.billNumber} for ${monthLabel(b.periodMonth)}: ${m3(b.consumption)} (meter ${b.previousReading} → ${b.currentReading}), ${formatKES(b.currentCharges)}.`;
-    if (Math.abs(b.balanceBroughtForward) > 0.5) msg += ` ${b.balanceBroughtForward > 0 ? "Arrears" : "Credit"} brought forward ${formatKES(Math.abs(b.balanceBroughtForward))}.`;
-    msg += ` Total due ${formatKES(Math.max(0, b.totalDue))} by ${prettyDate(b.dueDate)}.`;
+    let msg = b.kind === "penalty" ? `Dear ${b.customerName}, a late payment penalty of ${formatKES(b.currentCharges)} (${penaltyText(b)}) has been added to your water account ${b.accountNo}.` : `Dear ${b.customerName}, your water bill ${b.billNumber} for ${monthLabel(b.periodMonth)}: ${m3(b.consumption)} (meter ${b.previousReading} → ${b.currentReading}), ${formatKES(b.currentCharges)}.`;
+    if (b.kind !== "penalty" && Math.abs(b.balanceBroughtForward) > 0.5) msg += ` ${b.balanceBroughtForward > 0 ? "Arrears" : "Credit"} brought forward ${formatKES(Math.abs(b.balanceBroughtForward))}.`;
+    msg += b.kind === "penalty" ? ` Total due ${formatKES(Math.max(0, b.totalDue))}.` : ` Total due ${formatKES(Math.max(0, b.totalDue))} by ${prettyDate(b.dueDate)}.`;
     if (b.documentId && b.documentToken) msg += `\n\nView/download your bill (PDF): ${buildDocumentPdfUrl(b.documentId, b.documentToken)}`;
     const link = buildWhatsAppLink(b.phone, msg, me?.environment);
     if (link) window.open(link, "_blank"); else toast({ title: "No valid phone number on this customer", variant: "destructive" });
@@ -379,9 +380,11 @@ function BillsTab() {
                 <div className="grid gap-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.6fr)_minmax(0,1fr)] lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.6fr)_minmax(0,1fr)_23rem] md:items-center">
                   <div className="min-w-0">
                     <div className="font-medium truncate">{b.customerName} <span className="text-xs text-muted-foreground font-normal">{b.accountNo}</span></div>
-                    <div className="text-xs text-muted-foreground">{b.billNumber} · {monthLabel(b.periodMonth)} · due {prettyDate(b.dueDate)}</div>
+                    <div className="text-xs text-muted-foreground">{b.billNumber} · {b.kind === "penalty" ? `added ${prettyDate(b.billDate)}` : `${monthLabel(b.periodMonth)} · due ${prettyDate(b.dueDate)}`}</div>
                   </div>
-                  <div className="text-sm tabular-nums"><div>{b.previousReading} → {b.currentReading}</div><div className="text-muted-foreground text-xs">{m3(b.consumption)} · {b.tariffName}</div></div>
+                  {b.kind === "penalty"
+                    ? <div className="text-sm"><div className="font-medium text-amber-700 dark:text-amber-400" data-testid={`text-penalty-${b.id}`}>Late payment penalty</div><div className="text-muted-foreground text-xs">{penaltyText(b)}</div></div>
+                    : <div className="text-sm tabular-nums"><div>{b.previousReading} → {b.currentReading}</div><div className="text-muted-foreground text-xs">{m3(b.consumption)} · {b.tariffName}</div></div>}
                   <div className="text-sm tabular-nums">
                     <div>Charges <span className="font-medium">{formatKES(b.currentCharges)}</span></div>
                     <div className="text-xs text-muted-foreground">{b.balanceBroughtForward > 0.5 ? `arrears b/f ${formatKES(b.balanceBroughtForward)} · ` : b.balanceBroughtForward < -0.5 ? `credit b/f ${formatKES(-b.balanceBroughtForward)} · ` : ""}total due {formatKES(Math.max(0, b.totalDue))}</div>
@@ -394,7 +397,7 @@ function BillsTab() {
                     {b.documentId && b.documentToken && <Button size="icon" variant="ghost" asChild title="Open PDF"><a href={buildDocumentPdfUrl(b.documentId, b.documentToken)} target="_blank" rel="noreferrer" data-testid={`button-bill-pdf-${b.id}`}><FileText className="h-4 w-4" /></a></Button>}
                     {open && <Button size="icon" variant="ghost" title="WhatsApp with PDF link" onClick={() => whatsapp(b)} data-testid={`button-bill-whatsapp-${b.id}`}><MessageCircle className="h-4 w-4" /></Button>}
                     {open && <Button size="icon" variant="ghost" title="Resend email + SMS" disabled={resend.isPending} onClick={() => resend.mutate(b)} data-testid={`button-bill-resend-${b.id}`}><Send className="h-4 w-4" /></Button>}
-                    {open && <Button size="icon" variant="ghost" title="Cancel bill" onClick={() => { setCancel(b); setReason(""); }} data-testid={`button-bill-cancel-${b.id}`}><Ban className="h-4 w-4" /></Button>}
+                    {open && <Button size="icon" variant="ghost" title={b.kind === "penalty" ? "Waive penalty" : "Cancel bill"} onClick={() => { setCancel(b); setReason(""); }} data-testid={`button-bill-cancel-${b.id}`}><Ban className="h-4 w-4" /></Button>}
                   </div>
                 </div>
               </Card>
@@ -404,10 +407,10 @@ function BillsTab() {
       )}
       <Dialog open={!!cancel} onOpenChange={(o) => !o && setCancel(null)}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Cancel bill {cancel?.billNumber}?</DialogTitle>
-            <DialogDescription>A credit note is issued for {formatKES(cancel?.currentCharges ?? 0)}. Any payment already applied stays on the customer's account as credit. The reading is unlocked so you can correct it and bill again. Only the customer's latest bill can be cancelled.</DialogDescription></DialogHeader>
-          <div className="space-y-1.5"><Label htmlFor="wb-reason">Reason</Label><Textarea id="wb-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Wrong meter reading" data-testid="input-cancel-reason" /></div>
-          <DialogFooter><Button variant="outline" onClick={() => setCancel(null)}>Keep bill</Button><Button variant="destructive" disabled={!reason.trim() || doCancel.isPending} onClick={() => doCancel.mutate()} data-testid="button-confirm-cancel-bill">Cancel bill</Button></DialogFooter>
+          <DialogHeader><DialogTitle>{cancel?.kind === "penalty" ? `Waive penalty ${cancel?.billNumber}?` : `Cancel bill ${cancel?.billNumber}?`}</DialogTitle>
+            {cancel?.kind === "penalty" ? <DialogDescription>A credit note is issued for {formatKES(cancel?.currentCharges ?? 0)}. Any payment already applied stays on the account as credit. A waived penalty is not charged again.</DialogDescription> : <DialogDescription>A credit note is issued for {formatKES(cancel?.currentCharges ?? 0)}. Any payment already applied stays on the customer's account as credit. The reading is unlocked so you can correct it and bill again. Only the customer's latest bill can be cancelled. Any late payment penalty on it is cancelled too.</DialogDescription>}</DialogHeader>
+          <div className="space-y-1.5"><Label htmlFor="wb-reason">Reason</Label><Textarea id="wb-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={cancel?.kind === "penalty" ? "e.g. Agreed with the customer" : "e.g. Wrong meter reading"} data-testid="input-cancel-reason" /></div>
+          <DialogFooter><Button variant="outline" onClick={() => setCancel(null)}>{cancel?.kind === "penalty" ? "Keep penalty" : "Keep bill"}</Button><Button variant="destructive" disabled={!reason.trim() || doCancel.isPending} onClick={() => doCancel.mutate()} data-testid="button-confirm-cancel-bill">{cancel?.kind === "penalty" ? "Waive penalty" : "Cancel bill"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -552,6 +555,60 @@ function StatementDialog({ customer, onClose }: { customer: Customer; onClose: (
 }
 
 /* ---------------- Tariffs ---------------- */
+function RemindersCard({ settings }: { settings: any }) {
+  const { toast } = useToast();
+  const [f, setF] = useState({ time: "09:00", pct: "5", grace: "10", from: "" });
+  useEffect(() => { if (settings) setF({ time: settings.waterReminderTime, pct: String(settings.waterPenaltyPercent), grace: String(settings.waterPenaltyGraceDays), from: settings.waterPenaltyFrom }); }, [settings]);
+  const { data: log = [], isLoading: logLoading } = useQuery<{ date: string; customer: string; accountNo: string; balance: number; sms: string | null; email: string | null }[]>({ queryKey: ["/api/water-billing/reminders"] });
+  const save = useMutation({
+    mutationFn: async (patch: any) => (await apiRequest("PATCH", "/api/water-billing/settings", patch)).json(),
+    onSuccess: (r) => { queryClient.setQueryData(["/api/water-billing/settings"], r); toast({ title: "Reminder settings saved" }); },
+    onError: (e) => toast({ title: "Couldn't save", description: errMsg(e), variant: "destructive" }),
+  });
+  const run = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/water-billing/reminders/run", {})).json(),
+    onSuccess: (r: any) => { invalidateAll(); queryClient.invalidateQueries({ queryKey: ["/api/water-billing/reminders"] }); toast({ title: `${r.reminders.length} reminder${r.reminders.length === 1 ? "" : "s"} sent`, description: `${r.penalties.length} new penalt${r.penalties.length === 1 ? "y" : "ies"}. Customers already reminded today are skipped.` }); },
+    onError: (e) => toast({ title: "Couldn't send reminders", description: errMsg(e), variant: "destructive" }),
+  });
+  const dirty = !!settings && (f.time !== settings.waterReminderTime || Number(f.pct) !== settings.waterPenaltyPercent || Number(f.grace) !== settings.waterPenaltyGraceDays || f.from !== settings.waterPenaltyFrom);
+  const latest = log.length ? log[0].date : null;
+  const latestRows = log.filter((l) => l.date === latest);
+  const on = (k: string) => Number(settings?.[k] ?? 0) === 1;
+  return (
+    <Card className="p-4 space-y-4" data-testid="card-water-reminders">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div><div className="text-sm font-medium flex items-center gap-2"><BellRing className="h-4 w-4" />Reminders &amp; late payment penalties</div>
+          <p className="text-xs text-muted-foreground mt-0.5">Every day at the set time, customers with an unpaid balance get a reminder until they are fully paid.</p></div>
+        <Button variant="outline" size="sm" disabled={!settings || run.isPending} onClick={() => run.mutate()} data-testid="button-run-reminders"><Send className="h-4 w-4 mr-1" />{run.isPending ? "Sending…" : "Send today's reminders now"}</Button>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-3 rounded-md border p-3">
+          <label className="flex items-center gap-2 text-sm font-medium"><Switch checked={on("waterReminderEnabled")} onCheckedChange={(v) => save.mutate({ waterReminderEnabled: v ? 1 : 0 })} data-testid="switch-water-reminders" />Daily reminders</label>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-1.5"><Label htmlFor="wr-time">Send at</Label><Input id="wr-time" type="time" className="w-32" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} data-testid="input-reminder-time" /></div>
+            <label className="flex items-center gap-2 text-sm pb-2"><Switch checked={on("waterReminderSms")} onCheckedChange={(v) => save.mutate({ waterReminderSms: v ? 1 : 0 })} data-testid="switch-reminder-sms" />SMS</label>
+            <label className="flex items-center gap-2 text-sm pb-2"><Switch checked={on("waterReminderEmail")} onCheckedChange={(v) => save.mutate({ waterReminderEmail: v ? 1 : 0 })} data-testid="switch-reminder-email" />Email with statement PDF</label>
+          </div>
+        </div>
+        <div className="space-y-3 rounded-md border p-3">
+          <label className="flex items-center gap-2 text-sm font-medium"><Switch checked={on("waterPenaltyEnabled")} onCheckedChange={(v) => save.mutate({ waterPenaltyEnabled: v ? 1 : 0 })} data-testid="switch-water-penalty" />Late payment penalty</label>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-1.5"><Label htmlFor="wp-pct">Penalty (%)</Label><Input id="wp-pct" type="number" min="0" max="100" step="0.5" className="w-24" value={f.pct} onChange={(e) => setF({ ...f, pct: e.target.value })} data-testid="input-penalty-percent" /></div>
+            <div className="space-y-1.5"><Label htmlFor="wp-grace">Days after due date</Label><Input id="wp-grace" type="number" min="0" max="365" className="w-24" value={f.grace} onChange={(e) => setF({ ...f, grace: e.target.value })} data-testid="input-penalty-grace" /></div>
+            <div className="space-y-1.5"><Label htmlFor="wp-from">For bills due from</Label><Input id="wp-from" type="date" className="w-40" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} data-testid="input-penalty-from" /></div>
+          </div>
+          <p className="text-xs text-muted-foreground">Charged once per bill, on what is still unpaid, when it is more than {f.grace || 0} days past its due date. Penalties never attract penalties. Waive one with its cancel button in Bills.</p>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground" data-testid="text-reminder-last">{logLoading ? "" : latest ? `Last reminders ${prettyDate(latest)}: ${latestRows.length} customer${latestRows.length === 1 ? "" : "s"}${latestRows.length ? ` (${latestRows.slice(0, 4).map((l) => `${l.customer} ${formatKES(l.balance)}`).join(", ")}${latestRows.length > 4 ? ", …" : ""})` : ""}.` : "No reminders sent yet."}</p>
+        <Button disabled={!dirty || save.isPending || !f.time || !f.from} onClick={() => save.mutate({ waterReminderTime: f.time, waterPenaltyPercent: Number(f.pct), waterPenaltyGraceDays: Number(f.grace), waterPenaltyFrom: f.from })} data-testid="button-save-reminders"><Save className="h-4 w-4 mr-1" />Save</Button>
+      </div>
+      {settings && !settings.smsEnabled && <p className="text-xs text-muted-foreground">SMS is turned off in Settings → SMS, so reminders will only be emailed.</p>}
+    </Card>
+  );
+}
+
 function TariffsTab() {
   const { toast } = useToast();
   const [edit, setEdit] = useState<Tariff | "new" | null>(null);
@@ -578,6 +635,7 @@ function TariffsTab() {
         <label className="flex items-center gap-2 text-sm"><Switch checked={!!settings?.waterBillSms} onCheckedChange={(v) => saveSettings.mutate({ waterBillSms: v ? 1 : 0 })} data-testid="switch-water-sms" />SMS each bill to the customer</label>
         {settings && !settings.smsEnabled && <p className="text-xs text-muted-foreground w-full">SMS is turned off in Settings → SMS, so bills will only be emailed.</p>}
       </Card>
+      <RemindersCard settings={settings} />
       <DepositAccountsCard />
       <PhotoReadingCard settings={settings} />
       <div className="flex justify-end"><Button onClick={() => setEdit("new")} data-testid="button-new-tariff"><Plus className="h-4 w-4 mr-1" />Add tariff</Button></div>
