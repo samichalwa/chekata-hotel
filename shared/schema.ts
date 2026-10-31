@@ -604,7 +604,7 @@ export const settings = pgTable("settings", {
   integrityTaxDay: integer("integrity_tax_day").notNull().default(1), // day of month the previous month's tax check runs
   waterBillDueDays: integer("water_bill_due_days").notNull().default(14), // metered water bills: days from bill date to due date
   waterBillSms: integer("water_bill_sms").notNull().default(1), // send an SMS with each metered water bill
-  waterReminderEnabled: integer("water_reminder_enabled").notNull().default(1), // daily reminders to customers with unpaid water bills
+  waterReminderEnabled: integer("water_reminder_enabled").notNull().default(0), // daily reminders to customers with unpaid water bills
   waterReminderTime: text("water_reminder_time").notNull().default("09:00"), // Nairobi time the reminders go out
   waterReminderSms: integer("water_reminder_sms").notNull().default(1),
   waterReminderEmail: integer("water_reminder_email").notNull().default(1), // email with the statement PDF attached

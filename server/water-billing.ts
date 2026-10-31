@@ -588,7 +588,7 @@ export async function sendWaterReminders(base: string, penalties: Awaited<Return
 export async function runWaterDaily(base: string, opts: { reminders: boolean }) {
   const s = await storage.getSettings() as any;
   const penalties = await applyWaterPenalties(base);
-  const remindersOn = opts.reminders && Number(s.waterReminderEnabled ?? 1) === 1;
+  const remindersOn = opts.reminders && Number(s.waterReminderEnabled ?? 0) === 1;
   const reminders = remindersOn ? await sendWaterReminders(base, penalties) : [];
   for (const p of penalties) {
     const covered = reminders.some((r) => r.customerId === p.customerId && r.sms === "sent"); // the reminder SMS already told them
@@ -628,7 +628,7 @@ export function startWaterReminderSchedule(log: (m: string) => void) {
 }
 
 const visionInfo = (s: any) => ({ waterBillDueDays: Number(s.waterBillDueDays ?? 14), waterBillSms: Number(s.waterBillSms ?? 1), smsEnabled: !!s.smsEnabled,
-  waterReminderEnabled: Number(s.waterReminderEnabled ?? 1), waterReminderTime: s.waterReminderTime || "09:00", waterReminderSms: Number(s.waterReminderSms ?? 1), waterReminderEmail: Number(s.waterReminderEmail ?? 1),
+  waterReminderEnabled: Number(s.waterReminderEnabled ?? 0), waterReminderTime: s.waterReminderTime || "09:00", waterReminderSms: Number(s.waterReminderSms ?? 1), waterReminderEmail: Number(s.waterReminderEmail ?? 1),
   waterPenaltyEnabled: Number(s.waterPenaltyEnabled ?? 1), waterPenaltyPercent: n(s.waterPenaltyPercent ?? 5), waterPenaltyGraceDays: Number(s.waterPenaltyGraceDays ?? 10), waterPenaltyFrom: s.waterPenaltyFrom || today(),
   visionProvider: s.meterVisionProvider || "", visionModel: s.meterVisionModel || "", visionKeySet: !!s.meterVisionApiKey,
   visionReady: !!(s.meterVisionProvider && s.meterVisionApiKey), visionKeyHint: s.meterVisionApiKey ? `…${String(s.meterVisionApiKey).slice(-4)}` : "" });

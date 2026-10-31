@@ -1340,7 +1340,7 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
   await ensureColumn("settings", "water_bill_due_days", "INTEGER NOT NULL DEFAULT 14");
   await ensureColumn("settings", "water_bill_sms", "INTEGER NOT NULL DEFAULT 1");
   // Water: daily payment reminders and late-payment penalties (configurable in Water → Tariffs & settings).
-  await ensureColumn("settings", "water_reminder_enabled", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("settings", "water_reminder_enabled", "INTEGER NOT NULL DEFAULT 0");
   await ensureColumn("settings", "water_reminder_time", "TEXT NOT NULL DEFAULT '09:00'");
   await ensureColumn("settings", "water_reminder_sms", "INTEGER NOT NULL DEFAULT 1");
   await ensureColumn("settings", "water_reminder_email", "INTEGER NOT NULL DEFAULT 1");
