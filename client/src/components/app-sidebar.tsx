@@ -1,4 +1,5 @@
 import { Link, useLocation } from "wouter";
+import { useFocusedRoute } from "@/lib/desk";
 import { useState } from "react";
 import {
   LayoutDashboard,
@@ -93,13 +94,22 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
 // (it's never permission-assignable), so it always renders in its own
 // trailing, unlabeled group at the bottom of the menu.
 const itemsByKey = new Map(items.map((item) => [item.key, item]));
+/** Names of pages, used to label screens on the taskbar. */
+export function pageTitleFor(route: string): string {
+  const path = "/" + route.replace(/^#?\/?/, "").split("?")[0];
+  if (path === "/" || path.startsWith("/daily-close")) return "Daily close";
+  const extra: Record<string, string> = { "/approvals": "Approvals", "/bookings": "All bookings", "/online-bookings": "Online bookings", "/order-pad": "Order pad" };
+  return extra[path] ?? items.find((i) => i.url === path)?.title ?? "Screen";
+}
 /** First page this user can open — used as the landing page when they have no Dashboard access. */
 export function firstAllowedUrl(user: Parameters<typeof canAccess>[0]): string | null {
   return items.find((i) => i.key !== "settings" && canAccess(user, i.key))?.url ?? null;
 }
 
 export function AppSidebar() {
-  const [location] = useLocation();
+  const [mainLocation] = useLocation();
+  // With several screens open, the menu shows the page in the screen in focus.
+  const location = useFocusedRoute(mainLocation);
   // On phones the sidebar is a slide-out drawer; close it after a menu tap so
   // the chosen page is visible straight away.
   const { isMobile, setOpenMobile } = useSidebar();

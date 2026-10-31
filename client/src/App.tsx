@@ -55,6 +55,8 @@ import ResetPasswordPage from "@/pages/reset-password";
 import { useCurrentUser, useSetupStatus, canAccess } from "@/hooks/use-auth";
 import { TestDatabaseBanner } from "@/components/test-database-banner";
 import type { ModuleKey } from "@shared/schema";
+import { SplitView, goInFocusedScreen } from "@/components/split-view";
+import { IN_PANE } from "@/lib/desk";
 
 function Guarded({ moduleKey, component: Component, requireAdminUsername }: { moduleKey: ModuleKey; component: React.ComponentType; requireAdminUsername?: boolean }) {
   const { data: user } = useCurrentUser();
@@ -228,18 +230,19 @@ function App() {
             <AuthGate>
               <SidebarProvider style={style as React.CSSProperties}>
                 <div className="flex h-screen w-full flex-col overflow-hidden">
-                  <TestDatabaseBanner />
+                  {!IN_PANE && <TestDatabaseBanner />}
                   <div className="flex flex-1 overflow-hidden">
-                    <AppSidebar />
-                    <div className="flex flex-col flex-1 overflow-hidden">
-                      <header className="flex items-center justify-between gap-2 border-b border-border bg-background px-3 py-2 shrink-0">
+                    {!IN_PANE && <AppSidebar />}
+                    <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+                      {!IN_PANE && (
+                      <header className="flex items-center justify-between gap-2 border-b border-border bg-card px-3 py-2 shrink-0">
                         <div className="flex items-center gap-1">
                           <SidebarTrigger data-testid="button-sidebar-toggle" />
                           <Button
                             variant="ghost"
                             size="icon"
                             title="Home"
-                            onClick={() => { window.location.hash = "/"; }}
+                            onClick={() => goInFocusedScreen("/")}
                             data-testid="button-home"
                           >
                             <Home className="h-4 w-4" />
@@ -250,9 +253,10 @@ function App() {
                           <ThemeToggle />
                         </div>
                       </header>
-                      <main className="flex-1 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>
+                      )}
+                      <SplitView>
                         <AppRouter />
-                      </main>
+                      </SplitView>
                     </div>
                   </div>
                 </div>

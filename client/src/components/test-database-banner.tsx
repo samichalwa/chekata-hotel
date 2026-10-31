@@ -11,7 +11,7 @@ export function TestDatabaseBanner() {
 
   return (
     <div
-      className="flex shrink-0 items-center justify-center gap-2 bg-amber-500 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-amber-950"
+      className="flex shrink-0 items-center justify-center gap-2 bg-amber-500 px-3 py-1.5 text-center md:pl-[calc(var(--sidebar-width)+0.75rem)] text-xs font-semibold uppercase tracking-wide text-amber-950"
       data-testid="banner-test-database"
     >
       <FlaskConical className="h-3.5 w-3.5" />
