@@ -11,6 +11,7 @@ import { db, sql, storage } from "./storage";
 import { requireModule } from "./auth";
 import { issueDocument } from "./documents";
 import { sendSms } from "./sms";
+import { priceDish } from "./menu";
 import { orders, orderItems, posCustomers, type Order, type OrderItem, type PosCustomer } from "@shared/schema";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -260,6 +261,76 @@ export function registerPosRoutes(app: Express, deps: {
     } catch (err: any) {
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Choose the outlet and who is serving." });
       res.status(500).json({ error: err?.message ?? "Couldn't create the order" });
+    }
+  });
+
+  // Order pad: the waiter sends a whole round in one go. Items are split into a bar order and a
+  // restaurant order (one each, as needed); kitchen dishes go straight to the kitchen screen.
+  // Everything is priced from the menu and validated before anything is saved.
+  const sentRounds = new Map<string, { at: number; body: any }>(); // guards against a double tap sending twice
+  app.post("/api/pos/customers/:id/send-order", M, async (req, res) => {
+    const roundId = typeof req.body?.roundId === "string" ? req.body.roundId.slice(0, 64) : "";
+    try {
+      for (const [k, v] of Array.from(sentRounds)) if (Date.now() - v.at > 10 * 60_000) sentRounds.delete(k);
+      if (roundId && sentRounds.has(roundId)) {
+        const prev = sentRounds.get(roundId)!;
+        return prev.body ? res.status(200).json(prev.body) : res.status(409).json({ error: "This order is already being sent." });
+      }
+      if (roundId) sentRounds.set(roundId, { at: Date.now(), body: null });
+      const c = await getCustomer(Number(req.params.id));
+      if (!c) return res.status(404).json({ error: "Customer not found" });
+      if (c.status !== "open") return res.status(400).json({ error: "This customer's bill is closed. Open a new customer." });
+      const b = z.object({
+        servedByStaffId: z.number().int(),
+        items: z.array(z.object({
+          menuItemId: z.number().int(),
+          quantity: z.number().int().min(1).max(99),
+          choices: z.array(z.object({ groupId: z.number().int(), optionIds: z.array(z.number().int()) })).optional(),
+          notes: z.string().max(300).optional().nullable(),
+        })).min(1).max(60),
+      }).safeParse(req.body ?? {});
+      if (!b.success) return res.status(400).json({ error: "Add at least one item and choose who is serving." });
+      const st = (await sql`SELECT id, name, status FROM staff WHERE id = ${b.data.servedByStaffId}` as any[])[0];
+      if (!st || st.status !== "active") return res.status(400).json({ error: "Choose who is serving from the staff register." });
+      const priced: { outlet: "bar" | "restaurant"; row: Record<string, any> }[] = [];
+      const now = Date.now();
+      for (const it of b.data.items) {
+        let p;
+        try { p = await priceDish(it.menuItemId, it.choices); }
+        catch (e: any) { return res.status(e?.status ?? 400).json({ error: e?.message ?? "Couldn't add that dish." }); }
+        const outlet = p.dish.category === "bar" ? "bar" : "restaurant";
+        const notes = it.notes?.trim() ? it.notes.trim().slice(0, 300) : null;
+        priced.push({ outlet, row: {
+          menuItemId: p.dish.id, itemName: p.itemName, price: p.price, quantity: it.quantity, subtotal: r2(p.price * it.quantity),
+          choicesJson: p.choicesJson, componentsText: p.componentsText, notes,
+          ...(p.dish.sendToKitchen ? { kitchenStatus: "new", kitchenSentAt: now } : {}),
+        } });
+      }
+      const outlets = (["restaurant", "bar"] as const).filter((o) => priced.some((p) => p.outlet === o));
+      const numbers: Record<string, string> = {};
+      for (const o of outlets) numbers[o] = await storage.getNextSequenceNumber(o === "bar" ? "bar_order" : "restaurant_order");
+      const created = await db.transaction(async (tx) => {
+        const out: { id: number; orderNo: string; outlet: string; items: number; kitchen: number; total: number }[] = [];
+        for (const o of outlets) {
+          const rows = priced.filter((p) => p.outlet === o).map((p) => p.row);
+          const total = r2(rows.reduce((s, r) => s + r.subtotal, 0));
+          const [ord] = await tx.insert(orders).values({
+            outlet: o, reference: c.tableName, customerName: c.name, customerEmail: c.email, customerPhone: c.phone,
+            orderDate: nairobiToday(), status: "open", totalAmount: total, notes: null, createdAt: now,
+            customerId: c.id, orderNo: numbers[o], servedByStaffId: Number(st.id), servedByName: st.name, billedBy: who(req), orderedAt: now, amountPaid: 0,
+          }).returning();
+          await tx.insert(orderItems).values(rows.map((r) => ({ ...r, orderId: ord.id })) as any);
+          out.push({ id: ord.id, orderNo: ord.orderNo ?? numbers[o], outlet: o, items: rows.reduce((s, r) => s + r.quantity, 0), kitchen: rows.filter((r) => r.kitchenStatus).reduce((s, r) => s + r.quantity, 0), total });
+        }
+        return out;
+      });
+      const body = { orders: created };
+      if (roundId) sentRounds.set(roundId, { at: Date.now(), body });
+      res.status(201).json(body);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message ?? "Couldn't send the order" });
+    } finally {
+      if (roundId && !sentRounds.get(roundId)?.body) sentRounds.delete(roundId);
     }
   });
 

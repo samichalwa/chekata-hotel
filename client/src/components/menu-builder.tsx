@@ -290,7 +290,7 @@ export function ChoiceDialog({ dish, onCancel, onConfirm, pending }: { dish: Men
                 {g.options.map((o) => {
                   const on = sel[g.id]?.includes(o.id);
                   return (
-                    <Button key={o.id} type="button" size="sm" variant={on ? "default" : "outline"} onClick={() => toggle(g.id, o.id, g.maxChoices)} data-testid={`button-choice-${o.id}`}>
+                    <Button key={o.id} type="button" className="h-11 px-4" variant={on ? "default" : "outline"} onClick={() => toggle(g.id, o.id, g.maxChoices)} data-testid={`button-choice-${o.id}`}>
                       {o.name}{o.extraPrice ? ` +${formatKES(o.extraPrice)}` : ""}
                     </Button>
                   );
@@ -298,13 +298,13 @@ export function ChoiceDialog({ dish, onCancel, onConfirm, pending }: { dish: Men
               </div>
             </div>
           ))}
-          <div className="space-y-1.5"><Label htmlFor="choice-notes">Note for the kitchen (optional)</Label><Input id="choice-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. no onions" data-testid="input-item-notes" /></div>
+          <div className="space-y-1.5"><Label htmlFor="choice-notes">Note for the kitchen (optional)</Label><Input id="choice-notes" className="h-11" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. no onions" data-testid="input-item-notes" /></div>
         </div>
         <DialogFooter className="items-center gap-2 sm:justify-between">
           <span className="text-sm text-muted-foreground">Price {formatKES(dish.price + extra)}</span>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={onCancel}>Cancel</Button>
-            <Button onClick={() => onConfirm(Object.entries(sel).map(([g, ids]) => ({ groupId: Number(g), optionIds: ids })), notes)} disabled={missing.length > 0 || pending} data-testid="button-confirm-choices">{missing.length ? `Choose ${missing[0].name}` : "Add to order"}</Button>
+            <Button size="lg" variant="outline" onClick={onCancel}>Cancel</Button>
+            <Button size="lg" onClick={() => onConfirm(Object.entries(sel).map(([g, ids]) => ({ groupId: Number(g), optionIds: ids })), notes)} disabled={missing.length > 0 || pending} data-testid="button-confirm-choices">{missing.length ? `Choose ${missing[0].name}` : "Add to order"}</Button>
           </div>
         </DialogFooter>
       </DialogContent>

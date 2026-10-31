@@ -25,6 +25,7 @@ import Facilities from "@/pages/facilities";
 import MovieRoom from "@/pages/movie-room";
 import BarRestaurant from "@/pages/bar-restaurant";
 import KitchenPage from "@/pages/kitchen";
+import OrderPadPage from "@/pages/order-pad";
 import FnbCosting from "@/pages/fnb-costing";
 import Tenants from "@/pages/tenants";
 import Staff from "@/pages/staff";
@@ -117,6 +118,7 @@ function AppRouter() {
       <Route path="/facilities" component={() => <Guarded moduleKey="facilities" component={Facilities} />} />
       <Route path="/movie-room" component={() => <Guarded moduleKey="movie-room" component={MovieRoom} />} />
       <Route path="/bar-restaurant" component={() => <Guarded moduleKey="bar-restaurant" component={BarRestaurant} />} />
+      <Route path="/order-pad" component={() => <Guarded moduleKey="bar-restaurant" component={OrderPadPage} />} />
       <Route path="/kitchen" component={() => <Guarded moduleKey="kitchen" component={KitchenPage} />} />
       <Route path="/fnb-costing" component={() => <Guarded moduleKey="fnb-costing" component={FnbCosting} />} />
       <Route path="/tenants" component={() => <Guarded moduleKey="tenants" component={Tenants} />} />

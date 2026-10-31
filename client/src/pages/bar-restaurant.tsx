@@ -3,7 +3,7 @@
 // full payment, manual close with a reason, and posting to an accommodation guest's room bill.
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Plus, UtensilsCrossed, Wine, Receipt, X, MessageCircle, Undo2, Users, Printer, BedDouble, Lock, QrCode as QrIcon, Clock, ExternalLink, Copy } from "lucide-react";
+import { Plus, UtensilsCrossed, Wine, Receipt, X, MessageCircle, Undo2, Users, Printer, BedDouble, Lock, QrCode as QrIcon, Clock, ExternalLink, Copy, Tablet } from "lucide-react";
 import { PageHeader, StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -487,7 +487,7 @@ export default function BarRestaurant() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-7xl mx-auto">
-      <PageHeader title="Bar & Restaurant" description="Open a customer, assign a table, take bar and restaurant orders, and settle one bill." action={<PayQrCodesDialog />} />
+      <PageHeader title="Bar & Restaurant" description="Open a customer, assign a table, take bar and restaurant orders, and settle one bill." action={<div className="flex flex-wrap gap-2"><Button asChild data-testid="link-order-pad"><Link href="/order-pad"><Tablet className="h-4 w-4" />Order pad</Link></Button><PayQrCodesDialog /></div>} />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard label="Bar sales" value={formatKES(barRevenue)} icon={Wine} accent="success" testId="stat-bar-revenue" />
