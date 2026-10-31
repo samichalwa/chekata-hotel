@@ -1356,6 +1356,14 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
   await sql.unsafe(`ALTER TABLE water_bills ALTER COLUMN reading_id DROP NOT NULL`);
   // One penalty per overdue bill, ever (a waived penalty is not charged again).
   await sql.unsafe(`CREATE UNIQUE INDEX IF NOT EXISTS uq_water_penalty_for_bill ON water_bills (penalty_for_bill_id) WHERE penalty_for_bill_id IS NOT NULL`);
+  // M-Pesa messages pasted by meter readers for a water customer: checked automatically, then confirmed
+  // (posted as a payment) or rejected by the office. While pending, reminders and penalties pause.
+  await sql.unsafe(`CREATE TABLE IF NOT EXISTS water_payment_claims (
+    id SERIAL PRIMARY KEY, customer_id INTEGER NOT NULL, raw_message TEXT NOT NULL, payment_reference TEXT NOT NULL, amount REAL NOT NULL,
+    paid_at BIGINT, payer_name TEXT, recipient TEXT, account TEXT, checks_json TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'pending',
+    submitted_by TEXT NOT NULL, submitted_at BIGINT NOT NULL, reviewed_by TEXT, reviewed_at BIGINT, review_note TEXT, payment_id INTEGER, posted_amount REAL
+  )`);
+  await sql.unsafe(`CREATE UNIQUE INDEX IF NOT EXISTS uq_water_claim_ref ON water_payment_claims (payment_reference)`);
   await sql.unsafe(`CREATE TABLE IF NOT EXISTS water_reminder_log (
     run_date TEXT NOT NULL, customer_id INTEGER NOT NULL, balance REAL NOT NULL DEFAULT 0, sms_status TEXT, email_status TEXT, sent_at BIGINT NOT NULL,
     PRIMARY KEY (run_date, customer_id)

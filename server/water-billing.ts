@@ -13,6 +13,7 @@ import { sendSms } from "./sms";
 import { sendTransactionalEmail } from "./email";
 import { runWithEnvironment } from "./db-context";
 import { normalizeRef, isRealRef, inFlight, findReferenceUse, duplicateRefMessage } from "./payment-refs";
+import { parseMpesaMessage, recipientMatches, MPESA_CODE_RE } from "@shared/mpesa";
 import { companyDisplayName, drawCompanyHeaderName, LOGO_EXISTS, LOGO_PATH } from "./pdf";
 import { saveBase64Upload, UploadValidationError } from "./uploads";
 import { readMeterPhoto, normSerial } from "./meter-vision";
@@ -129,6 +130,136 @@ async function reallocate(customerId: number) {
     const status = paid >= due - 0.01 ? "paid" : paid > 0.01 ? "partially_paid" : "unpaid";
     await sql`UPDATE water_bills SET amount_paid = ${paid}, status = ${status} WHERE id = ${b.id}`;
   }
+}
+
+// ---------- payments ----------
+class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
+/** Posts a payment to a water account (oldest bill first), issues the receipt and texts the customer. */
+export async function postWaterPayment(o: { customerId: number; amount: number; method: string; reference?: unknown; by: string; claimId?: number }) {
+  let lock: string | null = null;
+  try {
+    const id = o.customerId;
+    const [c] = await sql`SELECT * FROM water_customers WHERE id = ${id}` as any[];
+    if (!c) throw new HttpError(404, "Customer not found");
+    const due = await balanceOf(id);
+    const amount = r2(Number(o.amount));
+    const method = String(o.method ?? "").trim();
+    const reference = String(o.reference ?? "").trim().toUpperCase() || null;
+    if (!(due > 0.004)) throw new HttpError(409, "This account has nothing to pay.");
+    if (!(amount > 0)) throw new HttpError(400, "Enter the amount received.");
+    if (amount > due + 0.5) throw new HttpError(400, `That is more than the balance of ${kes(due)}.`);
+    if (!["cash", "mpesa", "card", "bank_transfer"].includes(method)) throw new HttpError(400, "Choose how the customer paid.");
+    if (method === "mpesa" && !reference) throw new HttpError(400, "Enter the M-Pesa code.");
+    if (reference) {
+      const k = normalizeRef(reference);
+      if (isRealRef(k)) {
+        if (inFlight.has(k)) throw new HttpError(409, duplicateRefMessage(reference, "another payment being saved right now"));
+        const used = await findReferenceUse(reference, o.claimId ? { table: "water_payment_claims", id: o.claimId } : {});
+        if (used) throw new HttpError(409, duplicateRefMessage(reference, used));
+        lock = k; inFlight.add(k);
+      }
+    }
+    const open = await sql`SELECT id, bill_number, current_charges - amount_paid AS owing FROM water_bills WHERE customer_id = ${id} AND status IN ('unpaid','partially_paid') ORDER BY period_month, id` as any[];
+    let left = amount; const alloc: { billId: number; billNumber: string; amount: number }[] = [];
+    for (const b of open) { if (left <= 0.004) break; const a = r2(Math.min(left, n(b.owing))); if (a > 0) { alloc.push({ billId: b.id, billNumber: b.bill_number, amount: a }); left = r2(left - a); } }
+    const firstBill = alloc[0]?.billId ?? open[0]?.id ?? null;
+    const [p] = await sql`INSERT INTO water_bill_payments (customer_id, bill_id, amount, payment_method, payment_reference, allocation_json, paid_at, recorded_by)
+      VALUES (${id}, ${firstBill}, ${amount}, ${method}, ${reference}, ${JSON.stringify(alloc)}, ${Date.now()}, ${o.by}) RETURNING *` as any[];
+    await reallocate(id);
+    const balance = r2(due - amount);
+    const doc = firstBill ? await issueDocument(storage, {
+      docType: "receipt", category: "water_bill", sourceId: firstBill, customDocNumber: `${c.account_no}-P${p.id}`,
+      recipientName: c.name, recipientEmail: c.email || null, issueDate: prettyDate(today()),
+      lineItems: alloc.length ? alloc.map((a) => ({ label: `Payment towards water bill ${a.billNumber}`, amount: a.amount })) : [{ label: "Water account payment", amount }],
+      totalAmount: due, amountPaid: amount, balance, paymentAmount: amount, paymentMethod: method, paymentReference: reference,
+      notes: `Account ${c.account_no}${c.meter_number ? ` · Meter ${c.meter_number}` : ""}. ${balance > 0.5 ? `Remaining balance: ${kes(balance)}.` : "Account fully paid."}`,
+    }).catch(() => null) : null;
+    if (c.phone) {
+      const settings = await storage.getSettings();
+      void sendSms({ source: "Water payment", settings, to: c.phone, message: `Hi ${c.name}, payment received for your water account ${c.account_no}: ${kes(amount)}${reference ? ` (${reference})` : ""}. ${balance > 0.5 ? `Balance: ${kes(balance)}.` : "Paid in full."} Thank you.` }).catch(() => null);
+    }
+    return { ok: true, paymentId: Number(p.id), amount, balance, allocation: alloc, _document: doc ? { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } : null };
+  } finally { if (lock) inFlight.delete(lock); }
+}
+
+// ---------- pasted M-Pesa messages (meter readers) checked by the office ----------
+type ClaimCheck = { key: string; label: string; ok: boolean; block?: boolean; detail: string };
+/** M-Pesa code, or a bank's own transaction reference when the alert has no M-Pesa code. */
+function messageRef(text: string, p: ReturnType<typeof parseMpesaMessage>): string | null {
+  if (p.code) return p.code;
+  const m = text.toUpperCase().match(/\b(?:REF(?:ERENCE)?|TRANSACTION\s+(?:ID|REF(?:ERENCE)?)|TRN|TXN)(?:\s+(?:NUMBER|NO\.?|CODE))?\s*[:.#-]?\s*([A-Z0-9]{6,20})\b/) ?? text.toUpperCase().match(/\b(FT[A-Z0-9]{8,16})\b/);
+  return m && /\d/.test(m[1]) && /[A-Z]/.test(m[1]) ? m[1] : null;
+}
+const isMpesaMessage = (text: string) => /M-?PESA/i.test(text) || /\bConfirmed\b/i.test(text);
+/** Reads a pasted M-Pesa/bank SMS and checks that it looks genuine. Blocking failures stop the submission. */
+export async function checkPaymentMessage(message: string, customer: any, excludeClaimId?: number) {
+  const s = await storage.getSettings() as any;
+  const p = parseMpesaMessage(message);
+  const ref = messageRef(message, p);
+  const viaMpesa = isMpesaMessage(message);
+  const checks: ClaimCheck[] = [];
+  const add = (key: string, label: string, ok: boolean, detail: string, block = false) => checks.push({ key, label, ok, block: !ok && block, detail });
+  add("code", viaMpesa ? "M-Pesa code" : "Bank reference", !!ref && (!p.code || MPESA_CODE_RE.test(p.code)), ref ? `${ref}${viaMpesa ? "" : " (bank transfer)"}` : "No M-Pesa code or bank reference found in the message", true);
+  add("amount", "Amount", p.amount != null && p.amount > 0, p.amount != null ? kes(p.amount) : "No amount found in the message", true);
+  if (ref) {
+    const used = await findReferenceUse(ref, excludeClaimId ? { table: "water_payment_claims", id: excludeClaimId } : {});
+    add("unused", "Code not used before", !used, used ? `Already used on ${used}` : "Not used anywhere in the system", true);
+  }
+  const now = Date.now();
+  const maxAgeH = Math.max(1, Number(s.mpesaMessageMaxAgeHours) || 24);
+  if (p.paidAt == null) add("date", "Payment date", false, "No date and time found in the message");
+  else if (p.paidAt - now > 2 * 3600_000) add("date", "Payment date", false, `${p.paidAtText} is in the future`, true);
+  else add("date", "Payment date", now - p.paidAt <= maxAgeH * 3600_000, `${p.paidAtText}${now - p.paidAt > maxAgeH * 3600_000 ? ` (older than ${maxAgeH} hours)` : ""}`);
+  // Paid to us: business name/number on the customer's message, or our account digits on a bank/paybill message.
+  const banks = await sql`SELECT account_number FROM bank_accounts WHERE active = 1 AND account_number IS NOT NULL` as any[];
+  const ours = [s.mpesaAccountNumber, s.invoiceBankAccountNumber, customer?.account_no, ...banks.map((b) => b.account_number)].map((x: any) => String(x ?? "").replace(/\D/g, "")).filter((x: string) => x.length >= 3);
+  const acct = String(p.account ?? "").replace(/\D/g, "");
+  const accountOk = !!acct && ours.some((o: string) => o.endsWith(acct.slice(-4)) || acct.endsWith(o.slice(-4)));
+  const toUs = (p.direction === "received" && !acct) || recipientMatches(p, s.mpesaBusinessName || s.hotelName, s.mpesaNumber) || accountOk;
+  add("recipient", "Paid to us", toUs, p.direction === "received" ? `Received by the business${p.counterpartyName ? ` from ${p.counterpartyName}` : ""}${p.account ? ` · account ${p.account}${accountOk ? "" : " (not one of our accounts)"}` : ""}` : `${p.recipient ?? "Recipient not found"}${p.account ? ` · account ${p.account}` : ""}`);
+  if (customer) {
+    const due = await balanceOf(Number(customer.id));
+    if (p.amount != null) add("balance", "Within balance", p.amount <= due + 0.5, `Balance ${kes(due)}${p.amount > due + 0.5 ? ` — the message is ${kes(p.amount - due)} more` : ""}`);
+  }
+  return { parsed: { ...p, code: ref }, method: viaMpesa ? "mpesa" : "bank_transfer", checks, blocked: checks.filter((c) => c.block) };
+}
+async function pendingClaimCustomers(): Promise<Set<number>> {
+  const rows = await sql`SELECT DISTINCT customer_id FROM water_payment_claims WHERE status IN ('pending', 'posting')` as any[];
+  return new Set(rows.map((r) => Number(r.customer_id)));
+}
+const claimOut = (r: any) => ({ id: r.id, customerId: r.customer_id, customerName: r.name ?? null, accountNo: r.account_no ?? null, message: r.raw_message, reference: r.payment_reference, amount: n(r.amount),
+  paidAt: r.paid_at === null ? null : Number(r.paid_at), payerName: r.payer_name, recipient: r.recipient, account: r.account, checks: JSON.parse(r.checks_json || "[]"), status: r.status,
+  submittedBy: r.submitted_by, submittedAt: Number(r.submitted_at), reviewedBy: r.reviewed_by, reviewedAt: r.reviewed_at === null ? null : Number(r.reviewed_at), reviewNote: r.review_note, postedAmount: r.posted_amount === null ? null : n(r.posted_amount) });
+
+/** Meter reader: submit a pasted message for a water customer. */
+export async function submitWaterPaymentClaim(customerId: number, message: string, by: string) {
+  const text = String(message ?? "").trim().slice(0, 1500);
+  if (!text) throw new HttpError(400, "Paste the M-Pesa or bank message.");
+  const [c] = await sql`SELECT * FROM water_customers WHERE id = ${customerId}` as any[];
+  if (!c) throw new HttpError(404, "Customer not found");
+  const k = normalizeRef(messageRef(text, parseMpesaMessage(text)) ?? "");
+  if (k && inFlight.has(k)) throw new HttpError(409, duplicateRefMessage(k, "another payment being saved right now"));
+  if (k) inFlight.add(k);
+  try {
+    const r = await checkPaymentMessage(text, c);
+    if (r.blocked.length) throw new HttpError(400, r.blocked.map((b) => `${b.label}: ${b.detail}`).join(". "));
+    const p = r.parsed;
+    const [row] = await sql`INSERT INTO water_payment_claims (customer_id, raw_message, payment_reference, amount, paid_at, payer_name, recipient, account, checks_json, status, submitted_by, submitted_at)
+      VALUES (${customerId}, ${text}, ${p.code}, ${p.amount}, ${p.paidAt}, ${p.counterpartyName}, ${p.recipient}, ${p.account}, ${JSON.stringify(r.checks)}, 'pending', ${by}, ${Date.now()})
+      ON CONFLICT (payment_reference) DO NOTHING RETURNING *` as any[];
+    if (!row) throw new HttpError(409, duplicateRefMessage(p.code, "a water payment sent to the office for checking"));
+    const warn = r.checks.filter((x) => !x.ok).length;
+    const { notifyModuleUsers } = await import("./director");
+    void notifyModuleUsers("water-sales", { category: "system", title: `Water payment to check: ${c.name} ${kes(n(p.amount))}`,
+      body: `${p.code} pasted by ${by}${warn ? ` · ${warn} check${warn === 1 ? "" : "s"} need attention` : " · all checks passed"}`, linkPath: "/water-sales" });
+    return claimOut({ ...row, name: c.name, account_no: c.account_no });
+  } finally { if (k) inFlight.delete(k); }
+}
+export async function listWaterPaymentClaims(o: { status?: string | null; submittedBy?: string | null; limit?: number }) {
+  const rows = await sql`SELECT w.*, c.name, c.account_no FROM water_payment_claims w JOIN water_customers c ON c.id = w.customer_id
+    WHERE (${o.status ?? null}::text IS NULL OR w.status = ${o.status ?? null}) AND (${o.submittedBy ?? null}::text IS NULL OR w.submitted_by = ${o.submittedBy ?? null})
+    ORDER BY (w.status = 'pending') DESC, w.submitted_at DESC LIMIT ${o.limit ?? 100}` as any[];
+  return rows.map(claimOut);
 }
 
 // ---------- statement ----------
@@ -510,7 +641,8 @@ export async function applyWaterPenalties(base: string) {
   const cutoff = addDays(date, -Number(s.waterPenaltyGraceDays ?? 10)); // due before cutoff = more than the grace days late
   const over = await sql`SELECT b.* FROM water_bills b WHERE b.kind = 'water' AND b.status IN ('unpaid', 'partially_paid')
     AND b.due_date >= ${s.waterPenaltyFrom || date} AND b.due_date < ${cutoff}
-    AND NOT EXISTS (SELECT 1 FROM water_bills p WHERE p.penalty_for_bill_id = b.id) ORDER BY b.customer_id, b.id` as any[];
+    AND NOT EXISTS (SELECT 1 FROM water_bills p WHERE p.penalty_for_bill_id = b.id)
+    AND NOT EXISTS (SELECT 1 FROM water_payment_claims w WHERE w.customer_id = b.customer_id AND w.status IN ('pending', 'posting')) ORDER BY b.customer_id, b.id` as any[]; // paused while a pasted payment awaits the office
   const out: { customerId: number; billNumber: string; forBillNumber: string; amount: number; bill: any; pdfUrl: string | null; email: string }[] = [];
   for (const w of over) {
     const outstanding = r2(n(w.current_charges) - n(w.amount_paid));
@@ -543,10 +675,12 @@ export async function sendWaterReminders(base: string, penalties: Awaited<Return
   const byCustomer = new Map<number, any[]>();
   for (const b of open) { const k = Number(b.customer_id); byCustomer.set(k, [...(byCustomer.get(k) ?? []), b]); }
   const pct = n(s.waterPenaltyPercent ?? 5), grace = Number(s.waterPenaltyGraceDays ?? 10), penaltyOn = Number(s.waterPenaltyEnabled ?? 1) === 1 && pct > 0;
+  const paused = await pendingClaimCustomers();
   const results: { customerId: number; customer: string; balance: number; sms: string; email: string }[] = [];
   for (const [customerId, bills] of Array.from(byCustomer)) {
     const balance = bal.get(customerId)?.balance ?? 0;
     if (balance <= 0.5) continue; // settled (or in credit): reminders stop
+    if (paused.has(customerId)) continue; // a pasted M-Pesa payment is waiting for the office to confirm
     const newToday = penalties.filter((p) => p.customerId === customerId);
     if (!newToday.length && bills.every((b) => b.bill_date === date)) continue; // the bill itself went out today
     const [claim] = await sql`INSERT INTO water_reminder_log (run_date, customer_id, balance, sent_at) VALUES (${date}, ${customerId}, ${balance}, ${Date.now()}) ON CONFLICT DO NOTHING RETURNING customer_id` as any[];
@@ -879,6 +1013,46 @@ export function registerWaterBillingRoutes(app: Express) {
     } catch (e) { fail(res, e); }
   });
 
+  // Pasted M-Pesa messages waiting for the office
+  app.get("/api/water-billing/payment-claims", W, async (req, res) => {
+    const status = ["pending", "confirmed", "rejected"].includes(String(req.query.status)) ? String(req.query.status) : null;
+    const rows = await listWaterPaymentClaims({ status, limit: 200 });
+    const bal = await customerBalances();
+    res.json(rows.map((r) => ({ ...r, balance: bal.get(Number(r.customerId))?.balance ?? 0 })));
+  });
+  app.post("/api/water-billing/payment-claims/:id/confirm", W, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [cl] = await sql`SELECT * FROM water_payment_claims WHERE id = ${id}` as any[];
+      if (!cl) return res.status(404).json({ error: "Not found" });
+      if (cl.status !== "pending") return res.status(409).json({ error: `Already ${cl.status}.` });
+      const customerId = req.body?.customerId ? Number(req.body.customerId) : Number(cl.customer_id);
+      const amount = req.body?.amount !== undefined ? Number(req.body.amount) : n(cl.amount);
+      // Claim it first so two office users can't post it twice.
+      const [mine] = await sql`UPDATE water_payment_claims SET status = 'posting' WHERE id = ${id} AND status = 'pending' RETURNING id` as any[];
+      if (!mine) return res.status(409).json({ error: "Someone else is confirming this payment." });
+      try {
+        const r = await postWaterPayment({ customerId, amount, method: isMpesaMessage(cl.raw_message) ? "mpesa" : "bank_transfer", reference: cl.payment_reference, by: who(req), claimId: id });
+        await sql`UPDATE water_payment_claims SET status = 'confirmed', customer_id = ${customerId}, reviewed_by = ${who(req)}, reviewed_at = ${Date.now()}, payment_id = ${r.paymentId}, posted_amount = ${r.amount},
+          review_note = ${String(req.body?.note ?? "").trim() || null} WHERE id = ${id}`;
+        res.json(r);
+      } catch (e: any) {
+        await sql`UPDATE water_payment_claims SET status = 'pending' WHERE id = ${id} AND status = 'posting'`;
+        res.status(e?.status ?? 400).json({ error: e?.message ?? "Failed" });
+      }
+    } catch (e) { fail(res, e); }
+  });
+  app.post("/api/water-billing/payment-claims/:id/reject", W, async (req, res) => {
+    const reason = String(req.body?.reason ?? "").trim();
+    if (reason.length < 3) return res.status(400).json({ error: "Give a reason for rejecting." });
+    const [r] = await sql`UPDATE water_payment_claims SET status = 'rejected', reviewed_by = ${who(req)}, reviewed_at = ${Date.now()}, review_note = ${reason}
+      WHERE id = ${Number(req.params.id)} AND status = 'pending' RETURNING *` as any[];
+    if (!r) return res.status(409).json({ error: "This payment is no longer pending." });
+    const { notifyUserByFullName } = await import("./director");
+    void notifyUserByFullName(r.submitted_by, { category: "system", title: `Water payment ${r.payment_reference} rejected`, body: reason, linkPath: "/meter-readings" });
+    res.json({ ok: true });
+  });
+
   // Daily reminders and late payment penalties
   app.get("/api/water-billing/reminders", W, async (_req, res) => {
     const rows = await sql`SELECT l.*, c.name, c.account_no FROM water_reminder_log l JOIN water_customers c ON c.id = l.customer_id
@@ -896,51 +1070,10 @@ export function registerWaterBillingRoutes(app: Express) {
 
   // Payments — on the customer's account, applied oldest bill first.
   app.post("/api/water-billing/customers/:id/record-payment", W, async (req, res) => {
-    let lock: string | null = null;
     try {
-      const id = Number(req.params.id);
-      const [c] = await sql`SELECT * FROM water_customers WHERE id = ${id}` as any[];
-      if (!c) return res.status(404).json({ error: "Customer not found" });
-      const due = await balanceOf(id);
-      const amount = r2(Number(req.body?.amount));
-      const method = String(req.body?.paymentMethod ?? "").trim();
-      const reference = String(req.body?.paymentReference ?? "").trim().toUpperCase() || null;
-      if (!(due > 0.004)) return res.status(409).json({ error: "This account has nothing to pay." });
-      if (!(amount > 0)) return res.status(400).json({ error: "Enter the amount received." });
-      if (amount > due + 0.5) return res.status(400).json({ error: `That is more than the balance of ${kes(due)}.` });
-      if (!["cash", "mpesa", "card", "bank_transfer"].includes(method)) return res.status(400).json({ error: "Choose how the customer paid." });
-      if (method === "mpesa" && !reference) return res.status(400).json({ error: "Enter the M-Pesa code." });
-      if (reference) {
-        const k = normalizeRef(reference);
-        if (isRealRef(k)) {
-          if (inFlight.has(k)) return res.status(409).json({ error: duplicateRefMessage(reference, "another payment being saved right now") });
-          const used = await findReferenceUse(reference);
-          if (used) return res.status(409).json({ error: duplicateRefMessage(reference, used) });
-          lock = k; inFlight.add(k);
-        }
-      }
-      const open = await sql`SELECT id, bill_number, current_charges - amount_paid AS owing FROM water_bills WHERE customer_id = ${id} AND status IN ('unpaid','partially_paid') ORDER BY period_month, id` as any[];
-      let left = amount; const alloc: { billId: number; billNumber: string; amount: number }[] = [];
-      for (const b of open) { if (left <= 0.004) break; const a = r2(Math.min(left, n(b.owing))); if (a > 0) { alloc.push({ billId: b.id, billNumber: b.bill_number, amount: a }); left = r2(left - a); } }
-      const firstBill = alloc[0]?.billId ?? open[0]?.id ?? null;
-      const [p] = await sql`INSERT INTO water_bill_payments (customer_id, bill_id, amount, payment_method, payment_reference, allocation_json, paid_at, recorded_by)
-        VALUES (${id}, ${firstBill}, ${amount}, ${method}, ${reference}, ${JSON.stringify(alloc)}, ${Date.now()}, ${who(req)}) RETURNING *` as any[];
-      await reallocate(id);
-      const balance = r2(due - amount);
-      const doc = firstBill ? await issueDocument(storage, {
-        docType: "receipt", category: "water_bill", sourceId: firstBill, customDocNumber: `${c.account_no}-P${p.id}`,
-        recipientName: c.name, recipientEmail: c.email || null, issueDate: prettyDate(today()),
-        lineItems: alloc.length ? alloc.map((a) => ({ label: `Payment towards water bill ${a.billNumber}`, amount: a.amount })) : [{ label: "Water account payment", amount }],
-        totalAmount: due, amountPaid: amount, balance, paymentAmount: amount, paymentMethod: method, paymentReference: reference,
-        notes: `Account ${c.account_no}${c.meter_number ? ` · Meter ${c.meter_number}` : ""}. ${balance > 0.5 ? `Remaining balance: ${kes(balance)}.` : "Account fully paid."}`,
-      }).catch(() => null) : null;
-      if (c.phone) {
-        const settings = await storage.getSettings();
-        void sendSms({ source: "Water payment", settings, to: c.phone, message: `Hi ${c.name}, payment received for your water account ${c.account_no}: ${kes(amount)}${reference ? ` (${reference})` : ""}. ${balance > 0.5 ? `Balance: ${kes(balance)}.` : "Paid in full."} Thank you.` }).catch(() => null);
-      }
-      res.status(201).json({ ok: true, amount, balance, allocation: alloc, _document: doc ? { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } : null });
-    } catch (e) { fail(res, e); }
-    finally { if (lock) inFlight.delete(lock); }
+      const r = await postWaterPayment({ customerId: Number(req.params.id), amount: Number(req.body?.amount), method: String(req.body?.paymentMethod ?? ""), reference: req.body?.paymentReference, by: who(req) });
+      res.status(201).json(r);
+    } catch (e: any) { res.status(e?.status ?? 400).json({ error: e?.message ?? "Failed" }); }
   });
   app.get("/api/water-billing/customers/:id/payments", W, async (req, res) => {
     res.json(await sql`SELECT * FROM water_bill_payments WHERE customer_id = ${Number(req.params.id)} ORDER BY paid_at DESC` as any[]);

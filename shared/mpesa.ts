@@ -36,7 +36,7 @@ const DATE_RE = /\bon\s+(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\s*(?:at\s*)?(\
 // Bank-style "05/10/26 14:27:55" with no "on" in front.
 // "at 12 OCT 2026 3:29 PM", "on 12-Oct-2026 15:29", "12 October 2026 at 3:29 PM"
 const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
-const DATE_NAMED_RE = /\b(\d{1,2})[\s\-\/]*(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEPT?|OCT|NOV|DEC)[A-Z]*\.?[\s\-\/,]*(\d{2,4})\s*(?:at\s*)?(\d{1,2}):(\d{2})(?::\d{2})?\s*([AP]\.?M\.?)?/i;
+const DATE_NAMED_RE = /\b(\d{1,2})[\s\-\/]*(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEPT?|OCT|NOV|DEC)[A-Z]*\.?[\s\-\/,]*(\d{2,4})(?:\s*(?:at\s*)?(\d{1,2}):(\d{2})(?::\d{2})?\s*([AP]\.?M\.?)?)?/i;
 const DATE_BARE_RE = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*(?:at\s*)?(\d{1,2}):(\d{2})(?::\d{2})?\s*([AP]\.?M\.?)?/i;
 
 export function parseMpesaMessage(raw: string): ParsedMpesa {
@@ -67,7 +67,9 @@ export function parseMpesaMessage(raw: string): ParsedMpesa {
     let [, dd, mm, yy, hh, mi, ap] = d;
     let year = Number(yy);
     if (year < 100) year += 2000;
-    let hour = Number(hh);
+    const noTime = hh === undefined;
+    let hour = noTime ? 0 : Number(hh);
+    if (noTime) mi = "00";
     if (ap) {
       const pm = ap.toUpperCase().startsWith("P");
       if (pm && hour < 12) hour += 12;
@@ -76,21 +78,24 @@ export function parseMpesaMessage(raw: string): ParsedMpesa {
     const ms = Date.UTC(year, Number(mm) - 1, Number(dd), hour - 3, Number(mi));
     if (Number.isFinite(ms)) {
       out.paidAt = ms;
-      out.paidAtText = `${String(dd).padStart(2, "0")}/${String(mm).padStart(2, "0")}/${year} ${String(hour).padStart(2, "0")}:${mi}`;
+      out.paidAtText = `${String(dd).padStart(2, "0")}/${String(mm).padStart(2, "0")}/${year}${noTime ? "" : ` ${String(hour).padStart(2, "0")}:${mi}`}`;
     }
   }
 
   // Bank credit alert: "We have received a credit of KES 1500.00 from NAME for account ***9914 at …"
   //  also "KES 1,500.00 has been credited to your account … from NAME …"
-  const credit = /\b(?:credit\s+of|credited|deposit\s+of)\b/i.test(text)
+  const isCredit = /\b(?:credit\s+of|credited|deposit\s+of)\b/i.test(text);
+  const credit = isCredit
     ? text.match(/\bfrom\s+(.+?)\s*(?:,|\.\s|\s(?:for|to)\s+(?:a\/c|acc(?:oun)?t?\.?(?:\s*no\.?)?)\b|\s(?:on|at)\s+\d|\s(?:M-?PESA\s+)?REF\b|$)/i) : null;
-  if (credit) {
+  if (isCredit) {
     out.direction = "received";
-    let who = credit[1].replace(/[.,]+$/, "").trim();
-    const phone = who.match(/\s(\+?\d[\d\s]{8,13}\d)$/);
-    if (phone) { out.counterpartyPhone = phone[1].replace(/\s/g, ""); who = who.slice(0, phone.index).trim(); }
-    out.counterpartyName = who || null;
-    const acc = text.match(/\b(?:for|to)\s+(?:a\/c|acc(?:oun)?t?\.?(?:\s*no\.?)?)\s*:?\s*([*xX\d][*xX\d\-]{2,})/i);
+    if (credit) {
+      let who = credit[1].replace(/[.,]+$/, "").trim();
+      const phone = who.match(/\s(\+?\d[\d\s]{8,13}\d)$/);
+      if (phone) { out.counterpartyPhone = phone[1].replace(/\s/g, ""); who = who.slice(0, phone.index).trim(); }
+      out.counterpartyName = who || null;
+    }
+    const acc = text.match(/\b(?:for|to|your)\s+(?:a\/c|acc(?:oun)?t?\.?(?:\s*no\.?)?)\s*:?\s*([*xX\d][*xX\d\-]{2,})/i);
     if (acc) out.account = acc[1];
     const dear = text.match(/^\s*Dear\s+(.+?)\s*[,.]/i);
     if (dear) out.recipient = dear[1].trim();

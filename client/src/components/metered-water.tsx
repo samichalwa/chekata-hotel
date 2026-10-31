@@ -1,7 +1,7 @@
 // Metered water customers: monthly meter readings → monthly bills (m³), payments, statements.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, FileText, MessageCircle, Send, Ban, FileSpreadsheet, Gauge, Users, Wallet, AlertTriangle, Save, Receipt, Camera, ScanLine, ImageIcon, PiggyBank, CheckCircle2, BellRing } from "lucide-react";
+import { Plus, Pencil, Trash2, FileText, MessageCircle, Send, Ban, FileSpreadsheet, Gauge, Users, Wallet, AlertTriangle, Save, Receipt, Camera, ScanLine, ImageIcon, PiggyBank, CheckCircle2, BellRing, XCircle, Smartphone } from "lucide-react";
 import { StatCard } from "@/components/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -354,6 +354,7 @@ function BillsTab() {
   };
   return (
     <div className="space-y-4">
+      <PaymentClaimsCard />
       <Card className="p-4 flex flex-wrap items-end gap-3">
         <div className="space-y-1.5"><Label htmlFor="wbl-month">Month</Label><Input id="wbl-month" type="month" className="w-44" value={month} onChange={(e) => setMonth(e.target.value)} data-testid="input-bills-month" /></div>
         <div className="space-y-1.5"><Label>Status</Label>
@@ -910,6 +911,84 @@ function DepositAccountsCard() {
           <SelectContent>{data.banks.map((b: any) => <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}</SelectContent></Select></div>
       {!me?.isAdmin && <p className="text-xs text-muted-foreground w-full">Only an admin can change these.</p>}
       {data.liabilities.length === 0 && <p className="text-xs text-destructive w-full">No liability accounts yet. Add one in Finance → Chart of accounts (e.g. 2150 Water Customer Deposits).</p>}
+    </Card>
+  );
+}
+
+export type Check = { key: string; label: string; ok: boolean; block?: boolean; detail: string };
+export function CheckList({ checks, testId }: { checks: Check[]; testId?: string }) {
+  return (
+    <ul className="space-y-1 text-sm" data-testid={testId}>
+      {checks.map((c) => (
+        <li key={c.key} className="flex items-start gap-2">
+          {c.ok ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-600" /> : c.block ? <XCircle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" /> : <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />}
+          <span><span className="font-medium">{c.label}</span> <span className="text-muted-foreground">· {c.detail}</span></span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+type PaymentClaim = { id: number; customerId: number; customerName: string; accountNo: string; message: string; reference: string; amount: number; paidAt: number | null; payerName: string | null; status: string; submittedBy: string; submittedAt: number; balance: number; checks: Check[] };
+/** M-Pesa messages pasted by meter readers. The office confirms (posts the payment) or rejects; reminders pause meanwhile. */
+function PaymentClaimsCard() {
+  const { toast } = useToast();
+  const { data: claims = [] } = useQuery<PaymentClaim[]>({ queryKey: ["/api/water-billing/payment-claims", "pending"], queryFn: async () => (await apiRequest("GET", "/api/water-billing/payment-claims?status=pending")).json(), refetchInterval: 60000 });
+  const [confirm, setConfirm] = useState<PaymentClaim | null>(null);
+  const [reject, setReject] = useState<PaymentClaim | null>(null);
+  const [amount, setAmount] = useState(""); const [reason, setReason] = useState("");
+  const refresh = () => { invalidateAll(); queryClient.invalidateQueries({ queryKey: ["/api/water-billing/payment-claims"] }); };
+  const doConfirm = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/water-billing/payment-claims/${confirm!.id}/confirm`, { amount: Number(amount) })).json(),
+    onSuccess: (r: any) => { refresh(); toast({ title: "Payment posted", description: `${formatKES(r.amount)} received. ${r.balance > 0.5 ? `Balance ${formatKES(r.balance)}.` : "Account fully paid."} Receipt sent.` }); setConfirm(null); },
+    onError: (e) => toast({ title: "Couldn't post", description: errMsg(e), variant: "destructive" }),
+  });
+  const doReject = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/water-billing/payment-claims/${reject!.id}/reject`, { reason })).json(),
+    onSuccess: () => { refresh(); toast({ title: "Payment rejected", description: "Reminders to this customer resume." }); setReject(null); setReason(""); },
+    onError: (e) => toast({ title: "Couldn't reject", description: errMsg(e), variant: "destructive" }),
+  });
+  if (!claims.length) return null;
+  return (
+    <Card className="p-4 space-y-3 border-amber-500/50" data-testid="card-payment-claims">
+      <div><div className="text-sm font-medium flex items-center gap-2"><Smartphone className="h-4 w-4" />Payments to check ({claims.length})</div>
+        <p className="text-xs text-muted-foreground mt-0.5">M-Pesa and bank messages pasted by meter readers. Check each against your M-Pesa / bank statement, then confirm to post it. Reminders and penalties for these customers are paused until you decide.</p></div>
+      {claims.map((c) => {
+        const warn = c.checks.filter((x) => !x.ok).length;
+        return (
+          <div key={c.id} className="rounded-md border p-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] md:items-start" data-testid={`row-payment-claim-${c.id}`}>
+            <div className="min-w-0 text-sm">
+              <div className="font-medium truncate">{c.customerName} <span className="text-xs text-muted-foreground font-normal">{c.accountNo}</span></div>
+              <div><span className="font-medium">{formatKES(c.amount)}</span> · {c.reference}</div>
+              <div className="text-xs text-muted-foreground">Balance {formatKES(c.balance)} · pasted by {c.submittedBy}, {new Date(c.submittedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
+              <Badge variant={warn ? "default" : "secondary"} className="mt-1">{warn ? `${warn} check${warn === 1 ? "" : "s"} need attention` : "All checks passed"}</Badge>
+            </div>
+            <div className="space-y-2 min-w-0"><CheckList checks={c.checks} testId={`list-payment-claim-checks-${c.id}`} />
+              <details className="text-xs"><summary className="cursor-pointer text-muted-foreground">Pasted message</summary><p className="mt-1 whitespace-pre-wrap break-words">{c.message}</p></details></div>
+            <div className="flex gap-2 md:flex-col">
+              <Button size="sm" onClick={() => { setConfirm(c); setAmount(String(Math.min(c.amount, Math.max(0, c.balance)))); }} data-testid={`button-confirm-claim-${c.id}`}><CheckCircle2 className="h-4 w-4 mr-1" />Confirm &amp; post</Button>
+              <Button size="sm" variant="outline" onClick={() => { setReject(c); setReason(""); }} data-testid={`button-reject-claim-${c.id}`}><XCircle className="h-4 w-4 mr-1" />Reject</Button>
+            </div>
+          </div>
+        );
+      })}
+      <Dialog open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Post {confirm?.reference}?</DialogTitle>
+            <DialogDescription>Only confirm once you have seen this payment on the M-Pesa or bank statement. The payment is applied to {confirm?.customerName}'s oldest bills first and a receipt is sent.</DialogDescription></DialogHeader>
+          <div className="space-y-1.5"><Label htmlFor="pc-amount">Amount to post (KES)</Label><Input id="pc-amount" type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-claim-amount" />
+            {confirm && confirm.amount > confirm.balance + 0.5 && <p className="text-xs text-muted-foreground">The message shows {formatKES(confirm.amount)} but the balance is {formatKES(confirm.balance)}.</p>}</div>
+          <DialogFooter><Button variant="outline" onClick={() => setConfirm(null)}>Back</Button><Button disabled={!(Number(amount) > 0) || doConfirm.isPending} onClick={() => doConfirm.mutate()} data-testid="button-confirm-claim-post">{doConfirm.isPending ? "Posting…" : "Confirm & post"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!reject} onOpenChange={(o) => !o && setReject(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Reject {reject?.reference}?</DialogTitle>
+            <DialogDescription>Nothing is posted and payment reminders to {reject?.customerName} resume. {reject?.submittedBy} is told why.</DialogDescription></DialogHeader>
+          <div className="space-y-1.5"><Label htmlFor="pc-reason">Reason</Label><Textarea id="pc-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Not on the M-Pesa statement" data-testid="input-claim-reject-reason" /></div>
+          <DialogFooter><Button variant="outline" onClick={() => setReject(null)}>Back</Button><Button variant="destructive" disabled={reason.trim().length < 3 || doReject.isPending} onClick={() => doReject.mutate()} data-testid="button-confirm-claim-reject">Reject</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

@@ -13,7 +13,7 @@ import { issueDocument } from "./documents";
 import { sendSms } from "./sms";
 import { inFlight } from "./payment-refs";
 import { runWithEnvironment } from "./db-context";
-import { waterReadingRows, saveWaterReadings, scanMeterPhoto, takeScan, raiseWaterBills, UserError } from "./water-billing";
+import { waterReadingRows, saveWaterReadings, scanMeterPhoto, takeScan, raiseWaterBills, UserError, checkPaymentMessage, submitWaterPaymentClaim, listWaterPaymentClaims } from "./water-billing";
 import { UploadValidationError } from "./uploads";
 import { monthLabel } from "@shared/water-billing";
 
@@ -248,6 +248,27 @@ export function startMeterAutoBillingSchedule(log: (m: string) => void) {
 export function registerMeterReadingRoutes(app: Express) {
   const M = requireModule("meter-readings");
   const ANY = requireAnyModule(["meter-readings", "water-sales", "tenants"]);
+
+  // Pasted M-Pesa messages for water customers: checked here, then confirmed or rejected by the office.
+  const readerName = (req: Request) => (req as any).user?.fullName ?? (req as any).user?.username ?? "staff";
+  app.post("/api/meter-reader/payment-claims/check", M, async (req, res) => {
+    try {
+      const [c] = await sql`SELECT * FROM water_customers WHERE id = ${Number(req.body?.customerId)}` as any[];
+      const r = await checkPaymentMessage(String(req.body?.message ?? "").slice(0, 1500), c ?? null);
+      // Readers see the checks but not account balances.
+      res.json({ code: r.parsed.code, amount: r.parsed.amount, paidAtText: r.parsed.paidAtText, payer: r.parsed.counterpartyName, checks: r.checks.filter((x) => x.key !== "balance"), blocked: r.blocked.length > 0 });
+    } catch (e) { fail(res, e); }
+  });
+  app.post("/api/meter-reader/payment-claims", M, async (req, res) => {
+    try {
+      const r = await submitWaterPaymentClaim(Number(req.body?.customerId), String(req.body?.message ?? ""), readerName(req));
+      res.status(201).json({ ...r, checks: r.checks.filter((x: any) => x.key !== "balance") });
+    } catch (e: any) { res.status(e?.status ?? 400).json({ error: e?.message ?? "Failed" }); }
+  });
+  app.get("/api/meter-reader/payment-claims", M, async (req, res) => {
+    const rows = await listWaterPaymentClaims({ submittedBy: readerName(req), limit: 50 });
+    res.json(rows.map((r) => ({ ...r, checks: r.checks.filter((x: any) => x.key !== "balance") })));
+  });
 
   app.get("/api/meter-reader/settings", ANY, async (_req, res) => {
     const c = await billingSettings();

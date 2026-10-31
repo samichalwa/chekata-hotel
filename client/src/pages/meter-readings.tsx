@@ -3,7 +3,8 @@
 // are billed by the system automatically once the review window (Settings below, admin only) has passed.
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Gauge, Droplets, Zap, Save, Camera, ScanLine, ImageIcon, Settings2, Clock, CheckCircle2 } from "lucide-react";
+import { Gauge, Droplets, Zap, Save, Camera, ScanLine, ImageIcon, Settings2, Clock, CheckCircle2, Wallet, Send } from "lucide-react";
+import { PaymentSmsPaste } from "@/components/payment-sms-paste";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { todayISO } from "@/lib/format";
 import { monthLabel } from "@shared/water-billing";
-import { photoToJpeg, defaultReadDate } from "@/components/metered-water";
+import { photoToJpeg, defaultReadDate, CheckList, type Check } from "@/components/metered-water";
 
 type Kind = "water" | "electricity";
 type Row = {
@@ -49,7 +50,7 @@ const when = (ms: number) => {
 export default function MeterReadingsPage() {
   const { data: user } = useCurrentUser();
   const { data: settings } = useQuery<ReaderSettings>({ queryKey: ["/api/meter-reader/settings"] });
-  const [tab, setTab] = useState<Kind>("water");
+  const [tab, setTab] = useState<Kind | "payments">("water");
   return (
     <div className="p-4 sm:p-6 space-y-4 w-full">
       <div className="flex items-start gap-3">
@@ -62,13 +63,15 @@ export default function MeterReadingsPage() {
           </p>
         </div>
       </div>
-      <Tabs value={tab} onValueChange={(v) => setTab(v as Kind)}>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as Kind | "payments")}>
         <TabsList>
           <TabsTrigger value="water" data-testid="tab-water-meters"><Droplets className="h-4 w-4 mr-1" />Water</TabsTrigger>
           <TabsTrigger value="electricity" data-testid="tab-electricity-meters"><Zap className="h-4 w-4 mr-1" />Electricity</TabsTrigger>
+          <TabsTrigger value="payments" data-testid="tab-reader-payments"><Wallet className="h-4 w-4 mr-1" />Water payments</TabsTrigger>
         </TabsList>
         <TabsContent value="water" className="mt-4"><ReaderSheet kind="water" settings={settings} /></TabsContent>
         <TabsContent value="electricity" className="mt-4"><ReaderSheet kind="electricity" settings={settings} /></TabsContent>
+        <TabsContent value="payments" className="mt-4"><PaymentsSheet /></TabsContent>
       </Tabs>
       {!!user?.isAdmin && !!settings && <BillingSettingsCard settings={settings} />}
     </div>
@@ -350,5 +353,68 @@ function BillingSettingsCard({ settings }: { settings: ReaderSettings }) {
       </div>
       {(!delayOk || !dueOk) && <p className="text-xs text-destructive">Use whole numbers: review window 0–720 hours, due days 0–90.</p>}
     </Card>
+  );
+}
+
+type Claim = { id: number; customerName: string; accountNo: string; reference: string; amount: number; status: string; submittedAt: number; reviewedBy: string | null; reviewNote: string | null; postedAmount: number | null; checks: Check[] };
+const kes = (v: number) => `KES ${Math.round(v).toLocaleString("en-KE")}`;
+const CLAIM_STATUS: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
+  pending: { label: "Waiting for office", variant: "outline" }, posting: { label: "Waiting for office", variant: "outline" }, confirmed: { label: "Confirmed", variant: "secondary" }, rejected: { label: "Rejected", variant: "destructive" },
+};
+
+/** Meter readers paste a customer's M-Pesa message; the system checks it and the office confirms it. Reminders pause meanwhile. */
+function PaymentsSheet() {
+  const { toast } = useToast();
+  const [customerId, setCustomerId] = useState<string>("");
+  const [find, setFind] = useState("");
+  const [sms, setSms] = useState("");
+  const [check, setCheck] = useState<{ checks: Check[]; blocked: boolean } | null>(null);
+  const { data: rows = [] } = useQuery<Row[]>({ queryKey: ["/api/meter-reader/water", thisMonth()], queryFn: async () => (await apiRequest("GET", `/api/meter-reader/water?month=${thisMonth()}`)).json() });
+  const { data: claims = [] } = useQuery<Claim[]>({ queryKey: ["/api/meter-reader/payment-claims"] });
+  const customers = [...rows].sort((a, b) => a.name.localeCompare(b.name)).filter((r) => !find || `${r.name} ${r.ref} ${r.meterNumber ?? ""} ${r.location ?? ""}`.toLowerCase().includes(find.toLowerCase()));
+  useEffect(() => {
+    if (!sms.trim()) { setCheck(null); return; }
+    const t = setTimeout(async () => {
+      try { setCheck(await (await apiRequest("POST", "/api/meter-reader/payment-claims/check", { customerId: Number(customerId) || null, message: sms })).json()); } catch { setCheck(null); }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [sms, customerId]);
+  const submit = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/meter-reader/payment-claims", { customerId: Number(customerId), message: sms })).json(),
+    onSuccess: (r: any) => { queryClient.invalidateQueries({ queryKey: ["/api/meter-reader/payment-claims"] }); toast({ title: "Sent to the office", description: `${r.reference} · ${kes(r.amount)} for ${r.customerName}. Reminders to this customer are paused until the office confirms it.` }); setSms(""); setCheck(null); },
+    onError: (e) => toast({ title: "Couldn't send", description: errMsg(e), variant: "destructive" }),
+  });
+  const chosen = rows.find((r) => String(r.id) === customerId);
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <Card className="p-4 space-y-4">
+        <div><div className="font-medium">Paste a customer's M-Pesa or bank message</div>
+          <p className="text-sm text-muted-foreground">The system checks the message, then the office confirms it and posts the payment. Payment reminders to the customer stop while the office checks it.</p></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5"><Label htmlFor="pc-find">Find customer</Label><Input id="pc-find" placeholder="Name, account or meter no." value={find} onChange={(e) => setFind(e.target.value)} data-testid="input-claim-find" /></div>
+          <div className="space-y-1.5"><Label>Customer</Label>
+            <Select value={customerId} onValueChange={setCustomerId}><SelectTrigger data-testid="select-claim-customer"><SelectValue placeholder="Choose customer" /></SelectTrigger>
+              <SelectContent>{customers.map((r) => <SelectItem key={r.id} value={String(r.id)}>{r.name} · {r.ref}</SelectItem>)}{customers.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground">No match</div>}</SelectContent></Select></div>
+        </div>
+        {chosen && <p className="text-xs text-muted-foreground -mt-2">{[chosen.ref, chosen.meterNumber && `Meter ${chosen.meterNumber}`, chosen.location].filter(Boolean).join(" · ")}</p>}
+        <PaymentSmsPaste value={sms} onChange={setSms} onRead={() => {}} testId="claim-sms" />
+        {check && <div className="rounded-md border p-3 space-y-2"><div className="text-sm font-medium">Checks</div><CheckList checks={check.checks} testId="list-claim-checks" /></div>}
+        <div className="flex justify-end"><Button disabled={!customerId || !sms.trim() || !check || check.blocked || submit.isPending} onClick={() => submit.mutate()} data-testid="button-submit-claim"><Send className="h-4 w-4 mr-1" />{submit.isPending ? "Sending…" : "Send to office"}</Button></div>
+      </Card>
+      <Card className="p-4 space-y-3">
+        <div className="font-medium">My pasted payments</div>
+        {claims.length === 0 ? <p className="text-sm text-muted-foreground">None yet.</p> : claims.map((c) => {
+          const st = CLAIM_STATUS[c.status] ?? CLAIM_STATUS.pending;
+          return (
+            <div key={c.id} className="rounded-md border p-3 text-sm space-y-1" data-testid={`row-claim-${c.id}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{c.customerName} <span className="text-xs text-muted-foreground font-normal">{c.accountNo}</span></span><Badge variant={st.variant} data-testid={`status-claim-${c.id}`}>{st.label}</Badge></div>
+              <div className="text-muted-foreground">{c.reference} · {kes(c.amount)} · sent {new Date(c.submittedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
+              {c.status === "confirmed" && <div className="text-xs">Posted {kes(c.postedAmount ?? c.amount)} by {c.reviewedBy}</div>}
+              {c.status === "rejected" && <div className="text-xs text-destructive">Rejected by {c.reviewedBy}: {c.reviewNote}</div>}
+            </div>
+          );
+        })}
+      </Card>
+    </div>
   );
 }
