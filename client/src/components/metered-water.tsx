@@ -948,7 +948,12 @@ function PaymentClaimsCard() {
     onSuccess: () => { refresh(); toast({ title: "Payment rejected", description: "Reminders to this customer resume." }); setReject(null); setReason(""); },
     onError: (e) => toast({ title: "Couldn't reject", description: errMsg(e), variant: "destructive" }),
   });
-  if (!claims.length) return null;
+  if (!claims.length) return (
+    <Card className="p-4" data-testid="card-payment-claims">
+      <div className="text-sm font-medium flex items-center gap-2"><Smartphone className="h-4 w-4" />Payments to check (0)</div>
+      <p className="text-xs text-muted-foreground mt-0.5" data-testid="text-no-payment-claims">Nothing waiting. M-Pesa and bank messages pasted by meter readers appear here for you to confirm or reject.</p>
+    </Card>
+  );
   return (
     <Card className="p-4 space-y-3 border-amber-500/50" data-testid="card-payment-claims">
       <div><div className="text-sm font-medium flex items-center gap-2"><Smartphone className="h-4 w-4" />Payments to check ({claims.length})</div>
