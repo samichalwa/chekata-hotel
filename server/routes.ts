@@ -1,3 +1,4 @@
+import { parseReceiptPosting } from "@shared/receipt-posting";
 import { registerWaterBillingRoutes } from "./water-billing";
 import { registerPosRoutes, recomputeOrderTotal, getCustomer } from "./pos";
 import { registerMenuRoutes, priceDish } from "./menu";
@@ -1857,12 +1858,25 @@ export async function registerRoutes(
         FROM documents d WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs} AND ${ORIGINAL_DOC("d")} AND ${NOT_SELF_POSTED("d")}
           AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.source_module = 'receipts' AND je.source_id = d.id AND je.status = 'posted')
         ORDER BY d.created_at` as any[];
+      // Say up front why a receipt can't post (closed period, or no account chosen for its method/stream).
+      const periods = await sql`SELECT name, start_date, end_date, status FROM accounting_periods` as any[];
+      const cfg = parseReceiptPosting(((await storage.getSettings()) as any).receiptPosting);
+      const dayOf = (ms: number) => new Date(ms + 3 * 3600_000).toISOString().slice(0, 10);
+      const issue = (r: { createdAt: number; method: string; category: string }) => {
+        const d = dayOf(r.createdAt);
+        const per = periods.filter((p) => d >= p.start_date && d <= p.end_date).pop();
+        if (per && per.status === "closed") return `Accounting period "${per.name}" is closed — reopen it in Accounting Periods.`;
+        if (!r.method) return "No payment method on the receipt.";
+        if (!cfg.accounts[r.method]) return `No cash/bank account chosen for ${r.method.replace("_", " ")} (Settings → Receipts to Finance).`;
+        if (!(cfg.income[r.category] || cfg.income.default)) return `No income account chosen for ${r.category} (Settings → Receipts to Finance).`;
+        return null;
+      };
       const out = rows.map((r) => ({ id: r.id, docType: r.doc_type, category: r.category, recipientName: r.recipient_name, createdAt: Number(r.created_at), ...receivedOn({ docType: r.doc_type, amount: Number(r.amount), payloadJson: r.payload_json }) }))
-        .filter((r) => r.amount > 0);
+        .filter((r) => r.amount > 0).map((r) => ({ ...r, issue: issue(r) }));
       res.json({ from, count: out.length, total: out.reduce((t, r) => t + r.amount, 0), items: out });
     } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed" }); }
   });
-  app.post("/api/finance/receipt-posting/post", requireModule("finance"), requireAdminUsername, async (req, res) => {
+  app.post("/api/finance/receipt-posting/post", requireModule("finance"), requireTablePermission("finance.journal_entries"), async (req, res) => {
     try {
       const from = String(req.body?.from ?? "");
       if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return res.status(400).json({ error: "Choose the date to post from." });

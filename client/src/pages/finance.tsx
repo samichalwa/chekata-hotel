@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { ReceiptsToPostTab } from "@/components/receipts-to-post";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatKES, formatDate, todayISO } from "@/lib/format";
@@ -1000,6 +1001,7 @@ export default function Finance() {
           <TabsTrigger value="journal" data-testid="tab-journal">Journal Entries</TabsTrigger>
           <TabsTrigger value="vouchers" data-testid="tab-vouchers">Payment Vouchers</TabsTrigger>
           <TabsTrigger value="banking" data-testid="tab-banking">Bank Accounts</TabsTrigger>
+          <TabsTrigger value="receipts" data-testid="tab-receipts-to-post">Receipts to post</TabsTrigger>
           <TabsTrigger value="reports" data-testid="tab-reports">Reports</TabsTrigger>
         </TabsList>
         <TabsContent value="accounts" className="mt-4"><ChartOfAccountsTab /></TabsContent>
@@ -1007,6 +1009,7 @@ export default function Finance() {
         <TabsContent value="journal" className="mt-4"><JournalEntriesTab /></TabsContent>
         <TabsContent value="vouchers" className="mt-4"><PaymentVouchersTab /></TabsContent>
         <TabsContent value="banking" className="mt-4"><BankAccountsTab /></TabsContent>
+        <TabsContent value="receipts" className="mt-4"><ReceiptsToPostTab /></TabsContent>
         <TabsContent value="reports" className="mt-4"><ReportsTab /></TabsContent>
       </Tabs>
     </div>

@@ -1,8 +1,8 @@
-// Settings → Receipts to Finance: where each payment method's money lands (cash / bank account)
+// Settings → Receipts to Finance (configuration only; posting is in Finance → Receipts to post): where each payment method's money lands (cash / bank account)
 // and which income account each revenue stream credits. Nothing is hardcoded.
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Save, Send } from "lucide-react";
+import { Save } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,8 +36,6 @@ export function ReceiptPostingSettingsTab() {
   const { data: coa = [], isLoading: l3 } = useQuery<ChartOfAccount[]>({ queryKey: ["/api/finance/accounts"] });
   const [cfg, setCfg] = useState<ReceiptPostingConfig>({ enabled: false, accounts: {}, income: {}, startDate: today() });
   useEffect(() => { if (settings) { const c = parseReceiptPosting((settings as any).receiptPosting); setCfg({ ...c, startDate: c.startDate || today() }); } }, [settings]);
-  const [from, setFrom] = useState(today());
-  const pending = useQuery<{ count: number; total: number }>({ queryKey: [`/api/finance/receipt-posting/pending?from=${from}`] });
 
   const bankOpts = banks.filter((b) => b.active).map((b) => ({ id: b.id, label: `${b.name}${b.bankName ? ` · ${b.bankName}` : ""}${b.accountNumber ? ` · ${b.accountNumber}` : ""}` }));
   const incomeOpts = coa.filter((a) => a.active && a.type === "income").map((a) => ({ id: a.id, label: `${a.code} · ${a.name}` }));
@@ -47,14 +45,6 @@ export function ReceiptPostingSettingsTab() {
     mutationFn: async () => (await apiRequest("PUT", "/api/settings", { receiptPosting: JSON.stringify(cfg) })).json(),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/settings"] }); toast({ title: "Receipt posting saved" }); },
     onError: (e: any) => toast({ title: "Couldn't save", description: e?.message, variant: "destructive" }),
-  });
-  const post = useMutation({
-    mutationFn: async () => (await apiRequest("POST", "/api/finance/receipt-posting/post", { from })).json(),
-    onSuccess: (r: any) => {
-      queryClient.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).startsWith("/api/finance") || q.queryKey[0] === "/api/director/summary" });
-      toast({ title: `Posted ${r.posted} receipt${r.posted === 1 ? "" : "s"} · ${formatKES(r.amount)}`, description: r.failed.length ? `${r.failed.length} not posted: ${r.failed[0].reason}` : undefined, variant: r.failed.length ? "destructive" : undefined });
-    },
-    onError: (e: any) => toast({ title: "Couldn't post", description: e?.message, variant: "destructive" }),
   });
 
   if (l1 || l2 || l3 || !settings) {
@@ -114,23 +104,7 @@ export function ReceiptPostingSettingsTab() {
       {missing && <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="text-receipt-posting-missing">Some methods or streams have no account yet — those receipts won't post until you choose one.</p>}
       <Button onClick={() => save.mutate()} disabled={save.isPending} data-testid="button-save-receipt-posting"><Save className="h-4 w-4 mr-1" /> {save.isPending ? "Saving…" : "Save"}</Button>
 
-      <Card className="p-4 space-y-3">
-        <div>
-          <h3 className="font-semibold">Post earlier receipts</h3>
-          <p className="text-sm text-muted-foreground">Post receipts issued before posting was switched on. Receipts already posted are skipped, so this is safe to run again.</p>
-        </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="rp-from">From date</Label>
-            <Input id="rp-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} data-testid="input-receipt-posting-from" />
-          </div>
-          <p className="text-sm pb-2" data-testid="text-receipt-posting-pending">{pending.data ? `${pending.data.count} not yet posted · ${formatKES(pending.data.total)}` : "…"}</p>
-        </div>
-        <Button variant="outline" onClick={() => post.mutate()} disabled={post.isPending || !settings || !parseReceiptPosting((settings as any).receiptPosting).enabled || !pending.data?.count} data-testid="button-post-earlier-receipts">
-          <Send className="h-4 w-4 mr-1" /> {post.isPending ? "Posting…" : "Post these receipts"}
-        </Button>
-        {settings && !parseReceiptPosting((settings as any).receiptPosting).enabled && <p className="text-xs text-muted-foreground">Turn posting on and save first.</p>}
-      </Card>
+      <p className="text-sm text-muted-foreground" data-testid="text-receipts-to-post-link">To see and post receipts that are waiting, go to Finance → Receipts to post.</p>
     </div>
   );
 }
