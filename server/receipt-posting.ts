@@ -32,10 +32,11 @@ export function receivedOn(doc: { docType: string; amount?: number; payloadJson?
 
 export type PostResult = { status: "posted" | "skipped" | "failed"; reason?: string; entryId?: number };
 
-export async function postReceiptToFinance(storage: IStorage, doc: PostableDoc, opts: { force?: boolean; by?: string } = {}): Promise<PostResult> {
+export async function postReceiptToFinance(storage: IStorage, doc: PostableDoc, opts: { force?: boolean; by?: string; bankAccountId?: number } = {}): Promise<PostResult> {
   const settings = await storage.getSettings();
   const cfg = parseReceiptPosting((settings as any).receiptPosting);
-  if (!cfg.enabled) return { status: "skipped", reason: "Receipt posting is off" };
+  // A person posting one receipt by hand (choosing the receiving account) doesn't need automatic posting on.
+  if (!cfg.enabled && !opts.bankAccountId) return { status: "skipped", reason: "Receipt posting is off" };
   const r = receivedOn(doc);
   if (!(r.amount > 0)) return { status: "skipped", reason: "No payment on this document" };
   const date = nairobiDate(doc.createdAt);
@@ -46,8 +47,8 @@ export async function postReceiptToFinance(storage: IStorage, doc: PostableDoc, 
   if (own[0] && !own[0].ok) return { status: "skipped", reason: "Already posted by the Tenants module (rent receivable)" };
   const already = await sql`SELECT id FROM journal_entries WHERE source_module = 'receipts' AND source_id = ${doc.id} AND status = 'posted' LIMIT 1` as any[];
   if (already[0]) return { status: "skipped", reason: "Already posted", entryId: already[0].id };
-  if (!r.method) return { status: "failed", reason: "Payment method not recorded on the receipt" };
-  const bankId = cfg.accounts[r.method];
+  if (!r.method && !opts.bankAccountId) return { status: "failed", reason: "Payment method not recorded on the receipt" };
+  const bankId = opts.bankAccountId || cfg.accounts[r.method];
   if (!bankId) return { status: "failed", reason: `No cash/bank account chosen for ${r.method} in Settings` };
   const bank = await storage.getBankAccount(Number(bankId));
   if (!bank) return { status: "failed", reason: "The chosen cash/bank account no longer exists" };

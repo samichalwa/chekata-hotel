@@ -5,6 +5,12 @@ import {
   rememberRoute, resizePair, moveScreen, evenScreens, closeAllScreens, type Screen,
 } from "@/lib/desk";
 import { pageTitleFor } from "@/components/app-sidebar";
+import watermarkUrl from "@/assets/chekata-watermark.png";
+
+// Faint Chekata logo over each screen (doesn't block clicks, hidden when printing).
+function Watermark() {
+  return <div aria-hidden className="app-watermark pointer-events-none absolute inset-0 print:hidden" style={{ backgroundImage: `url(${watermarkUrl})` }} data-testid="app-watermark" />;
+}
 
 /** The title a screen shows: its page heading, or the page name from the menu. */
 function titleOf(doc: Document | null | undefined, hash: string): string {
@@ -134,7 +140,7 @@ export function SplitView({ children }: { children: ReactNode }) {
     return () => { document.removeEventListener("click", handle, true); document.removeEventListener("auxclick", handle, true); };
   }, [desk, wide]);
 
-  if (IN_PANE || !wide) return <main className="flex-1 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>{children}</main>;
+  if (IN_PANE || !wide) return <div className="relative flex min-h-0 flex-1 flex-col"><main className="flex-1 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>{children}</main><Watermark /></div>;
 
   const many = desk.screens.length > 1;
   liveFocus = desk.focus;
@@ -207,7 +213,7 @@ export function SplitView({ children }: { children: ReactNode }) {
               data-testid={`screen-${s.id}`}>
               {many && bar(s)}
               {s.id === "main" && !many
-                ? <main className="min-h-0 flex-1 overflow-y-auto" style={{ overscrollBehavior: "contain" }} data-screen-main="" data-testid="main-content">{children}</main>
+                ? <div className="relative flex min-h-0 flex-1 flex-col"><main className="min-h-0 flex-1 overflow-y-auto" style={{ overscrollBehavior: "contain" }} data-screen-main="" data-testid="main-content">{children}</main><Watermark /></div>
                 : <iframe title={title(s.id)} ref={(el) => { frames.current[s.id] = el; if (!el) delete frames.current[s.id]; }}
                     src={(srcs.current[s.id] ??= `${window.location.pathname}?screen=${s.id}${s.route || window.location.hash || "#/"}`)}
                     className={`min-h-0 w-full flex-1 border-0 bg-background ${dragging ? "pointer-events-none" : ""}`}

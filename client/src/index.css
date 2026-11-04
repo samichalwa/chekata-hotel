@@ -391,3 +391,7 @@
   table.table-stack > tbody > tr > td:empty { display: none; }
   table.table-stack > tbody > tr > td > * { max-width: 100%; }
 }
+
+/* Chekata logo watermark behind/over the working area */
+.app-watermark { background-repeat: no-repeat; background-position: center 55%; background-size: min(46%, 420px) auto; opacity: 0.06; z-index: 1; }
+.dark .app-watermark { opacity: 0.08; }

@@ -1866,14 +1866,27 @@ export async function registerRoutes(
         const d = dayOf(r.createdAt);
         const per = periods.filter((p) => d >= p.start_date && d <= p.end_date).pop();
         if (per && per.status === "closed") return `Accounting period "${per.name}" is closed — reopen it in Accounting Periods.`;
-        if (!r.method) return "No payment method on the receipt.";
-        if (!cfg.accounts[r.method]) return `No cash/bank account chosen for ${r.method.replace("_", " ")} (Settings → Receipts to Finance).`;
         if (!(cfg.income[r.category] || cfg.income.default)) return `No income account chosen for ${r.category} (Settings → Receipts to Finance).`;
         return null;
       };
       const out = rows.map((r) => ({ id: r.id, docType: r.doc_type, category: r.category, recipientName: r.recipient_name, createdAt: Number(r.created_at), ...receivedOn({ docType: r.doc_type, amount: Number(r.amount), payloadJson: r.payload_json }) }))
-        .filter((r) => r.amount > 0).map((r) => ({ ...r, issue: issue(r) }));
-      res.json({ from, count: out.length, total: out.reduce((t, r) => t + r.amount, 0), items: out });
+        .filter((r) => r.amount > 0).map((r) => ({ ...r, issue: issue(r), defaultBankAccountId: cfg.accounts[r.method] ? Number(cfg.accounts[r.method]) : null }));
+      res.json({ from, enabled: cfg.enabled, count: out.length, total: out.reduce((t, r) => t + r.amount, 0), items: out });
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed" }); }
+  });
+  // Post one receipt into the cash/bank account the user chooses (Finance → Receipts to post).
+  app.post("/api/finance/receipt-posting/post-one", requireModule("finance"), requireTablePermission("finance.journal_entries"), async (req, res) => {
+    try {
+      const docId = Number(req.body?.docId), bankAccountId = Number(req.body?.bankAccountId);
+      if (!docId) return res.status(400).json({ error: "Choose the receipt to post." });
+      if (!bankAccountId) return res.status(400).json({ error: "Choose the account the money went into." });
+      const rows = await sql`SELECT id, doc_type, category, source_id, recipient_name, payload_json, created_at FROM documents WHERE id = ${docId} AND doc_type IN ('receipt','invoice')` as any[];
+      const r = rows[0];
+      if (!r) return res.status(404).json({ error: "Receipt not found." });
+      const doc = { id: r.id, docType: r.doc_type, category: r.category, sourceId: r.source_id, recipientName: r.recipient_name, payloadJson: r.payload_json, createdAt: Number(r.created_at) };
+      const result = await postReceiptToFinance(storage, doc, { force: true, by: (req as any).user?.fullName ?? "admin", bankAccountId });
+      if (result.status === "posted") return res.json({ posted: true, entryId: result.entryId, amount: receivedOn(doc).amount });
+      res.status(409).json({ error: result.reason ?? "Not posted" });
     } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed" }); }
   });
   app.post("/api/finance/receipt-posting/post", requireModule("finance"), requireTablePermission("finance.journal_entries"), async (req, res) => {
