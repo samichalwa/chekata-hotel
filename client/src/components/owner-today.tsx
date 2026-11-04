@@ -96,7 +96,8 @@ export function OwnerToday() {
     { label: "Events", href: "/facilities", icon: PartyPopper, module: "facilities" },
     { label: "Movie Room", href: "/movie-room", icon: Film, module: "movie-room" },
     { label: "Water", href: "/water-sales", icon: Droplets, module: "water-sales" },
-    { label: "Finance", href: "/finance", icon: Landmark, module: "finance" },
+    { label: "Daily accounting", href: "/finance-daily", icon: Landmark, module: "finance-daily" },
+    { label: "Finance & reports", href: "/finance", icon: Landmark, module: "finance" },
     { label: "Expenses", href: "/expenses", icon: Receipt, module: "expenses" },
     { label: "Reports", href: "/reports", icon: FileBarChart, module: "reports" },
   ];

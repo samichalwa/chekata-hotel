@@ -976,21 +976,20 @@ function ReportsTab() {
   );
 }
 
-// ================= Page =================
+// ================= Pages =================
+// Finance setup & reports (occasional): chart of accounts, periods, bank accounts, reports.
 export default function Finance() {
   const { data: accounts = [] } = useQuery<ChartOfAccount[]>({ queryKey: ["/api/finance/accounts"] });
-  const { data: vouchers = [] } = useQuery<PaymentVoucher[]>({ queryKey: ["/api/finance/payment-vouchers"] });
+  const { data: banks = [] } = useQuery<BankAccount[]>({ queryKey: ["/api/finance/bank-accounts"] });
   const { data: pnl } = useQuery<any>({ queryKey: ["/api/finance/reports/profit-loss", "stat"], queryFn: () => fetch(`/api/finance/reports/profit-loss`, { credentials: "include" }).then((r) => r.json()) });
-
-  const draftVouchers = vouchers.filter((v) => v.status === "draft" || v.status === "pending_approval").length;
 
   return (
   <div className="p-4 sm:p-6 space-y-6 w-full">
-      <PageHeader title="Finance" description="Chart of accounts, general ledger, payment vouchers, banking, and financial reports." />
+      <PageHeader title="Finance setup & reports" description="Chart of accounts, accounting periods, bank accounts and financial reports." />
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard label="Chart of accounts" value={String(accounts.length)} icon={BookOpen} testId="stat-accounts-count" />
-        <StatCard label="Pending vouchers" value={String(draftVouchers)} icon={Receipt} accent="warning" testId="stat-pending-vouchers" />
+        <StatCard label="Bank & cash accounts" value={String(banks.length)} icon={Receipt} testId="stat-bank-accounts" />
         <StatCard label="Net profit (all-time)" value={pnl ? formatKES(pnl.netProfit) : "—"} icon={Wallet} accent="success" testId="stat-net-profit" />
       </div>
 
@@ -998,19 +997,42 @@ export default function Finance() {
         <TabsList>
           <TabsTrigger value="accounts" data-testid="tab-accounts">Chart of Accounts</TabsTrigger>
           <TabsTrigger value="periods" data-testid="tab-periods">Accounting Periods</TabsTrigger>
-          <TabsTrigger value="journal" data-testid="tab-journal">Journal Entries</TabsTrigger>
-          <TabsTrigger value="vouchers" data-testid="tab-vouchers">Payment Vouchers</TabsTrigger>
           <TabsTrigger value="banking" data-testid="tab-banking">Bank Accounts</TabsTrigger>
-          <TabsTrigger value="receipts" data-testid="tab-receipts-to-post">Receipts to post</TabsTrigger>
           <TabsTrigger value="reports" data-testid="tab-reports">Reports</TabsTrigger>
         </TabsList>
         <TabsContent value="accounts" className="mt-4"><ChartOfAccountsTab /></TabsContent>
         <TabsContent value="periods" className="mt-4"><PeriodsTab /></TabsContent>
-        <TabsContent value="journal" className="mt-4"><JournalEntriesTab /></TabsContent>
-        <TabsContent value="vouchers" className="mt-4"><PaymentVouchersTab /></TabsContent>
         <TabsContent value="banking" className="mt-4"><BankAccountsTab /></TabsContent>
-        <TabsContent value="receipts" className="mt-4"><ReceiptsToPostTab /></TabsContent>
         <TabsContent value="reports" className="mt-4"><ReportsTab /></TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+// Daily accounting (everyday work): receipts to post, payment vouchers, journal entries.
+export function FinanceDaily() {
+  const { data: vouchers = [] } = useQuery<PaymentVoucher[]>({ queryKey: ["/api/finance/payment-vouchers"] });
+  const { data: waiting } = useQuery<{ count: number; total: number }>({ queryKey: [`/api/finance/receipt-posting/pending?from=${new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Nairobi" }).slice(0, 8)}01`] });
+  const draftVouchers = vouchers.filter((v) => v.status === "draft" || v.status === "pending_approval").length;
+
+  return (
+  <div className="p-4 sm:p-6 space-y-6 w-full">
+      <PageHeader title="Daily accounting" description="Post receipts into the right account, raise and post payment vouchers, and record journal entries." />
+
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:max-w-2xl">
+        <StatCard label="Receipts to post (this month)" value={waiting ? String(waiting.count) : "—"} icon={Receipt} accent="warning" testId="stat-receipts-waiting" />
+        <StatCard label="Pending vouchers" value={String(draftVouchers)} icon={Wallet} accent="warning" testId="stat-pending-vouchers" />
+      </div>
+
+      <Tabs defaultValue="receipts">
+        <TabsList>
+          <TabsTrigger value="receipts" data-testid="tab-receipts-to-post">Receipts to post</TabsTrigger>
+          <TabsTrigger value="vouchers" data-testid="tab-vouchers">Payment Vouchers</TabsTrigger>
+          <TabsTrigger value="journal" data-testid="tab-journal">Journal Entries</TabsTrigger>
+        </TabsList>
+        <TabsContent value="receipts" className="mt-4"><ReceiptsToPostTab /></TabsContent>
+        <TabsContent value="vouchers" className="mt-4"><PaymentVouchersTab /></TabsContent>
+        <TabsContent value="journal" className="mt-4"><JournalEntriesTab /></TabsContent>
       </Tabs>
     </div>
   );

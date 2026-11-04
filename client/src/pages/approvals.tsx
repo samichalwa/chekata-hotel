@@ -76,7 +76,7 @@ function usePending() {
     leave: canAccess(user, "leave"),
     staff: canAccess(user, "staff"),
     payroll: canAccess(user, "payroll"),
-    finance: canAccess(user, "finance"),
+    finance: canAccess(user, "finance-daily"),
   };
   const pr = useQuery<any[]>({ queryKey: ["/api/purchasing/requisitions"], enabled: can.purchasing });
   const po = useQuery<any[]>({ queryKey: ["/api/purchasing/orders"], enabled: can.purchasing });
@@ -166,7 +166,7 @@ function usePending() {
         amount: r.amount, date: r.voucherDate ?? r.createdAt ?? null,
         actionUrl: `/api/finance/payment-vouchers/${r.id}/post`, actionLabel: "Post payment",
         rejectUrl: `/api/finance/payment-vouchers/${r.id}/cancel`, rejectLabel: "Cancel voucher", rejectNeedsReason: true,
-        pageLink: "/finance",
+        pageLink: "/finance-daily",
       });
     }
     out.sort((a, b) => toMs(b.date) - toMs(a.date));

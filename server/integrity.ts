@@ -60,7 +60,7 @@ async function checkReceiptsPosted(): Promise<CheckResult> {
     const j = bySrc.get(Number(d.id)) ?? [];
     const label = `${d.doc_type === "receipt" ? "Receipt" : "Invoice"} #${d.id} · ${d.recipient_name ?? ""} · ${nairobiDate(Number(d.created_at))}`;
     if (j.length === 0) items.push({ label, detail: `${kes(amt)} received but not posted to Finance.`, link: "/settings" });
-    else if (Math.abs(j[0].dr - amt) > 0.5) items.push({ label, detail: `Receipt ${kes(amt)} but journal ${j[0].no} is ${kes(j[0].dr)}.`, link: "/finance" });
+    else if (Math.abs(j[0].dr - amt) > 0.5) items.push({ label, detail: `Receipt ${kes(amt)} but journal ${j[0].no} is ${kes(j[0].dr)}.`, link: "/finance-daily" });
   }
   return result(A, "A1", title, desc, items, "fail", `All receipts since ${cfg.startDate || "the start"} are posted.`, (k) => `${k} receipt${k === 1 ? "" : "s"} missing or wrong in Finance.`);
 }
@@ -72,10 +72,10 @@ async function checkReceiptJournalsTieBack(): Promise<CheckResult> {
   const items: CheckItem[] = [];
   const seen = new Map<number, string>();
   for (const r of rows) {
-    if (!r.doc_id) { items.push({ label: `Journal ${r.entry_number} · ${r.entry_date}`, detail: `Posted for receipt #${r.source_id}, which no longer exists. Cancel the journal.`, link: "/finance" }); continue; }
-    if (r.original === false) items.push({ label: `Journal ${r.entry_number} · ${r.entry_date}`, detail: `Posted for document #${r.source_id}, a resent copy — the same money is already counted on the original. Cancel this journal.`, link: "/finance" });
+    if (!r.doc_id) { items.push({ label: `Journal ${r.entry_number} · ${r.entry_date}`, detail: `Posted for receipt #${r.source_id}, which no longer exists. Cancel the journal.`, link: "/finance-daily" }); continue; }
+    if (r.original === false) items.push({ label: `Journal ${r.entry_number} · ${r.entry_date}`, detail: `Posted for document #${r.source_id}, a resent copy — the same money is already counted on the original. Cancel this journal.`, link: "/finance-daily" });
     const prev = seen.get(Number(r.source_id));
-    if (prev) items.push({ label: `Journal ${r.entry_number} · ${r.entry_date}`, detail: `Second posting for receipt #${r.source_id} (first was ${prev}). Cancel one.`, link: "/finance" });
+    if (prev) items.push({ label: `Journal ${r.entry_number} · ${r.entry_date}`, detail: `Second posting for receipt #${r.source_id} (first was ${prev}). Cancel one.`, link: "/finance-daily" });
     else seen.set(Number(r.source_id), r.entry_number);
   }
   return result(A, "A2", "Finance receipt journals tie back to a receipt, once", "No receipt journal without its receipt, none for a resent copy, and none posted twice.", items, "fail", "Every receipt journal matches one receipt.", (k) => `${k} receipt journal${k === 1 ? "" : "s"} to correct.`);
@@ -92,11 +92,11 @@ async function checkJournalsBalance(): Promise<CheckResult> {
   const items: CheckItem[] = [];
   for (const r of rows) {
     const label = `Journal ${r.entry_number} · ${r.entry_date}`;
-    if (Number(r.lines) < 2) items.push({ label, detail: `Has ${r.lines} line(s); a journal needs at least two.`, link: "/finance" });
-    else if (Math.abs(n(r.dr) - n(r.cr)) > 0.01) items.push({ label, detail: `Debits ${kes(n(r.dr))} ≠ credits ${kes(n(r.cr))}.`, link: "/finance" });
-    if (Number(r.bad_accounts) > 0) items.push({ label, detail: `${r.bad_accounts} line(s) point to an account that no longer exists.`, link: "/finance" });
+    if (Number(r.lines) < 2) items.push({ label, detail: `Has ${r.lines} line(s); a journal needs at least two.`, link: "/finance-daily" });
+    else if (Math.abs(n(r.dr) - n(r.cr)) > 0.01) items.push({ label, detail: `Debits ${kes(n(r.dr))} ≠ credits ${kes(n(r.cr))}.`, link: "/finance-daily" });
+    if (Number(r.bad_accounts) > 0) items.push({ label, detail: `${r.bad_accounts} line(s) point to an account that no longer exists.`, link: "/finance-daily" });
     const p = periods.find((x) => x.status === "closed" && x.start_date <= r.entry_date && x.end_date >= r.entry_date);
-    if (p && p.closed_at && (createdAt.get(Number(r.id)) ?? 0) > Number(p.closed_at)) items.push({ label, detail: `Posted after period "${p.name}" was closed.`, link: "/finance" });
+    if (p && p.closed_at && (createdAt.get(Number(r.id)) ?? 0) > Number(p.closed_at)) items.push({ label, detail: `Posted after period "${p.name}" was closed.`, link: "/finance-daily" });
   }
   return result(A, "A3", "Every journal balances and respects closed periods", "Debits equal credits, at least two lines, valid accounts, and nothing posted into a period after it was closed.", items, "fail", `All ${rows.length} posted journals balance.`, (k) => `${k} journal problem${k === 1 ? "" : "s"}.`);
 }
@@ -249,9 +249,9 @@ async function checkPayroll(): Promise<CheckResult> {
       if (!run.journal_entry_id) { items.push({ label, detail: "Approved but no payroll journal was posted.", link: "/payroll" }); continue; }
       const je = (await sql`SELECT je.status, COALESCE(SUM(l.debit),0) AS dr, COALESCE(SUM(l.credit),0) AS cr FROM journal_entries je LEFT JOIN journal_entry_lines l ON l.journal_entry_id = je.id WHERE je.id = ${run.journal_entry_id} GROUP BY je.id` as any[])[0];
       const employer = sum("nssf_employer_amount") + sum("housing_levy_employer_amount");
-      if (!je) items.push({ label, detail: "Its payroll journal no longer exists.", link: "/finance" });
-      else if (je.status !== "posted") items.push({ label, detail: "Its payroll journal has been cancelled while the run is still approved.", link: "/finance" });
-      else if (Math.abs(n(je.dr) - (sum("gross_pay") + employer)) > 1) items.push({ label, detail: `Journal debits ${kes(n(je.dr))} ≠ gross + employer costs ${kes(sum("gross_pay") + employer)}.`, link: "/finance" });
+      if (!je) items.push({ label, detail: "Its payroll journal no longer exists.", link: "/finance-daily" });
+      else if (je.status !== "posted") items.push({ label, detail: "Its payroll journal has been cancelled while the run is still approved.", link: "/finance-daily" });
+      else if (Math.abs(n(je.dr) - (sum("gross_pay") + employer)) > 1) items.push({ label, detail: `Journal debits ${kes(n(je.dr))} ≠ gross + employer costs ${kes(sum("gross_pay") + employer)}.`, link: "/finance-daily" });
     }
   }
   return result(D, "D13", "Payroll adds up and matches its journal", "On every line gross − deductions = net; run totals equal the lines; each approved run has a matching posted journal.", items, "fail", `${runs.length} payroll run${runs.length === 1 ? "" : "s"} checked.`, (k) => `${k} payroll problem${k === 1 ? "" : "s"}.`);

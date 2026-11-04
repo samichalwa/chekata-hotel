@@ -38,7 +38,7 @@ import ListsPage from "@/pages/lists";
 import Reports from "@/pages/reports";
 import Documents from "@/pages/documents";
 import SettingsPage from "@/pages/settings";
-import Finance from "@/pages/finance";
+import Finance, { FinanceDaily } from "@/pages/finance";
 import SystemAdmin from "@/pages/system-admin";
 import Integrity from "@/pages/integrity";
 import Budgeting from "@/pages/budgeting";
@@ -134,6 +134,7 @@ function AppRouter() {
       <Route path="/reports" component={() => <Guarded moduleKey="reports" component={Reports} />} />
       <Route path="/documents" component={() => <Guarded moduleKey="documents" component={Documents} />} />
       <Route path="/finance" component={() => <Guarded moduleKey="finance" component={Finance} />} />
+      <Route path="/finance-daily" component={() => <Guarded moduleKey="finance-daily" component={FinanceDaily} />} />
       <Route path="/inventory" component={() => <Guarded moduleKey="inventory" component={Inventory} />} />
       <Route path="/purchasing" component={() => <Guarded moduleKey="purchasing" component={Purchasing} />} />
       <Route path="/internal-requisitions" component={() => <Guarded moduleKey="internal-requisitions" component={InternalRequisitions} />} />

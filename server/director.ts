@@ -156,7 +156,7 @@ async function pendingApprovalCounts(can: (k: ModuleKey) => boolean) {
     sql`SELECT COUNT(*)::int AS count, MIN(created_at) AS oldest FROM leave_requests WHERE status IN ('pending_review','pending_approval')`));
   if (can("payroll")) jobs.push(add("payroll_run", "Payroll runs", "/payroll",
     sql`SELECT COUNT(*)::int AS count, MIN(created_at) AS oldest FROM payroll_runs WHERE status = 'draft'`));
-  if (can("finance")) jobs.push(add("payment_voucher", "Payment vouchers", "/finance",
+  if (can("finance-daily")) jobs.push(add("payment_voucher", "Payment vouchers", "/finance-daily",
     sql`SELECT COUNT(*)::int AS count, MIN(created_at) AS oldest FROM payment_vouchers WHERE status NOT IN ('posted','cancelled')`));
   await Promise.all(jobs);
   const order = ["purchase_requisition", "purchase_order", "internal_requisition", "temporary_labor_requisition", "leave_request", "payroll_run", "payment_voucher"];
@@ -279,7 +279,7 @@ export async function buildDirectorSummary(user: any, date?: string) {
 
   // ---- Money position ----
   let cash: null | { total: number; accounts: { id: number; name: string; balance: number }[] } = null;
-  if (can("finance")) {
+  if (can("finance") || can("finance-daily")) {
     const rows = await sql`SELECT ba.id, ba.name, ba.opening_balance,
         COALESCE((SELECT SUM(jel.debit - jel.credit) FROM journal_entry_lines jel JOIN journal_entries je ON je.id = jel.journal_entry_id
                   WHERE je.status = 'posted' AND jel.account_id = ba.gl_account_id), 0) AS movement
@@ -446,7 +446,7 @@ export async function buildDirectorSummary(user: any, date?: string) {
   }
 
   // Receipts → Finance: flag payments that should have posted but didn't (closed period, missing account…).
-  if (can("finance")) {
+  if (can("finance-daily")) {
     const cfg = parseReceiptPosting((await storage.getSettings() as any).receiptPosting);
     if (cfg.enabled) {
       const fromMs = Date.parse(`${cfg.startDate || today}T00:00:00+03:00`);
@@ -454,7 +454,7 @@ export async function buildDirectorSummary(user: any, date?: string) {
         WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs} AND ${ORIGINAL_DOC("d")} AND ${NOT_SELF_POSTED("d")}
           AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.source_module = 'receipts' AND je.source_id = d.id AND je.status = 'posted')` as any[];
       const unposted = rows.map((r) => receivedOn({ docType: r.doc_type, amount: n(r.amount), payloadJson: r.payload_json }).amount).filter((a) => a > 0);
-      if (unposted.length) alerts.push({ id: "receipts-unposted", severity: "warning", title: `${unposted.length} receipt${unposted.length === 1 ? "" : "s"} not posted to Finance`, detail: `${kesText(unposted.reduce((t, a) => t + a, 0))} — check the accounting period is open and accounts are chosen in Settings → Receipts to Finance.`, link: "/settings" });
+      if (unposted.length) alerts.push({ id: "receipts-unposted", severity: "warning", title: `${unposted.length} receipt${unposted.length === 1 ? "" : "s"} not posted to Finance`, detail: `${kesText(unposted.reduce((t, a) => t + a, 0))} — open Daily accounting → Receipts to post to see why and post them.`, link: "/finance-daily" });
     }
   }
 

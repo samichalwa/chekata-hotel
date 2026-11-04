@@ -106,7 +106,7 @@ export function useDismissedAlerts() {
 
 // Modules that carry an approval workflow. Used only to decide whether to show
 // the Approvals shortcut — it is NOT a permission of its own.
-export const APPROVAL_MODULES: ModuleKey[] = ["purchasing", "internal-requisitions", "hr", "leave", "payroll", "finance"];
+export const APPROVAL_MODULES: ModuleKey[] = ["purchasing", "internal-requisitions", "hr", "leave", "payroll", "finance-daily"];
 
 export function hasAnyApprovalModule(user: Parameters<typeof canAccess>[0]): boolean {
   return APPROVAL_MODULES.some((k) => canAccess(user, k));

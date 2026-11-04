@@ -1723,7 +1723,7 @@ export async function registerRoutes(
 
   // ================= Finance =================
   // ---------- Chart of Accounts ----------
-  app.get("/api/finance/accounts", requireModule("finance"), async (_req, res) => {
+  app.get("/api/finance/accounts", requireModule("finance", "finance-daily"), async (_req, res) => {
     res.json(await storage.listChartOfAccounts());
   });
   app.post("/api/finance/accounts", requireModule("finance"), requireTablePermission("finance.chart_of_accounts"), async (req, res) => {
@@ -1748,7 +1748,7 @@ export async function registerRoutes(
   });
 
   // ---------- Accounting Periods ----------
-  app.get("/api/finance/periods", requireModule("finance"), async (_req, res) => {
+  app.get("/api/finance/periods", requireModule("finance", "finance-daily"), async (_req, res) => {
     res.json(await storage.listAccountingPeriods());
   });
   app.post("/api/finance/periods", requireModule("finance"), requireTablePermission("finance.accounting_periods"), async (req, res) => {
@@ -1773,14 +1773,14 @@ export async function registerRoutes(
   });
 
   // ---------- Journal Entries (General Ledger) ----------
-  app.get("/api/finance/journal-entries", requireModule("finance"), async (_req, res) => {
+  app.get("/api/finance/journal-entries", requireModule("finance", "finance-daily"), async (_req, res) => {
     const entries = await storage.listJournalEntries();
     res.json(entries.slice().sort((a, b) => b.id - a.id));
   });
-  app.get("/api/finance/journal-entries/:id/lines", requireModule("finance"), async (req, res) => {
+  app.get("/api/finance/journal-entries/:id/lines", requireModule("finance", "finance-daily"), async (req, res) => {
     res.json(await storage.listJournalEntryLines(Number(req.params.id)));
   });
-  app.post("/api/finance/journal-entries", requireModule("finance"), requireTablePermission("finance.journal_entries"), async (req, res) => {
+  app.post("/api/finance/journal-entries", requireModule("finance-daily"), requireTablePermission("finance.journal_entries"), async (req, res) => {
     try {
       const user = (req as any).user;
       const body = req.body as { entryDate: string; description: string; sourceModule?: string; sourceId?: number; lines: { accountId: number; debit?: number; credit?: number; description?: string }[] };
@@ -1800,7 +1800,7 @@ export async function registerRoutes(
       res.status(201).json(created);
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to post journal entry" }); }
   });
-  app.post("/api/finance/journal-entries/:id/cancel", requireModule("finance"), requireTablePermission("finance.journal_entries"), async (req, res) => {
+  app.post("/api/finance/journal-entries/:id/cancel", requireModule("finance-daily"), requireTablePermission("finance.journal_entries"), async (req, res) => {
     try {
       const user = (req as any).user;
       const { reason } = req.body as { reason?: string };
@@ -1850,7 +1850,7 @@ export async function registerRoutes(
   });
 
   // ---- Receipts → Finance: review and catch-up posting (Settings → Receipts to Finance) ----
-  app.get("/api/finance/receipt-posting/pending", requireModule("finance"), async (req, res) => {
+  app.get("/api/finance/receipt-posting/pending", requireModule("finance-daily"), async (req, res) => {
     try {
       const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from)) ? String(req.query.from) : hotelToday();
       const fromMs = Date.parse(`${from}T00:00:00+03:00`);
@@ -1875,7 +1875,7 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed" }); }
   });
   // Post one receipt into the cash/bank account the user chooses (Finance → Receipts to post).
-  app.post("/api/finance/receipt-posting/post-one", requireModule("finance"), requireTablePermission("finance.journal_entries"), async (req, res) => {
+  app.post("/api/finance/receipt-posting/post-one", requireModule("finance-daily"), requireTablePermission("finance.journal_entries"), async (req, res) => {
     try {
       const docId = Number(req.body?.docId), bankAccountId = Number(req.body?.bankAccountId);
       if (!docId) return res.status(400).json({ error: "Choose the receipt to post." });
@@ -1889,7 +1889,7 @@ export async function registerRoutes(
       res.status(409).json({ error: result.reason ?? "Not posted" });
     } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed" }); }
   });
-  app.post("/api/finance/receipt-posting/post", requireModule("finance"), requireTablePermission("finance.journal_entries"), async (req, res) => {
+  app.post("/api/finance/receipt-posting/post", requireModule("finance-daily"), requireTablePermission("finance.journal_entries"), async (req, res) => {
     try {
       const from = String(req.body?.from ?? "");
       if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return res.status(400).json({ error: "Choose the date to post from." });
@@ -1909,7 +1909,7 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed" }); }
   });
 
-  app.get("/api/finance/bank-accounts", requireModule("finance"), async (_req, res) => {
+  app.get("/api/finance/bank-accounts", requireModule("finance", "finance-daily"), async (_req, res) => {
     res.json(await storage.listBankAccounts());
   });
   app.post("/api/finance/bank-accounts", requireModule("finance"), requireTablePermission("finance.bank_accounts"), async (req, res) => {
@@ -1953,11 +1953,11 @@ export async function registerRoutes(
   });
 
   // ---------- Payment Vouchers ----------
-  app.get("/api/finance/payment-vouchers", requireModule("finance"), async (_req, res) => {
+  app.get("/api/finance/payment-vouchers", requireModule("finance-daily"), async (_req, res) => {
     const vouchers = await storage.listPaymentVouchers();
     res.json(vouchers.slice().sort((a, b) => b.id - a.id));
   });
-  app.post("/api/finance/payment-vouchers", requireModule("finance"), requireTablePermission("finance.payment_vouchers"), async (req, res) => {
+  app.post("/api/finance/payment-vouchers", requireModule("finance-daily"), requireTablePermission("finance.payment_vouchers"), async (req, res) => {
     try {
       const user = (req as any).user;
       const data = insertPaymentVoucherSchema.omit({ voucherNumber: true, requestedBy: true, createdAt: true, status: true }).parse(req.body);
@@ -1967,7 +1967,7 @@ export async function registerRoutes(
       res.status(201).json(created);
     } catch (err) { handleZodError(res, err); }
   });
-  app.patch("/api/finance/payment-vouchers/:id", requireModule("finance"), requireTablePermission("finance.payment_vouchers"), async (req, res) => {
+  app.patch("/api/finance/payment-vouchers/:id", requireModule("finance-daily"), requireTablePermission("finance.payment_vouchers"), async (req, res) => {
     try {
       const data = insertPaymentVoucherSchema.partial().parse(req.body);
       const updated = await storage.updatePaymentVoucher(Number(req.params.id), data);
@@ -1975,7 +1975,7 @@ export async function registerRoutes(
       res.json(updated);
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to update payment voucher" }); }
   });
-  app.post("/api/finance/payment-vouchers/:id/post", requireModule("finance"), requireTablePermission("finance.payment_vouchers"), async (req, res) => {
+  app.post("/api/finance/payment-vouchers/:id/post", requireModule("finance-daily"), requireTablePermission("finance.payment_vouchers"), async (req, res) => {
     try {
       const user = (req as any).user;
       const updated = await storage.postPaymentVoucher(Number(req.params.id), user.username);
@@ -1983,7 +1983,7 @@ export async function registerRoutes(
       res.json(updated);
     } catch (err: any) { res.status(400).json({ error: err?.message ?? "Failed to post payment voucher" }); }
   });
-  app.post("/api/finance/payment-vouchers/:id/cancel", requireModule("finance"), requireTablePermission("finance.payment_vouchers"), async (req, res) => {
+  app.post("/api/finance/payment-vouchers/:id/cancel", requireModule("finance-daily"), requireTablePermission("finance.payment_vouchers"), async (req, res) => {
     try {
       const { reason } = req.body as { reason?: string };
       if (!reason) return res.status(400).json({ error: "A cancellation reason is required" });

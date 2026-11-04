@@ -164,13 +164,13 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 }
 
 // Requires the signed-in user to have access to a given module (admins always pass).
-export function requireModule(moduleKey: ModuleKey) {
+export function requireModule(...moduleKeys: ModuleKey[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     const user = (req as any).user;
     if (!user) return res.status(401).json({ error: "Not signed in" });
     if (user.isAdmin) return next();
     const perms = parsePermissions(user.permissions);
-    if (perms.includes(moduleKey)) return next();
+    if (moduleKeys.some((k) => perms.includes(k))) return next();
     return res.status(403).json({ error: "You don't have access to this module" });
   };
 }

@@ -55,7 +55,7 @@ import chekataLogo from "@/assets/chekata-logo.jpg";
 import { useCurrentUser, useLogout, canAccess, useSetupStatus } from "@/hooks/use-auth";
 import type { ModuleKey, Settings } from "@shared/schema";
 import { MODULE_CATEGORY_GROUPS } from "@shared/schema";
-import { CheckSquare, FlaskConical, CookingPot } from "lucide-react";
+import { CheckSquare, FlaskConical, CookingPot, NotebookPen } from "lucide-react";
 import { useDirectorSummary, hasAnyApprovalModule } from "@/lib/director";
 
 const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
@@ -77,7 +77,8 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Lists", url: "/lists", icon: ClipboardList, key: "lists" },
   { title: "Reports", url: "/reports", icon: FileBarChart, key: "reports" },
   { title: "Invoices & Receipts", url: "/documents", icon: FileText, key: "documents" },
-  { title: "Finance", url: "/finance", icon: Wallet, key: "finance" },
+  { title: "Daily accounting", url: "/finance-daily", icon: NotebookPen, key: "finance-daily" },
+  { title: "Finance setup & reports", url: "/finance", icon: Wallet, key: "finance" },
   { title: "Budgeting", url: "/budgeting", icon: PiggyBank, key: "budgeting" },
   { title: "Assets", url: "/assets", icon: Boxes, key: "assets" },
   { title: "Water Sales", url: "/water-sales", icon: Droplets, key: "water-sales" },
