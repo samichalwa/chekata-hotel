@@ -1847,15 +1847,15 @@ CREATE TABLE IF NOT EXISTS notifications (
   }
   await seedDefaultAdmin();
 
-  // ---- One-time: Finance split into "Finance setup & reports" and "Daily accounting" ----
-  // Everyone who had Finance keeps what they could do: they also get Daily accounting. Runs once.
+  // ---- One-time: Finance split into "Finance setup & reports" and "Accounting" ----
+  // Everyone who had Finance keeps what they could do: they also get Accounting. Runs once.
   await sql`CREATE TABLE IF NOT EXISTS app_migrations (key TEXT PRIMARY KEY, run_at BIGINT NOT NULL)`;
   const done = await sql`SELECT 1 FROM app_migrations WHERE key = 'finance-daily-split'`;
   if (!done.length) {
     const moved = await sql`UPDATE users SET permissions = (permissions::jsonb || '["finance-daily"]'::jsonb)::text
       WHERE permissions IS NOT NULL AND permissions <> '' AND permissions::jsonb ? 'finance' AND NOT (permissions::jsonb ? 'finance-daily') RETURNING id`;
     await sql`INSERT INTO app_migrations (key, run_at) VALUES ('finance-daily-split', ${Date.now()}) ON CONFLICT DO NOTHING`;
-    console.log(`[storage] Daily accounting access given to ${moved.length} user(s) who had Finance.`);
+    console.log(`[storage] Accounting access given to ${moved.length} user(s) who had Finance.`);
   }
 }
 

@@ -77,7 +77,7 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Lists", url: "/lists", icon: ClipboardList, key: "lists" },
   { title: "Reports", url: "/reports", icon: FileBarChart, key: "reports" },
   { title: "Invoices & Receipts", url: "/documents", icon: FileText, key: "documents" },
-  { title: "Daily accounting", url: "/finance-daily", icon: NotebookPen, key: "finance-daily" },
+  { title: "Accounting", url: "/finance-daily", icon: NotebookPen, key: "finance-daily" },
   { title: "Finance setup & reports", url: "/finance", icon: Wallet, key: "finance" },
   { title: "Budgeting", url: "/budgeting", icon: PiggyBank, key: "budgeting" },
   { title: "Assets", url: "/assets", icon: Boxes, key: "assets" },

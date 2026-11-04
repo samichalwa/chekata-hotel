@@ -735,7 +735,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   documents: "Invoices & Receipts",
   settings: "Settings",
   finance: "Finance setup & reports",
-  "finance-daily": "Daily accounting",
+  "finance-daily": "Accounting",
   "system-admin": "System Administration",
   inventory: "Inventory",
   purchasing: "Purchasing",

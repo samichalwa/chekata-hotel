@@ -454,7 +454,7 @@ export async function buildDirectorSummary(user: any, date?: string) {
         WHERE d.doc_type IN ('receipt','invoice') AND d.created_at >= ${fromMs} AND ${ORIGINAL_DOC("d")} AND ${NOT_SELF_POSTED("d")}
           AND NOT EXISTS (SELECT 1 FROM journal_entries je WHERE je.source_module = 'receipts' AND je.source_id = d.id AND je.status = 'posted')` as any[];
       const unposted = rows.map((r) => receivedOn({ docType: r.doc_type, amount: n(r.amount), payloadJson: r.payload_json }).amount).filter((a) => a > 0);
-      if (unposted.length) alerts.push({ id: "receipts-unposted", severity: "warning", title: `${unposted.length} receipt${unposted.length === 1 ? "" : "s"} not posted to Finance`, detail: `${kesText(unposted.reduce((t, a) => t + a, 0))} — open Daily accounting → Receipts to post to see why and post them.`, link: "/finance-daily" });
+      if (unposted.length) alerts.push({ id: "receipts-unposted", severity: "warning", title: `${unposted.length} receipt${unposted.length === 1 ? "" : "s"} not posted to Finance`, detail: `${kesText(unposted.reduce((t, a) => t + a, 0))} — open Accounting → Receipts to post to see why and post them.`, link: "/finance-daily" });
     }
   }
 

@@ -1009,7 +1009,7 @@ export default function Finance() {
   );
 }
 
-// Daily accounting (everyday work): receipts to post, payment vouchers, journal entries.
+// Accounting (everyday work): receipts to post, payment vouchers, journal entries.
 export function FinanceDaily() {
   const { data: vouchers = [] } = useQuery<PaymentVoucher[]>({ queryKey: ["/api/finance/payment-vouchers"] });
   const { data: waiting } = useQuery<{ count: number; total: number }>({ queryKey: [`/api/finance/receipt-posting/pending?from=${new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Nairobi" }).slice(0, 8)}01`] });
@@ -1017,7 +1017,7 @@ export function FinanceDaily() {
 
   return (
   <div className="p-4 sm:p-6 space-y-6 w-full">
-      <PageHeader title="Daily accounting" description="Post receipts into the right account, raise and post payment vouchers, and record journal entries." />
+      <PageHeader title="Accounting" description="Post receipts into the right account, raise and post payment vouchers, and record journal entries." />
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:max-w-2xl">
         <StatCard label="Receipts to post (this month)" value={waiting ? String(waiting.count) : "—"} icon={Receipt} accent="warning" testId="stat-receipts-waiting" />
