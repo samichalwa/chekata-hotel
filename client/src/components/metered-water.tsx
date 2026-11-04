@@ -529,9 +529,16 @@ function CustomerDialog({ customer, tariffs, onClose }: { customer: Customer | n
 
 function StatementDialog({ customer, onClose }: { customer: Customer; onClose: () => void }) {
   const { data } = useQuery<any>({ queryKey: ["/api/water-billing/customers", customer.id, "statement"], queryFn: async () => (await apiRequest("GET", `/api/water-billing/customers/${customer.id}/statement`)).json() });
-  return (
+  const { toast } = useToast();
+  const [rev, setRev] = useState<any | null>(null); const [why, setWhy] = useState("");
+  const doReverse = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/water-billing/payments/${rev.paymentId}/reverse`, { reason: why.trim() })).json(),
+    onSuccess: (r: any) => { invalidateAll(); queryClient.invalidateQueries({ queryKey: ["/api/water-billing/customers"] }); toast({ title: "Payment reversed", description: `${formatKES(r.amount)} taken off ${customer.name}'s account. Balance now ${formatKES(r.balance)}.` }); setRev(null); setWhy(""); },
+    onError: (e) => toast({ title: "Couldn't reverse", description: errMsg(e), variant: "destructive" }),
+  });
+  return (<>
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Statement — {customer.name}</DialogTitle><DialogDescription>{customer.accountNo}{customer.meterNumber ? ` · Meter ${customer.meterNumber}` : ""}</DialogDescription></DialogHeader>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" asChild><a href={`/api/water-billing/customers/${customer.id}/statement/pdf`} target="_blank" rel="noreferrer" data-testid="button-statement-pdf"><FileText className="h-4 w-4 mr-1" />PDF</a></Button>
@@ -539,12 +546,14 @@ function StatementDialog({ customer, onClose }: { customer: Customer; onClose: (
         </div>
         {!data ? <p className="text-sm text-muted-foreground">Loading…</p> : (
           <div className="overflow-x-auto"><Table>
-            <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Reference</TableHead><TableHead className="hidden sm:table-cell">Description</TableHead><TableHead className="text-right">Charges</TableHead><TableHead className="text-right">Payments</TableHead><TableHead className="text-right">Balance</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Reference</TableHead><TableHead className="hidden sm:table-cell">Description</TableHead><TableHead className="text-right">Charges</TableHead><TableHead className="text-right">Payments</TableHead><TableHead className="text-right">Balance</TableHead><TableHead className="w-0"><span className="sr-only">Actions</span></TableHead></TableRow></TableHeader>
             <TableBody>
-              {data.rows.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground">No bills or payments yet.</TableCell></TableRow>}
+              {data.rows.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-sm text-muted-foreground">No bills or payments yet.</TableCell></TableRow>}
               {data.rows.map((r: any, i: number) => (
-                <TableRow key={i}><TableCell className="text-sm whitespace-nowrap">{prettyDate(r.date)}</TableCell><TableCell className="text-sm">{r.ref}</TableCell><TableCell className="hidden sm:table-cell text-sm">{r.description}</TableCell>
-                  <TableCell className="text-right tabular-nums text-sm">{r.charges ? formatKES(r.charges) : ""}</TableCell><TableCell className="text-right tabular-nums text-sm">{r.payments ? formatKES(r.payments) : ""}</TableCell><TableCell className="text-right tabular-nums text-sm font-medium">{r.balance < -0.5 ? `${formatKES(-r.balance)} cr` : formatKES(r.balance)}</TableCell></TableRow>
+                <TableRow key={i}><TableCell className="text-sm whitespace-nowrap">{prettyDate(r.date)}</TableCell><TableCell className="text-sm whitespace-nowrap">{r.ref}</TableCell><TableCell className="hidden sm:table-cell text-sm">{r.description}</TableCell>
+                  <TableCell className="text-right tabular-nums text-sm">{r.charges ? formatKES(r.charges) : ""}</TableCell><TableCell className="text-right tabular-nums text-sm">{r.payments ? formatKES(r.payments) : ""}</TableCell><TableCell className="text-right tabular-nums text-sm font-medium">{r.balance < -0.5 ? `${formatKES(-r.balance)} cr` : formatKES(r.balance)}</TableCell>
+                  <TableCell className="text-right whitespace-nowrap">{r.paymentId && (r.reversed ? <Badge variant="outline" data-testid={`badge-payment-reversed-${r.paymentId}`}>Reversed</Badge>
+                    : <Button variant="ghost" size="sm" className="h-7 px-2 text-destructive" onClick={() => { setRev(r); setWhy(""); }} data-testid={`button-reverse-payment-${r.paymentId}`}><Ban className="h-3.5 w-3.5 mr-1" />Reverse</Button>)}</TableCell></TableRow>
               ))}
             </TableBody>
           </Table></div>
@@ -552,7 +561,15 @@ function StatementDialog({ customer, onClose }: { customer: Customer; onClose: (
         {data && <div className="text-sm text-right space-y-0.5"><div>Total billed {formatKES(data.totalBilled)} · paid {formatKES(data.totalPaid)}</div><div className="font-semibold" data-testid="text-statement-balance">{data.balance >= -0.5 ? `Balance due ${formatKES(Math.max(0, data.balance))}` : `In credit ${formatKES(-data.balance)}`}</div></div>}
       </DialogContent>
     </Dialog>
-  );
+    <Dialog open={!!rev} onOpenChange={(o) => !o && setRev(null)}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>Reverse this payment?</DialogTitle>
+          <DialogDescription>{rev && `${formatKES(rev.payments)} · ${rev.ref} · ${prettyDate(rev.date)}. `}The payment stays on the statement marked Reversed, the bills owe this amount again, the receipt no longer counts as money received and any Finance posting is cancelled. The customer is not messaged.</DialogDescription></DialogHeader>
+        <div className="space-y-1.5"><Label htmlFor="rev-why">Reason</Label><Textarea id="rev-why" value={why} onChange={(e) => setWhy(e.target.value)} placeholder="e.g. Recorded in error – no money received" data-testid="input-reverse-reason" /></div>
+        <DialogFooter><Button variant="outline" onClick={() => setRev(null)}>Back</Button><Button variant="destructive" disabled={why.trim().length < 3 || doReverse.isPending} onClick={() => doReverse.mutate()} data-testid="button-confirm-reverse">{doReverse.isPending ? "Reversing…" : "Reverse payment"}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  </>);
 }
 
 /* ---------------- Tariffs ---------------- */

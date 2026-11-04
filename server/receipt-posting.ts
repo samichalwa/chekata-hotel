@@ -7,10 +7,11 @@ export interface PostableDoc { id: number; docType: string; category: string; so
 
 // A resent invoice/receipt is stored as a new documents row with the same payload. Only the
 // original counts as money received / gets posted. Resends made from now on carry `resendOf`;
-// older resends are recognised by an identical payload on the same record.
-export const ORIGINAL_DOC = (alias: string) => sql.unsafe(`(COALESCE(${alias}.payload_json::jsonb ->> 'resendOf', '') = '' AND NOT EXISTS (
+// older resends are recognised by an identical payload on the same record. A receipt marked
+// `reversed` (payment recorded in error and reversed) no longer counts as money received.
+export const ORIGINAL_DOC = (alias: string) => sql.unsafe(`(COALESCE(${alias}.payload_json::jsonb ->> 'resendOf', '') = '' AND COALESCE(${alias}.payload_json::jsonb ->> 'reversed', '') = '' AND NOT EXISTS (
   SELECT 1 FROM documents o WHERE o.doc_type = ${alias}.doc_type AND o.category = ${alias}.category AND o.source_id = ${alias}.source_id AND o.id < ${alias}.id
-    AND (o.payload_json::jsonb - 'recipientEmail' - 'resendOf' - 'taxBreakdown') = (${alias}.payload_json::jsonb - 'recipientEmail' - 'resendOf' - 'taxBreakdown')))`);
+    AND (o.payload_json::jsonb - 'recipientEmail' - 'resendOf' - 'taxBreakdown' - 'reversed' - 'reversedReason') = (${alias}.payload_json::jsonb - 'recipientEmail' - 'resendOf' - 'taxBreakdown' - 'reversed' - 'reversedReason')))`);
 
 // Shop-rent payments on a lease with a receivable account already post their own journal
 // (Dr bank, Cr receivable) in the Tenants module — never post those receipts a second time.

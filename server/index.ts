@@ -70,7 +70,9 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        // Never write secrets (API keys, passwords, tokens) to the server log.
+        const SECRET = /(api.?key|secret|password|token|passcode|pin)$/i;
+        logLine += ` :: ${JSON.stringify(capturedJsonResponse, (k, v) => (k && SECRET.test(k) && typeof v === "string" && v ? "[redacted]" : v)).slice(0, 2000)}`;
       }
 
       log(logLine);

@@ -47,7 +47,7 @@ async function getTariff(id: number) { const [t] = await sql`SELECT * FROM water
 
 async function customerBalances(): Promise<Map<number, { billed: number; paid: number; balance: number }>> {
   const b = await sql`SELECT customer_id, COALESCE(SUM(current_charges),0) AS billed FROM water_bills WHERE status <> 'cancelled' GROUP BY customer_id` as any[];
-  const p = await sql`SELECT customer_id, COALESCE(SUM(amount),0) AS paid FROM water_bill_payments GROUP BY customer_id` as any[];
+  const p = await sql`SELECT customer_id, COALESCE(SUM(amount),0) AS paid FROM water_bill_payments WHERE status = 'posted' GROUP BY customer_id` as any[];
   const out = new Map<number, { billed: number; paid: number; balance: number }>();
   for (const r of b) out.set(Number(r.customer_id), { billed: n(r.billed), paid: 0, balance: n(r.billed) });
   for (const r of p) { const x = out.get(Number(r.customer_id)) ?? { billed: 0, paid: 0, balance: 0 }; x.paid = n(r.paid); x.balance = r2(x.billed - x.paid); out.set(Number(r.customer_id), x); }
@@ -122,7 +122,7 @@ function billSms(settings: any, bill: any, customer: any, pdfUrl: string | null)
 /** Applies payments oldest-bill-first and rewrites each bill's amount_paid/status. */
 async function reallocate(customerId: number) {
   const bills = await sql`SELECT id, current_charges FROM water_bills WHERE customer_id = ${customerId} AND status <> 'cancelled' ORDER BY period_month, id` as any[];
-  let pool = n((await sql`SELECT COALESCE(SUM(amount),0) AS paid FROM water_bill_payments WHERE customer_id = ${customerId}` as any[])[0].paid);
+  let pool = n((await sql`SELECT COALESCE(SUM(amount),0) AS paid FROM water_bill_payments WHERE customer_id = ${customerId} AND status = 'posted'` as any[])[0].paid);
   for (const b of bills) {
     const due = n(b.current_charges);
     const paid = r2(Math.min(due, Math.max(0, pool)));
@@ -268,14 +268,18 @@ async function statement(customerId: number) {
   if (!c) return null;
   const bills = await sql`SELECT b.*, r.reading_date FROM water_bills b LEFT JOIN water_readings r ON r.id = b.reading_id WHERE b.customer_id = ${customerId} AND b.status <> 'cancelled' ORDER BY b.bill_date, b.id` as any[];
   const pays = await sql`SELECT * FROM water_bill_payments WHERE customer_id = ${customerId} ORDER BY paid_at, id` as any[];
-  const rows: { date: string; ref: string; description: string; charges: number; payments: number; balance: number }[] = [];
-  const events = [
+  const rows: { date: string; ref: string; description: string; charges: number; payments: number; balance: number; paymentId?: number; reversed?: boolean }[] = [];
+  const dayOf = (ms: number) => new Date(ms + TZ).toISOString().slice(0, 10);
+  const events: { t: number; date: string; ref: string; description: string; charges: number; payments: number; paymentId?: number; reversed?: boolean }[] = [
     ...bills.map((b) => ({ t: Number(b.created_at), date: b.bill_date, ref: b.bill_number, description: b.kind === "penalty" ? `Late payment penalty · ${penaltyDetail(JSON.parse(b.charge_json))}` : `Water bill ${monthLabel(b.period_month)}${b.reading_date ? ` (read ${prettyDate(b.reading_date)})` : ""} · ${fmtM3(n(b.consumption))}`, charges: n(b.current_charges), payments: 0 })),
-    ...pays.map((p) => ({ t: Number(p.paid_at), date: new Date(Number(p.paid_at) + TZ).toISOString().slice(0, 10), ref: p.payment_reference || `PAY-${p.id}`, description: `Payment · ${String(p.payment_method).replace("_", " ")}`, charges: 0, payments: n(p.amount) })),
+    ...pays.map((p) => ({ t: Number(p.paid_at), date: dayOf(Number(p.paid_at)), ref: p.payment_reference || p.void_reference || `${c.account_no}-P${p.id}`, description: `Payment · ${String(p.payment_method).replace("_", " ")}${p.status === "reversed" ? " (reversed)" : ""}`, charges: 0, payments: n(p.amount), paymentId: Number(p.id), reversed: p.status === "reversed" })),
+    // A reversed payment shows twice: the original payment, then the reversal adding the amount back.
+    ...pays.filter((p) => p.status === "reversed").map((p) => ({ t: Number(p.reversed_at), date: dayOf(Number(p.reversed_at)), ref: `${c.account_no}-P${p.id}`, description: `Payment reversed${p.reverse_reason ? ` · ${p.reverse_reason}` : ""}`, charges: n(p.amount), payments: 0 })),
   ].sort((a, b) => a.t - b.t);
   let bal = 0;
-  for (const e of events) { bal = r2(bal + e.charges - e.payments); rows.push({ date: e.date, ref: e.ref, description: e.description, charges: e.charges, payments: e.payments, balance: bal }); }
-  return { customer: c, rows, balance: bal, totalBilled: r2(bills.reduce((t, b) => t + n(b.current_charges), 0)), totalPaid: r2(pays.reduce((t, p) => t + n(p.amount), 0)) };
+  for (const e of events) { bal = r2(bal + e.charges - e.payments); rows.push({ date: e.date, ref: e.ref, description: e.description, charges: e.charges, payments: e.payments, balance: bal, paymentId: e.paymentId, reversed: e.reversed }); }
+  const kept = pays.filter((p) => p.status !== "reversed");
+  return { customer: c, rows, balance: bal, totalBilled: r2(bills.reduce((t, b) => t + n(b.current_charges), 0)), totalPaid: r2(kept.reduce((t, p) => t + n(p.amount), 0)) };
 }
 
 async function statementPdf(st: NonNullable<Awaited<ReturnType<typeof statement>>>): Promise<Buffer> {
@@ -373,9 +377,10 @@ async function excelReport(fromMonth: string, toMonth: string, hotelName: string
   const toMs = Date.parse(`${tm === 12 ? ty + 1 : ty}-${String(tm === 12 ? 1 : tm + 1).padStart(2, "0")}-01T00:00:00+03:00`);
   const pays = await sql`SELECT p.*, c.account_no, c.name FROM water_bill_payments p JOIN water_customers c ON c.id = p.customer_id WHERE p.paid_at >= ${fromMs} AND p.paid_at < ${toMs} ORDER BY p.paid_at` as any[];
   const wp = wb.addWorksheet("Payments");
-  head(wp, [{ header: "Date", key: "date", width: 12 }, { header: "Account", key: "acc", width: 10 }, { header: "Customer", key: "name", width: 26 }, { header: "Method", key: "method", width: 14 }, { header: "Reference", key: "ref", width: 16 }, { header: "Amount (KES)", key: "amt", width: 14, style: { numFmt: money } }, { header: "Recorded by", key: "by", width: 18 }]);
-  for (const p of pays) wp.addRow({ date: new Date(Number(p.paid_at) + TZ).toISOString().slice(0, 10), acc: p.account_no, name: p.name, method: String(p.payment_method).replace("_", " "), ref: p.payment_reference, amt: n(p.amount), by: p.recorded_by });
-  wp.addRow({ name: "Total", amt: pays.reduce((t, p) => t + n(p.amount), 0) }).font = { bold: true };
+  head(wp, [{ header: "Date", key: "date", width: 12 }, { header: "Account", key: "acc", width: 10 }, { header: "Customer", key: "name", width: 26 }, { header: "Method", key: "method", width: 14 }, { header: "Reference", key: "ref", width: 16 }, { header: "Amount (KES)", key: "amt", width: 14, style: { numFmt: money } }, { header: "Recorded by", key: "by", width: 18 }, { header: "Status", key: "status", width: 12 }, { header: "Reversed by", key: "rby", width: 18 }, { header: "Reversed on", key: "ron", width: 12 }, { header: "Reversal reason", key: "rwhy", width: 30 }]);
+  for (const p of pays) wp.addRow({ date: new Date(Number(p.paid_at) + TZ).toISOString().slice(0, 10), acc: p.account_no, name: p.name, method: String(p.payment_method).replace("_", " "), ref: p.payment_reference || p.void_reference, amt: n(p.amount), by: p.recorded_by,
+    status: p.status === "reversed" ? "Reversed" : "Posted", rby: p.reversed_by ?? "", ron: p.reversed_at ? new Date(Number(p.reversed_at) + TZ).toISOString().slice(0, 10) : "", rwhy: p.reverse_reason ?? "" });
+  wp.addRow({ name: "Total (excluding reversed)", amt: pays.filter((p) => p.status !== "reversed").reduce((t, p) => t + n(p.amount), 0) }).font = { bold: true };
 
   const customers = await sql`SELECT c.*, t.name AS tariff FROM water_customers c LEFT JOIN water_tariffs t ON t.id = c.tariff_id ORDER BY c.account_no` as any[];
   const bal = await customerBalances();
@@ -1073,6 +1078,37 @@ export function registerWaterBillingRoutes(app: Express) {
     try {
       const r = await postWaterPayment({ customerId: Number(req.params.id), amount: Number(req.body?.amount), method: String(req.body?.paymentMethod ?? ""), reference: req.body?.paymentReference, by: who(req) });
       res.status(201).json(r);
+    } catch (e: any) { res.status(e?.status ?? 400).json({ error: e?.message ?? "Failed" }); }
+  });
+  // Reverse a payment recorded in error: kept on record as "Reversed", the bills owe again, the receipt
+  // stops counting as money received, its Finance journal (if posted) is cancelled and the reference is freed.
+  app.post("/api/water-billing/payments/:id/reverse", W, async (req, res) => {
+    try {
+      const reason = String(req.body?.reason ?? "").trim();
+      if (reason.length < 3) return res.status(400).json({ error: "Give a reason for reversing this payment." });
+      const [p] = await sql`SELECT * FROM water_bill_payments WHERE id = ${Number(req.params.id)}` as any[];
+      if (!p) return res.status(404).json({ error: "Payment not found" });
+      if (p.status === "reversed") return res.status(409).json({ error: "This payment is already reversed." });
+      const [c] = await sql`SELECT * FROM water_customers WHERE id = ${p.customer_id}` as any[];
+      const receiptNo = `${c?.account_no}-P${p.id}`;
+      const docs = await sql`SELECT id FROM documents WHERE doc_type = 'receipt' AND category = 'water_bill' AND payload_json::jsonb ->> 'customDocNumber' = ${receiptNo}` as any[];
+      const docIds = docs.map((d) => Number(d.id));
+      const jes = docIds.length ? await sql`SELECT id FROM journal_entries WHERE source_module = 'receipts' AND status = 'posted' AND source_id IN ${sql(docIds)}` as any[] : [];
+      // Check every journal can be cancelled before changing anything.
+      for (const j of jes) {
+        const e = await storage.getJournalEntry(Number(j.id));
+        const period = e?.periodId ? await storage.getAccountingPeriod(e.periodId) : null;
+        if (period && period.status === "closed") return res.status(409).json({ error: `This payment is already in Finance, in the closed period "${period.name}". Reopen that period (Finance → Accounting periods) to reverse it.` });
+      }
+      const by = who(req);
+      for (const j of jes) await storage.cancelJournalEntry(Number(j.id), by, `Water payment ${receiptNo} reversed: ${reason}`);
+      for (const id of docIds) await sql`UPDATE documents SET payload_json = (payload_json::jsonb || ${JSON.stringify({ reversed: true, reversedReason: reason })}::jsonb)::text WHERE id = ${id}`;
+      await sql`UPDATE water_bill_payments SET status = 'reversed', reverse_reason = ${reason}, reversed_by = ${by}, reversed_at = ${Date.now()},
+        void_reference = payment_reference, payment_reference = NULL WHERE id = ${p.id}`;
+      // A payment confirmed from a pasted message: the message's code is freed too so the money can be posted correctly.
+      await sql`UPDATE water_payment_claims SET status = 'rejected', review_note = ${`Payment reversed: ${reason}`}, payment_reference = ${`REV-${p.id}-`} || payment_reference WHERE payment_id = ${p.id}`;
+      await reallocate(Number(p.customer_id));
+      res.json({ ok: true, amount: n(p.amount), balance: await balanceOf(Number(p.customer_id)), journalsCancelled: jes.length });
     } catch (e: any) { res.status(e?.status ?? 400).json({ error: e?.message ?? "Failed" }); }
   });
   app.get("/api/water-billing/customers/:id/payments", W, async (req, res) => {

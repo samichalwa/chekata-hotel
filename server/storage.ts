@@ -1358,6 +1358,13 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
   await sql.unsafe(`CREATE UNIQUE INDEX IF NOT EXISTS uq_water_penalty_for_bill ON water_bills (penalty_for_bill_id) WHERE penalty_for_bill_id IS NOT NULL`);
   // M-Pesa messages pasted by meter readers for a water customer: checked automatically, then confirmed
   // (posted as a payment) or rejected by the office. While pending, reminders and penalties pause.
+  // A water payment recorded in error is reversed, never deleted: it stays on the statement as "Reversed",
+  // its receipt stops counting as money received, any Finance journal is cancelled and the reference is freed.
+  await ensureColumn("water_bill_payments", "status", "TEXT NOT NULL DEFAULT 'posted'");
+  await ensureColumn("water_bill_payments", "void_reference", "TEXT");
+  await ensureColumn("water_bill_payments", "reverse_reason", "TEXT");
+  await ensureColumn("water_bill_payments", "reversed_by", "TEXT");
+  await ensureColumn("water_bill_payments", "reversed_at", "BIGINT");
   await sql.unsafe(`CREATE TABLE IF NOT EXISTS water_payment_claims (
     id SERIAL PRIMARY KEY, customer_id INTEGER NOT NULL, raw_message TEXT NOT NULL, payment_reference TEXT NOT NULL, amount REAL NOT NULL,
     paid_at BIGINT, payer_name TEXT, recipient TEXT, account TEXT, checks_json TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'pending',
