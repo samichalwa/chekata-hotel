@@ -617,7 +617,7 @@ function RemindersCard({ settings }: { settings: any }) {
             <div className="space-y-1.5"><Label htmlFor="wp-time">Charge at</Label><Input id="wp-time" type="time" className="w-32" value={f.ptime} onChange={(e) => setF({ ...f, ptime: e.target.value })} data-testid="input-penalty-time" /></div>
             <div className="space-y-1.5"><Label htmlFor="wp-from">For bills due from</Label><Input id="wp-from" type="date" className="w-40" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} data-testid="input-penalty-from" /></div>
           </div>
-          <p className="text-xs text-muted-foreground">At {f.ptime || "00:01"} on day {Number(f.grace || 0) + 1} after the due date, {f.pct || 0}% of what is still unpaid is charged{Number(f.daily) > 0 ? <>, then {f.daily}% more every day until the bill is paid</> : null}. Each penalty invoice is sent by SMS and email straight away. Penalties never attract penalties. Waiving a penalty stops further ones on that bill. (Waive with the cancel button in Bills.)</p>
+          <p className="text-xs text-muted-foreground">At {f.ptime || "00:01"} on day {Number(f.grace || 0) + 1} after the due date, {f.pct || 0}% of what is still unpaid is charged{Number(f.daily) > 0 ? <>, then {f.daily}% more every day until the bill is paid</> : null}. Each penalty invoice is sent by SMS and email straight away. Penalties never attract penalties. Penalties pause while a pasted payment is being checked; if the office rejects it, the skipped days are charged. Waiving a penalty stops further ones on that bill (cancel button in Bills).</p>
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">

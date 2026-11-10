@@ -105,7 +105,7 @@ async function issueBillDocument(bill: any, customer: any) {
   });
 }
 
-const penaltyDetail = (ch: any) => `${ch.daily ? "daily " : ""}${n(ch.percent)}% of ${kes(n(ch.base))} unpaid on bill ${ch.forBillNumber} (due ${prettyDate(ch.forDueDate)}${ch.daysLate ? `, ${ch.daysLate} days late` : ""})`;
+const penaltyDetail = (ch: any) => `${ch.daily ? "daily " : ""}${n(ch.percent)}% of ${kes(n(ch.base))} unpaid on bill ${ch.forBillNumber} (due ${prettyDate(ch.forDueDate)}${ch.daysLate ? `, ${ch.daysLate} days late` : ""})${ch.catchUp ? ` for ${prettyDate(ch.forDay)}, held while a payment was checked and then rejected` : ""}`;
 const payText = (settings: any, customer: any) => settings.mpesaNumber
   ? settings.mpesaPaymentType === "paybill" ? ` Pay via M-Pesa Paybill ${settings.mpesaNumber}, Acc ${settings.mpesaAccountNumber || customer.account_no}.` : settings.mpesaPaymentType === "phone" ? ` Pay via M-Pesa to ${settings.mpesaNumber}.` : ` Pay via M-Pesa Till ${settings.mpesaNumber}.`
   : "";
@@ -638,7 +638,9 @@ const pdfLink = (base: string, doc: any) => doc?.id && doc?.publicToken ? `${bas
 
 /** Late payment penalties on water bills (all on what is still unpaid on the bill):
  *  - the first, at the penalty %, once a bill is more than the grace days past its due date;
- *  - then the daily increase % every further day the bill stays unpaid.
+ *  - then the daily increase % every further day the bill stays unpaid (one penalty per bill per day).
+ *  While a pasted payment awaits the office, the customer is paused. If the office rejects it (or later reverses it),
+ *  the days skipped while it was waiting are charged on the next run; if it is confirmed, skipped days are not charged.
  *  Only bills due on/after the "apply from" date; penalties never attract penalties; waiving any penalty on a bill stops further ones. */
 export async function applyWaterPenalties(base: string) {
   const s = await storage.getSettings() as any;
@@ -646,32 +648,46 @@ export async function applyWaterPenalties(base: string) {
   if (Number(s.waterPenaltyEnabled ?? 1) !== 1 || pct <= 0) return [];
   const date = today(), grace = Number(s.waterPenaltyGraceDays ?? 10);
   const cutoff = addDays(date, -grace); // due before cutoff = more than the grace days late
-  const over = await sql`SELECT b.*, (SELECT COUNT(*)::int FROM water_bills p WHERE p.penalty_for_bill_id = b.id) AS penalties
-    FROM water_bills b WHERE b.kind = 'water' AND b.status IN ('unpaid', 'partially_paid')
+  const over = await sql`SELECT b.* FROM water_bills b WHERE b.kind = 'water' AND b.status IN ('unpaid', 'partially_paid')
     AND b.due_date >= ${s.waterPenaltyFrom || date} AND b.due_date < ${cutoff}
-    AND NOT EXISTS (SELECT 1 FROM water_bills p WHERE p.penalty_for_bill_id = b.id AND (p.status = 'cancelled' OR p.bill_date = ${date}))
+    AND NOT EXISTS (SELECT 1 FROM water_bills p WHERE p.penalty_for_bill_id = b.id AND p.status = 'cancelled')
     AND NOT EXISTS (SELECT 1 FROM water_payment_claims w WHERE w.customer_id = b.customer_id AND w.status IN ('pending', 'posting')) ORDER BY b.customer_id, b.id` as any[]; // paused while a pasted payment awaits the office
-  const out: { customerId: number; billNumber: string; forBillNumber: string; amount: number; percent: number; daily: boolean; bill: any; pdfUrl: string | null; email: string }[] = [];
+  const out: { customerId: number; billNumber: string; forBillNumber: string; amount: number; percent: number; daily: boolean; forDay: string; catchUp: boolean; bill: any; pdfUrl: string | null; email: string }[] = [];
+  const dayOf = (ms: number) => new Date(Number(ms) + TZ).toISOString().slice(0, 10);
   for (const w of over) {
-    const isDaily = Number(w.penalties) > 0;
-    const rate = isDaily ? daily : pct;
-    if (rate <= 0) continue;
-    const outstanding = r2(n(w.current_charges) - n(w.amount_paid));
-    const amount = r2(outstanding * rate / 100);
-    if (amount < 1) continue;
-    const bf = await balanceOf(Number(w.customer_id));
-    const number = await nextBillNumber();
-    const daysLate = Math.round((Date.parse(date) - Date.parse(w.due_date)) / 86400000);
-    const charge = { kind: "penalty", daily: isDaily, percent: rate, base: outstanding, forBillNumber: w.bill_number, forDueDate: w.due_date, graceDays: grace, daysLate, total: amount, lines: [] };
-    const [bill] = await sql`INSERT INTO water_bills (bill_number, customer_id, period_month, reading_id, previous_reading, current_reading, consumption, tariff_name, charge_json, current_charges, balance_brought_forward, total_due, bill_date, due_date, status, created_by, created_at, kind, penalty_for_bill_id)
-      VALUES (${number}, ${w.customer_id}, ${date.slice(0, 7)}, ${null}, 0, 0, 0, ${isDaily ? "Daily late payment penalty" : "Late payment penalty"}, ${JSON.stringify(charge)}, ${amount}, ${bf}, ${r2(amount + bf)}, ${date}, ${date}, 'unpaid', ${"Automatic penalty"}, ${Date.now()}, 'penalty', ${w.id})
-      ON CONFLICT (penalty_for_bill_id, bill_date) WHERE penalty_for_bill_id IS NOT NULL DO NOTHING RETURNING *` as any[];
-    if (!bill) continue;
-    await reallocate(Number(w.customer_id)); // credit on the account pays it straight away
-    const [c] = await sql`SELECT * FROM water_customers WHERE id = ${w.customer_id}` as any[];
-    let doc: any = null;
-    try { doc = await issueBillDocument(bill, c); } catch (e: any) { doc = { status: "failed", errorMessage: e?.message }; }
-    out.push({ customerId: Number(w.customer_id), billNumber: number, forBillNumber: w.bill_number, amount, percent: rate, daily: isDaily, bill, pdfUrl: pdfLink(base, doc), email: doc?.status ?? "failed" });
+    const firstDay = addDays(w.due_date, grace + 1);
+    const done = new Set((await sql`SELECT penalty_day FROM water_bills WHERE penalty_for_bill_id = ${w.id}` as any[]).map((r) => String(r.penalty_day)));
+    // Days skipped while a since-rejected payment was waiting for the office.
+    const rejected = await sql`SELECT submitted_at, reviewed_at FROM water_payment_claims WHERE customer_id = ${w.customer_id} AND status = 'rejected' AND reviewed_at IS NOT NULL` as any[];
+    const days = new Set<string>([date]);
+    for (const r of rejected) for (let d = dayOf(r.submitted_at), end = dayOf(r.reviewed_at), k = 0; d <= end && k < 400; d = addDays(d, 1), k++) days.add(d);
+    const due = Array.from(days).filter((d) => d >= firstDay && d <= date && !done.has(d)).sort();
+    let charged = done.size;
+    for (const day of due) {
+      const isDaily = charged > 0;
+      const rate = isDaily ? daily : pct;
+      if (rate <= 0) continue;
+      const [fresh] = await sql`SELECT current_charges, amount_paid, status FROM water_bills WHERE id = ${w.id}` as any[];
+      if (!fresh || !["unpaid", "partially_paid"].includes(fresh.status)) break;
+      const outstanding = r2(n(fresh.current_charges) - n(fresh.amount_paid));
+      const amount = r2(outstanding * rate / 100);
+      if (amount < 1) break;
+      const bf = await balanceOf(Number(w.customer_id));
+      const number = await nextBillNumber();
+      const daysLate = Math.round((Date.parse(day) - Date.parse(w.due_date)) / 86400000);
+      const catchUp = day !== date;
+      const charge = { kind: "penalty", daily: isDaily, percent: rate, base: outstanding, forBillNumber: w.bill_number, forDueDate: w.due_date, graceDays: grace, daysLate, forDay: day, catchUp, total: amount, lines: [] };
+      const [bill] = await sql`INSERT INTO water_bills (bill_number, customer_id, period_month, reading_id, previous_reading, current_reading, consumption, tariff_name, charge_json, current_charges, balance_brought_forward, total_due, bill_date, due_date, status, created_by, created_at, kind, penalty_for_bill_id, penalty_day)
+        VALUES (${number}, ${w.customer_id}, ${date.slice(0, 7)}, ${null}, 0, 0, 0, ${isDaily ? "Daily late payment penalty" : "Late payment penalty"}, ${JSON.stringify(charge)}, ${amount}, ${bf}, ${r2(amount + bf)}, ${date}, ${date}, 'unpaid', ${"Automatic penalty"}, ${Date.now()}, 'penalty', ${w.id}, ${day})
+        ON CONFLICT (penalty_for_bill_id, penalty_day) WHERE penalty_for_bill_id IS NOT NULL DO NOTHING RETURNING *` as any[];
+      if (!bill) continue;
+      charged++;
+      await reallocate(Number(w.customer_id)); // credit on the account pays it straight away
+      const [c] = await sql`SELECT * FROM water_customers WHERE id = ${w.customer_id}` as any[];
+      let doc: any = null;
+      try { doc = await issueBillDocument(bill, c); } catch (e: any) { doc = { status: "failed", errorMessage: e?.message }; }
+      out.push({ customerId: Number(w.customer_id), billNumber: number, forBillNumber: w.bill_number, amount, percent: rate, daily: isDaily, forDay: day, catchUp, bill, pdfUrl: pdfLink(base, doc), email: doc?.status ?? "failed" });
+    }
   }
   return out;
 }
@@ -741,15 +757,24 @@ export async function runWaterDaily(base: string, opts: { reminders: boolean }) 
   const penalties = await applyWaterPenalties(base);
   const remindersOn = opts.reminders && Number(s.waterReminderEnabled ?? 0) === 1;
   const reminders = remindersOn ? await sendWaterReminders(base, penalties) : [];
-  for (const p of penalties) {
-    const covered = reminders.some((r) => r.customerId === p.customerId && r.sms === "sent"); // the reminder SMS already told them
+  // One SMS per customer: a single penalty uses the invoice SMS; several (e.g. days held while a payment was checked) are summed up.
+  const byCust = new Map<number, typeof penalties>();
+  for (const p of penalties) byCust.set(p.customerId, [...(byCust.get(p.customerId) ?? []), p]);
+  for (const [customerId, list] of Array.from(byCust)) {
+    const covered = reminders.some((r) => r.customerId === customerId && r.sms === "sent"); // the reminder SMS already told them
     let sms = covered ? "in reminder" : "skipped";
-    const [c] = await sql`SELECT * FROM water_customers WHERE id = ${p.customerId}` as any[];
+    const [c] = await sql`SELECT * FROM water_customers WHERE id = ${customerId}` as any[];
     if (!covered && Number(s.waterBillSms ?? 1) !== 0 && c?.phone) {
-      const r = await sendSms({ source: "Water bill", settings: s, to: c.phone, message: billSms(s, p.bill, c, p.pdfUrl) }).catch((e: any) => ({ ok: false, error: e?.message }));
+      const last = list[list.length - 1];
+      const total = r2(list.reduce((t, p) => t + p.amount, 0));
+      const days = list.map((p) => p.forDay).sort();
+      const [bal] = await sql`SELECT total_due FROM water_bills WHERE id = ${last.bill.id}` as any[];
+      const message = list.length === 1 ? billSms(s, last.bill, c, last.pdfUrl)
+        : `Dear ${c.name}, late payment penalties of ${kes(total)} (${new Set(days).size === 1 ? `for ${prettyDate(days[0])}` : `${new Set(days).size} days, ${prettyDate(days[0])} to ${prettyDate(days[days.length - 1])}`}, on bill${new Set(list.map((p) => p.forBillNumber)).size > 1 ? "s" : ""} ${Array.from(new Set(list.map((p) => p.forBillNumber))).join(", ")}) have been added to your ${s.hotelName || "The Chekata"} water account ${c.account_no}${list.some((p) => p.catchUp) ? ", including days held while your payment was checked and then rejected" : ""}. Total due ${kes(Math.max(0, n(bal?.total_due ?? last.bill.total_due)))}.${payText(s, c)}${last.pdfUrl ? ` Invoice: ${last.pdfUrl}` : ""}`;
+      const r = await sendSms({ source: "Water bill", settings: s, to: c.phone, message }).catch((e: any) => ({ ok: false, error: e?.message }));
       sms = r.ok ? "sent" : `failed: ${(r as any).error ?? ""}`;
     }
-    await sql`UPDATE water_bills SET sms_status = ${sms} WHERE id = ${p.bill.id}`;
+    for (const p of list) await sql`UPDATE water_bills SET sms_status = ${sms} WHERE id = ${p.bill.id}`;
   }
   return { penalties: penalties.map(({ bill, ...p }) => p), reminders };
 }

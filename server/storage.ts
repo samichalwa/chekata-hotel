@@ -1357,8 +1357,12 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
   await ensureColumn("water_bills", "penalty_for_bill_id", "INTEGER");
   await sql.unsafe(`ALTER TABLE water_bills ALTER COLUMN reading_id DROP NOT NULL`);
   // At most one penalty per overdue bill per day (the first penalty, then the daily increase).
+  // penalty_day = the day a penalty is for (normally the day it is charged; earlier for days held while a payment was checked and then rejected).
+  await ensureColumn("water_bills", "penalty_day", "TEXT");
+  await sql`UPDATE water_bills SET penalty_day = bill_date WHERE kind = 'penalty' AND penalty_day IS NULL`;
   await sql.unsafe(`DROP INDEX IF EXISTS uq_water_penalty_for_bill`);
-  await sql.unsafe(`CREATE UNIQUE INDEX IF NOT EXISTS uq_water_penalty_bill_day ON water_bills (penalty_for_bill_id, bill_date) WHERE penalty_for_bill_id IS NOT NULL`);
+  await sql.unsafe(`DROP INDEX IF EXISTS uq_water_penalty_bill_day`);
+  await sql.unsafe(`CREATE UNIQUE INDEX IF NOT EXISTS uq_water_penalty_day ON water_bills (penalty_for_bill_id, penalty_day) WHERE penalty_for_bill_id IS NOT NULL`);
   // M-Pesa messages pasted by meter readers for a water customer: checked automatically, then confirmed
   // (posted as a payment) or rejected by the office. While pending, reminders and penalties pause.
   // A water payment recorded in error is reversed, never deleted: it stays on the statement as "Reversed",
