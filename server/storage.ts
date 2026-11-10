@@ -1348,14 +1348,17 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
   await ensureColumn("settings", "water_penalty_percent", "REAL NOT NULL DEFAULT 5");
   await ensureColumn("settings", "water_penalty_grace_days", "INTEGER NOT NULL DEFAULT 10");
   await ensureColumn("settings", "water_penalty_from", "TEXT");
+  await ensureColumn("settings", "water_penalty_time", "TEXT NOT NULL DEFAULT '00:01'");
+  await ensureColumn("settings", "water_penalty_daily_percent", "REAL NOT NULL DEFAULT 1"); // added every further day a penalised bill stays unpaid
   // Penalties only apply to bills falling due from the day the feature arrived, unless moved earlier in settings.
   await sql`UPDATE settings SET water_penalty_from = ${new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10)} WHERE water_penalty_from IS NULL`;
   // A penalty is a water_bills row of kind 'penalty' (no meter reading) so balances, payments, statements and reports include it.
   await ensureColumn("water_bills", "kind", "TEXT NOT NULL DEFAULT 'water'");
   await ensureColumn("water_bills", "penalty_for_bill_id", "INTEGER");
   await sql.unsafe(`ALTER TABLE water_bills ALTER COLUMN reading_id DROP NOT NULL`);
-  // One penalty per overdue bill, ever (a waived penalty is not charged again).
-  await sql.unsafe(`CREATE UNIQUE INDEX IF NOT EXISTS uq_water_penalty_for_bill ON water_bills (penalty_for_bill_id) WHERE penalty_for_bill_id IS NOT NULL`);
+  // At most one penalty per overdue bill per day (the first penalty, then the daily increase).
+  await sql.unsafe(`DROP INDEX IF EXISTS uq_water_penalty_for_bill`);
+  await sql.unsafe(`CREATE UNIQUE INDEX IF NOT EXISTS uq_water_penalty_bill_day ON water_bills (penalty_for_bill_id, bill_date) WHERE penalty_for_bill_id IS NOT NULL`);
   // M-Pesa messages pasted by meter readers for a water customer: checked automatically, then confirmed
   // (posted as a payment) or rejected by the office. While pending, reminders and penalties pause.
   // A water payment recorded in error is reversed, never deleted: it stays on the statement as "Reversed",

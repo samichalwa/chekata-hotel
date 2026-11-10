@@ -85,7 +85,7 @@ async function issueBillDocument(bill: any, customer: any) {
     return issueDocument(storage, {
       docType: "invoice", category: "water_bill", sourceId: bill.id, customDocNumber: bill.bill_number,
       recipientName: customer.name, recipientEmail: customer.email || null, issueDate: prettyDate(bill.bill_date),
-      lineItems: [{ label: "Late payment penalty", detail: penaltyDetail(charge), amount: n(bill.current_charges) }],
+      lineItems: [{ label: charge.daily ? "Daily late payment penalty" : "Late payment penalty", detail: penaltyDetail(charge), amount: n(bill.current_charges) }],
       totalAmount: n(bill.current_charges), amountPaid: 0, balance: Math.max(0, n(bill.total_due)), broughtForward: n(bill.balance_brought_forward),
       notes: `Late payment penalty on water bill ${charge.forBillNumber} · Account ${customer.account_no}${customer.meter_number ? ` · Meter ${customer.meter_number}` : ""}. Please pay ${kes(Math.max(0, n(bill.total_due)))} now to clear your water account.`,
     });
@@ -105,7 +105,7 @@ async function issueBillDocument(bill: any, customer: any) {
   });
 }
 
-const penaltyDetail = (ch: any) => `${n(ch.percent)}% of ${kes(n(ch.base))} unpaid on bill ${ch.forBillNumber} (due ${prettyDate(ch.forDueDate)})`;
+const penaltyDetail = (ch: any) => `${ch.daily ? "daily " : ""}${n(ch.percent)}% of ${kes(n(ch.base))} unpaid on bill ${ch.forBillNumber} (due ${prettyDate(ch.forDueDate)}${ch.daysLate ? `, ${ch.daysLate} days late` : ""})`;
 const payText = (settings: any, customer: any) => settings.mpesaNumber
   ? settings.mpesaPaymentType === "paybill" ? ` Pay via M-Pesa Paybill ${settings.mpesaNumber}, Acc ${settings.mpesaAccountNumber || customer.account_no}.` : settings.mpesaPaymentType === "phone" ? ` Pay via M-Pesa to ${settings.mpesaNumber}.` : ` Pay via M-Pesa Till ${settings.mpesaNumber}.`
   : "";
@@ -636,35 +636,42 @@ async function nextBillNumber() {
 }
 const pdfLink = (base: string, doc: any) => doc?.id && doc?.publicToken ? `${base}/api/public/documents/${doc.id}/pdf?token=${doc.publicToken}` : null;
 
-/** Adds one penalty (a % of what is still unpaid) to each water bill unpaid more than the grace days after its due date.
- *  Only bills due on/after the "apply from" date; penalties never attract penalties; a waived penalty is never re-charged. */
+/** Late payment penalties on water bills (all on what is still unpaid on the bill):
+ *  - the first, at the penalty %, once a bill is more than the grace days past its due date;
+ *  - then the daily increase % every further day the bill stays unpaid.
+ *  Only bills due on/after the "apply from" date; penalties never attract penalties; waiving any penalty on a bill stops further ones. */
 export async function applyWaterPenalties(base: string) {
   const s = await storage.getSettings() as any;
-  const pct = n(s.waterPenaltyPercent ?? 5);
+  const pct = n(s.waterPenaltyPercent ?? 5), daily = n(s.waterPenaltyDailyPercent ?? 1);
   if (Number(s.waterPenaltyEnabled ?? 1) !== 1 || pct <= 0) return [];
-  const date = today();
-  const cutoff = addDays(date, -Number(s.waterPenaltyGraceDays ?? 10)); // due before cutoff = more than the grace days late
-  const over = await sql`SELECT b.* FROM water_bills b WHERE b.kind = 'water' AND b.status IN ('unpaid', 'partially_paid')
+  const date = today(), grace = Number(s.waterPenaltyGraceDays ?? 10);
+  const cutoff = addDays(date, -grace); // due before cutoff = more than the grace days late
+  const over = await sql`SELECT b.*, (SELECT COUNT(*)::int FROM water_bills p WHERE p.penalty_for_bill_id = b.id) AS penalties
+    FROM water_bills b WHERE b.kind = 'water' AND b.status IN ('unpaid', 'partially_paid')
     AND b.due_date >= ${s.waterPenaltyFrom || date} AND b.due_date < ${cutoff}
-    AND NOT EXISTS (SELECT 1 FROM water_bills p WHERE p.penalty_for_bill_id = b.id)
+    AND NOT EXISTS (SELECT 1 FROM water_bills p WHERE p.penalty_for_bill_id = b.id AND (p.status = 'cancelled' OR p.bill_date = ${date}))
     AND NOT EXISTS (SELECT 1 FROM water_payment_claims w WHERE w.customer_id = b.customer_id AND w.status IN ('pending', 'posting')) ORDER BY b.customer_id, b.id` as any[]; // paused while a pasted payment awaits the office
-  const out: { customerId: number; billNumber: string; forBillNumber: string; amount: number; bill: any; pdfUrl: string | null; email: string }[] = [];
+  const out: { customerId: number; billNumber: string; forBillNumber: string; amount: number; percent: number; daily: boolean; bill: any; pdfUrl: string | null; email: string }[] = [];
   for (const w of over) {
+    const isDaily = Number(w.penalties) > 0;
+    const rate = isDaily ? daily : pct;
+    if (rate <= 0) continue;
     const outstanding = r2(n(w.current_charges) - n(w.amount_paid));
-    const amount = r2(outstanding * pct / 100);
+    const amount = r2(outstanding * rate / 100);
     if (amount < 1) continue;
     const bf = await balanceOf(Number(w.customer_id));
     const number = await nextBillNumber();
-    const charge = { kind: "penalty", percent: pct, base: outstanding, forBillNumber: w.bill_number, forDueDate: w.due_date, graceDays: Number(s.waterPenaltyGraceDays ?? 10), total: amount, lines: [] };
+    const daysLate = Math.round((Date.parse(date) - Date.parse(w.due_date)) / 86400000);
+    const charge = { kind: "penalty", daily: isDaily, percent: rate, base: outstanding, forBillNumber: w.bill_number, forDueDate: w.due_date, graceDays: grace, daysLate, total: amount, lines: [] };
     const [bill] = await sql`INSERT INTO water_bills (bill_number, customer_id, period_month, reading_id, previous_reading, current_reading, consumption, tariff_name, charge_json, current_charges, balance_brought_forward, total_due, bill_date, due_date, status, created_by, created_at, kind, penalty_for_bill_id)
-      VALUES (${number}, ${w.customer_id}, ${date.slice(0, 7)}, ${null}, 0, 0, 0, ${"Late payment penalty"}, ${JSON.stringify(charge)}, ${amount}, ${bf}, ${r2(amount + bf)}, ${date}, ${date}, 'unpaid', ${"Automatic penalty"}, ${Date.now()}, 'penalty', ${w.id})
-      ON CONFLICT (penalty_for_bill_id) WHERE penalty_for_bill_id IS NOT NULL DO NOTHING RETURNING *` as any[];
+      VALUES (${number}, ${w.customer_id}, ${date.slice(0, 7)}, ${null}, 0, 0, 0, ${isDaily ? "Daily late payment penalty" : "Late payment penalty"}, ${JSON.stringify(charge)}, ${amount}, ${bf}, ${r2(amount + bf)}, ${date}, ${date}, 'unpaid', ${"Automatic penalty"}, ${Date.now()}, 'penalty', ${w.id})
+      ON CONFLICT (penalty_for_bill_id, bill_date) WHERE penalty_for_bill_id IS NOT NULL DO NOTHING RETURNING *` as any[];
     if (!bill) continue;
     await reallocate(Number(w.customer_id)); // credit on the account pays it straight away
     const [c] = await sql`SELECT * FROM water_customers WHERE id = ${w.customer_id}` as any[];
     let doc: any = null;
     try { doc = await issueBillDocument(bill, c); } catch (e: any) { doc = { status: "failed", errorMessage: e?.message }; }
-    out.push({ customerId: Number(w.customer_id), billNumber: number, forBillNumber: w.bill_number, amount, bill, pdfUrl: pdfLink(base, doc), email: doc?.status ?? "failed" });
+    out.push({ customerId: Number(w.customer_id), billNumber: number, forBillNumber: w.bill_number, amount, percent: rate, daily: isDaily, bill, pdfUrl: pdfLink(base, doc), email: doc?.status ?? "failed" });
   }
   return out;
 }
@@ -686,7 +693,9 @@ export async function sendWaterReminders(base: string, penalties: Awaited<Return
     const balance = bal.get(customerId)?.balance ?? 0;
     if (balance <= 0.5) continue; // settled (or in credit): reminders stop
     if (paused.has(customerId)) continue; // a pasted M-Pesa payment is waiting for the office to confirm
-    const newToday = penalties.filter((p) => p.customerId === customerId);
+    const newToday = [...penalties.filter((p) => p.customerId === customerId),
+      ...bills.filter((b) => b.kind === "penalty" && b.bill_date === date && !penalties.some((p) => p.billNumber === b.bill_number))
+        .map((b) => { const ch = JSON.parse(b.charge_json || "{}"); return { amount: n(b.current_charges), percent: n(ch.percent), daily: !!ch.daily, forBillNumber: ch.forBillNumber ?? b.bill_number }; })];
     if (!newToday.length && bills.every((b) => b.bill_date === date)) continue; // the bill itself went out today
     const [claim] = await sql`INSERT INTO water_reminder_log (run_date, customer_id, balance, sent_at) VALUES (${date}, ${customerId}, ${balance}, ${Date.now()}) ON CONFLICT DO NOTHING RETURNING customer_id` as any[];
     if (!claim) continue; // already reminded today
@@ -698,8 +707,11 @@ export async function sendWaterReminders(base: string, penalties: Awaited<Return
     const latest = [...bills].reverse().find((b) => b.doc_id && b.doc_token);
     const link = latest ? `${base}/api/public/documents/${latest.doc_id}/pdf?token=${latest.doc_token}` : null;
     const hotel = s.hotelName || "The Chekata";
-    const penaltyText = newToday.length ? ` A late payment penalty of ${kes(newToday.reduce((t, p) => t + p.amount, 0))} (${pct}% of the unpaid amount on ${newToday.map((p) => p.forBillNumber).join(", ")}) was added today.` : "";
-    const warn = nextPenalty ? ` Pay by ${prettyDate(addDays(nextPenalty.due_date, grace))} to avoid a ${pct}% late payment penalty on ${nextPenalty.bill_number}.` : "";
+    const penaltyText = newToday.length ? ` A late payment penalty of ${kes(newToday.reduce((t, p) => t + p.amount, 0))} (${newToday.map((p) => `${p.daily ? "daily " : ""}${p.percent}% of the unpaid amount on ${p.forBillNumber}`).join(", ")}) was added today.` : "";
+    const daily = n(s.waterPenaltyDailyPercent ?? 1);
+    const escalating = penaltyOn && daily > 0 && bills.some((b) => b.kind === "water" && b.due_date >= (s.waterPenaltyFrom || date) && addDays(b.due_date, grace) < date);
+    const warn = (nextPenalty ? ` Pay by ${prettyDate(addDays(nextPenalty.due_date, grace))} to avoid a ${pct}% late payment penalty on ${nextPenalty.bill_number}${daily > 0 ? `, then ${daily}% more every day it stays unpaid` : ""}.` : "")
+      + (escalating ? ` A further ${daily}% of the unpaid amount is added every day until the overdue bill is paid.` : "");
     const message = `Dear ${c.name}, reminder: your ${hotel} water account ${c.account_no} has ${kes(balance)} unpaid${overdue > 0.5 ? `, ${kes(overdue)} overdue since ${prettyDate(oldest.due_date)}` : `, due ${prettyDate(oldest.due_date)}`}.${penaltyText}${warn}${payText(s, c)}${link ? ` Bill: ${link}` : ""}`;
     let sms = "skipped", email = "skipped";
     if (Number(s.waterReminderSms ?? 1) === 1 && c.phone) {
@@ -744,7 +756,7 @@ export async function runWaterDaily(base: string, opts: { reminders: boolean }) 
 
 const nairobiTime = () => new Date(Date.now() + TZ).toISOString().slice(11, 16);
 const waterDailyBusy = new Set<string>();
-/** Every 10 minutes: penalties are checked; at/after the reminder time the day's reminders go out (once per customer per day). */
+/** Every 10 minutes: from the penalty time, new penalties are charged and sent; from the reminder time, the day's reminders go out (once per customer per day). */
 export function startWaterReminderSchedule(log: (m: string) => void) {
   const base = (process.env.PUBLIC_BASE_URL || "https://hms.thechekata.com").replace(/\/$/, "");
   const tick = async () => {
@@ -754,9 +766,9 @@ export function startWaterReminderSchedule(log: (m: string) => void) {
       await runWithEnvironment(env, async () => {
         try {
           const s = await storage.getSettings() as any;
-          const due = nairobiTime() >= (s.waterReminderTime || "09:00");
-          if (!due) return; // penalties and reminders go out together at the reminder time
-          const r = await runWaterDaily(base, { reminders: true });
+          const now = nairobiTime();
+          if (now < (s.waterPenaltyTime || "00:01")) return; // penalties are charged (and sent) from the penalty time
+          const r = await runWaterDaily(base, { reminders: now >= (s.waterReminderTime || "09:00") }); // reminders from the reminder time
           if (r.penalties.length || r.reminders.length) log(`water daily (${env}): ${r.penalties.length} penalt${r.penalties.length === 1 ? "y" : "ies"}, ${r.reminders.length} reminder(s)`);
         } catch (e: any) { log(`water daily (${env}) failed: ${e?.message ?? e}`); }
       }).finally(() => waterDailyBusy.delete(env));
@@ -767,8 +779,8 @@ export function startWaterReminderSchedule(log: (m: string) => void) {
 }
 
 const visionInfo = (s: any) => ({ waterBillDueDays: Number(s.waterBillDueDays ?? 14), waterBillSms: Number(s.waterBillSms ?? 1), smsEnabled: !!s.smsEnabled,
-  waterReminderEnabled: Number(s.waterReminderEnabled ?? 0), waterReminderTime: s.waterReminderTime || "09:00", waterReminderSms: Number(s.waterReminderSms ?? 1), waterReminderEmail: Number(s.waterReminderEmail ?? 1),
-  waterPenaltyEnabled: Number(s.waterPenaltyEnabled ?? 1), waterPenaltyPercent: n(s.waterPenaltyPercent ?? 5), waterPenaltyGraceDays: Number(s.waterPenaltyGraceDays ?? 10), waterPenaltyFrom: s.waterPenaltyFrom || today(),
+  waterReminderEnabled: Number(s.waterReminderEnabled ?? 0), waterReminderTime: s.waterReminderTime || "09:00", waterPenaltyTime: s.waterPenaltyTime || "00:01", waterReminderSms: Number(s.waterReminderSms ?? 1), waterReminderEmail: Number(s.waterReminderEmail ?? 1),
+  waterPenaltyEnabled: Number(s.waterPenaltyEnabled ?? 1), waterPenaltyPercent: n(s.waterPenaltyPercent ?? 5), waterPenaltyGraceDays: Number(s.waterPenaltyGraceDays ?? 10), waterPenaltyDailyPercent: n(s.waterPenaltyDailyPercent ?? 1), waterPenaltyFrom: s.waterPenaltyFrom || today(),
   visionProvider: s.meterVisionProvider || "", visionModel: s.meterVisionModel || "", visionKeySet: !!s.meterVisionApiKey,
   visionReady: !!(s.meterVisionProvider && s.meterVisionApiKey), visionKeyHint: s.meterVisionApiKey ? `…${String(s.meterVisionApiKey).slice(-4)}` : "" });
 
@@ -815,14 +827,15 @@ export function registerWaterBillingRoutes(app: Express) {
     try {
       const b = z.object({ waterBillDueDays: z.number().int().min(0).max(90).optional(), waterBillSms: z.number().int().min(0).max(1).optional(),
         waterReminderEnabled: z.number().int().min(0).max(1).optional(), waterReminderTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Enter the reminder time as HH:MM").optional(),
+        waterPenaltyTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Enter the penalty time as HH:MM").optional(),
         waterReminderSms: z.number().int().min(0).max(1).optional(), waterReminderEmail: z.number().int().min(0).max(1).optional(),
         waterPenaltyEnabled: z.number().int().min(0).max(1).optional(), waterPenaltyPercent: z.number().min(0, "Penalty can't be negative").max(100, "Penalty can't be over 100%").optional(),
-        waterPenaltyGraceDays: z.number().int().min(0).max(365).optional(), waterPenaltyFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a date").optional(),
+        waterPenaltyGraceDays: z.number().int().min(0).max(365).optional(), waterPenaltyDailyPercent: z.number().min(0, "Daily increase can't be negative").max(100, "Daily increase can't be over 100%").optional(), waterPenaltyFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a date").optional(),
         visionProvider: z.enum(["gemini", "openai", ""]).optional(), visionModel: z.string().max(80).optional(), visionApiKey: z.string().max(400).optional(), clearVisionKey: z.boolean().optional() }).parse(req.body);
       const patch: any = {};
       if (b.waterBillDueDays !== undefined) patch.waterBillDueDays = b.waterBillDueDays;
       if (b.waterBillSms !== undefined) patch.waterBillSms = b.waterBillSms;
-      for (const k of ["waterReminderEnabled", "waterReminderTime", "waterReminderSms", "waterReminderEmail", "waterPenaltyEnabled", "waterPenaltyPercent", "waterPenaltyGraceDays", "waterPenaltyFrom"] as const)
+      for (const k of ["waterReminderEnabled", "waterReminderTime", "waterPenaltyTime", "waterReminderSms", "waterReminderEmail", "waterPenaltyEnabled", "waterPenaltyPercent", "waterPenaltyGraceDays", "waterPenaltyDailyPercent", "waterPenaltyFrom"] as const)
         if (b[k] !== undefined) patch[k] = b[k];
       const touchesVision = b.visionProvider !== undefined || b.visionModel !== undefined || !!b.visionApiKey || b.clearVisionKey;
       if (touchesVision && !(req as any).user?.isAdmin) return res.status(403).json({ error: "Only an admin can change photo reading." });

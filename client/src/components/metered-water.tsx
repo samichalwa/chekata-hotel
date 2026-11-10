@@ -31,7 +31,7 @@ type ReadingRow = { customerId: number; accountNo: string; name: string; locatio
   history: { id: number; readingDate: string; currentReading: number; consumption: number; meterReplaced: boolean; billId: number | null; billNumber: string | null; billStatus: string | null; billAmount: number | null }[];
   reading: null | { id: number; currentReading: number; meterReplaced: boolean; oldMeterFinal: number | null; newMeterStart: number | null; consumption: number; readingDate: string; billId: number | null; billNumber: string | null; billStatus: string | null; photoUrl?: string | null; photoMeterNumber?: string | null; photoReading?: number | null; photoMeterVerified?: number | null; photoConfidence?: string | null } };
 type Bill = { id: number; billNumber: string; customerId: number; customerName: string; accountNo: string; phone: string | null; email: string | null; meterNumber: string | null; periodMonth: string; previousReading: number; currentReading: number; consumption: number; tariffName: string; currentCharges: number; balanceBroughtForward: number; totalDue: number; amountPaid: number; billDate: string; dueDate: string; status: string; cancelReason: string | null; smsStatus: string | null; emailStatus: string | null; documentId: number | null; documentToken: string | null; customerBalance: number; kind?: "water" | "penalty"; charge?: any };
-const penaltyText = (b: Bill) => `${b.charge?.percent ?? 0}% of ${formatKES(b.charge?.base ?? 0)} unpaid on ${b.charge?.forBillNumber ?? "an earlier bill"}`;
+const penaltyText = (b: Bill) => `${b.charge?.daily ? "Daily " : ""}${b.charge?.percent ?? 0}% of ${formatKES(b.charge?.base ?? 0)} unpaid on ${b.charge?.forBillNumber ?? "an earlier bill"}`;
 
 const errMsg = (e: any) => { const m = String(e?.message ?? e); const body = m.replace(/^\d+:\s*/, ""); try { return JSON.parse(body).error ?? body; } catch { return body; } };
 const thisMonth = () => todayISO().slice(0, 7);
@@ -575,8 +575,8 @@ function StatementDialog({ customer, onClose }: { customer: Customer; onClose: (
 /* ---------------- Tariffs ---------------- */
 function RemindersCard({ settings }: { settings: any }) {
   const { toast } = useToast();
-  const [f, setF] = useState({ time: "09:00", pct: "5", grace: "10", from: "" });
-  useEffect(() => { if (settings) setF({ time: settings.waterReminderTime, pct: String(settings.waterPenaltyPercent), grace: String(settings.waterPenaltyGraceDays), from: settings.waterPenaltyFrom }); }, [settings]);
+  const [f, setF] = useState({ time: "09:00", ptime: "00:01", pct: "5", daily: "1", grace: "10", from: "" });
+  useEffect(() => { if (settings) setF({ time: settings.waterReminderTime, ptime: settings.waterPenaltyTime, pct: String(settings.waterPenaltyPercent), daily: String(settings.waterPenaltyDailyPercent), grace: String(settings.waterPenaltyGraceDays), from: settings.waterPenaltyFrom }); }, [settings]);
   const { data: log = [], isLoading: logLoading } = useQuery<{ date: string; customer: string; accountNo: string; balance: number; sms: string | null; email: string | null }[]>({ queryKey: ["/api/water-billing/reminders"] });
   const save = useMutation({
     mutationFn: async (patch: any) => (await apiRequest("PATCH", "/api/water-billing/settings", patch)).json(),
@@ -588,7 +588,7 @@ function RemindersCard({ settings }: { settings: any }) {
     onSuccess: (r: any) => { invalidateAll(); queryClient.invalidateQueries({ queryKey: ["/api/water-billing/reminders"] }); toast({ title: `${r.reminders.length} reminder${r.reminders.length === 1 ? "" : "s"} sent`, description: `${r.penalties.length} new penalt${r.penalties.length === 1 ? "y" : "ies"}. Customers already reminded today are skipped.` }); },
     onError: (e) => toast({ title: "Couldn't send reminders", description: errMsg(e), variant: "destructive" }),
   });
-  const dirty = !!settings && (f.time !== settings.waterReminderTime || Number(f.pct) !== settings.waterPenaltyPercent || Number(f.grace) !== settings.waterPenaltyGraceDays || f.from !== settings.waterPenaltyFrom);
+  const dirty = !!settings && (f.time !== settings.waterReminderTime || f.ptime !== settings.waterPenaltyTime || Number(f.pct) !== settings.waterPenaltyPercent || Number(f.daily) !== settings.waterPenaltyDailyPercent || Number(f.grace) !== settings.waterPenaltyGraceDays || f.from !== settings.waterPenaltyFrom);
   const latest = log.length ? log[0].date : null;
   const latestRows = log.filter((l) => l.date === latest);
   const on = (k: string) => Number(settings?.[k] ?? 0) === 1;
@@ -612,15 +612,17 @@ function RemindersCard({ settings }: { settings: any }) {
           <label className="flex items-center gap-2 text-sm font-medium"><Switch checked={on("waterPenaltyEnabled")} onCheckedChange={(v) => save.mutate({ waterPenaltyEnabled: v ? 1 : 0 })} data-testid="switch-water-penalty" />Late payment penalty</label>
           <div className="flex flex-wrap items-end gap-4">
             <div className="space-y-1.5"><Label htmlFor="wp-pct">Penalty (%)</Label><Input id="wp-pct" type="number" min="0" max="100" step="0.5" className="w-24" value={f.pct} onChange={(e) => setF({ ...f, pct: e.target.value })} data-testid="input-penalty-percent" /></div>
+            <div className="space-y-1.5"><Label htmlFor="wp-daily">Daily increase (%)</Label><Input id="wp-daily" type="number" min="0" max="100" step="0.5" className="w-24" value={f.daily} onChange={(e) => setF({ ...f, daily: e.target.value })} data-testid="input-penalty-daily" /></div>
             <div className="space-y-1.5"><Label htmlFor="wp-grace">Days after due date</Label><Input id="wp-grace" type="number" min="0" max="365" className="w-24" value={f.grace} onChange={(e) => setF({ ...f, grace: e.target.value })} data-testid="input-penalty-grace" /></div>
+            <div className="space-y-1.5"><Label htmlFor="wp-time">Charge at</Label><Input id="wp-time" type="time" className="w-32" value={f.ptime} onChange={(e) => setF({ ...f, ptime: e.target.value })} data-testid="input-penalty-time" /></div>
             <div className="space-y-1.5"><Label htmlFor="wp-from">For bills due from</Label><Input id="wp-from" type="date" className="w-40" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} data-testid="input-penalty-from" /></div>
           </div>
-          <p className="text-xs text-muted-foreground">Charged once per bill, on what is still unpaid, when it is more than {f.grace || 0} days past its due date. Penalties never attract penalties. Waive one with its cancel button in Bills.</p>
+          <p className="text-xs text-muted-foreground">At {f.ptime || "00:01"} on day {Number(f.grace || 0) + 1} after the due date, {f.pct || 0}% of what is still unpaid is charged{Number(f.daily) > 0 ? <>, then {f.daily}% more every day until the bill is paid</> : null}. Each penalty invoice is sent by SMS and email straight away. Penalties never attract penalties. Waiving a penalty stops further ones on that bill. (Waive with the cancel button in Bills.)</p>
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground" data-testid="text-reminder-last">{logLoading ? "" : latest ? `Last reminders ${prettyDate(latest)}: ${latestRows.length} customer${latestRows.length === 1 ? "" : "s"}${latestRows.length ? ` (${latestRows.slice(0, 4).map((l) => `${l.customer} ${formatKES(l.balance)}`).join(", ")}${latestRows.length > 4 ? ", …" : ""})` : ""}.` : "No reminders sent yet."}</p>
-        <Button disabled={!dirty || save.isPending || !f.time || !f.from} onClick={() => save.mutate({ waterReminderTime: f.time, waterPenaltyPercent: Number(f.pct), waterPenaltyGraceDays: Number(f.grace), waterPenaltyFrom: f.from })} data-testid="button-save-reminders"><Save className="h-4 w-4 mr-1" />Save</Button>
+        <Button disabled={!dirty || save.isPending || !f.time || !f.ptime || !f.from} onClick={() => save.mutate({ waterReminderTime: f.time, waterPenaltyTime: f.ptime, waterPenaltyPercent: Number(f.pct), waterPenaltyDailyPercent: Number(f.daily), waterPenaltyGraceDays: Number(f.grace), waterPenaltyFrom: f.from })} data-testid="button-save-reminders"><Save className="h-4 w-4 mr-1" />Save</Button>
       </div>
       {settings && !settings.smsEnabled && <p className="text-xs text-muted-foreground">SMS is turned off in Settings → SMS, so reminders will only be emailed.</p>}
     </Card>
