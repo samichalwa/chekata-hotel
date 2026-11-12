@@ -354,6 +354,7 @@ function BillsTab() {
   };
   return (
     <div className="space-y-4">
+      <PastePaymentCard />
       <PaymentClaimsCard />
       <Card className="p-4 flex flex-wrap items-end gap-3">
         <div className="space-y-1.5"><Label htmlFor="wbl-month">Month</Label><Input id="wbl-month" type="month" className="w-44" value={month} onChange={(e) => setMonth(e.target.value)} data-testid="input-bills-month" /></div>
@@ -949,6 +950,65 @@ export function CheckList({ checks, testId }: { checks: Check[]; testId?: string
 }
 
 type PaymentClaim = { id: number; customerId: number; customerName: string; accountNo: string; message: string; reference: string; amount: number; paidAt: number | null; payerName: string | null; status: string; submittedBy: string; submittedAt: number; balance: number; checks: Check[] };
+/** Office: paste a customer's M-Pesa or bank message; it is checked and posted straight away (oldest bill first). */
+function PastePaymentCard() {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [customerId, setCustomerId] = useState("");
+  const [find, setFind] = useState("");
+  const [sms, setSms] = useState("");
+  const [amount, setAmount] = useState("");
+  const [check, setCheck] = useState<{ code: string | null; amount: number | null; balance: number | null; method: string; checks: any[]; blocked: boolean } | null>(null);
+  const { data: customers = [] } = useQuery<Customer[]>({ queryKey: ["/api/water-billing/customers"] });
+  const list = [...customers].sort((a, b) => a.name.localeCompare(b.name)).filter((c) => !find || `${c.name} ${c.accountNo} ${c.meterNumber ?? ""} ${c.location ?? ""}`.toLowerCase().includes(find.toLowerCase()));
+  const chosen = customers.find((c) => String(c.id) === customerId);
+  useEffect(() => {
+    if (!sms.trim()) { setCheck(null); return; }
+    const t = setTimeout(async () => {
+      try {
+        const r = await (await apiRequest("POST", "/api/water-billing/payment-message/check", { customerId: Number(customerId) || null, message: sms })).json();
+        setCheck(r);
+        if (r.amount != null) setAmount(String(r.balance != null ? Math.min(r.amount, Math.max(0, r.balance)) : r.amount));
+      } catch { setCheck(null); }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [sms, customerId]);
+  const reset = () => { setSms(""); setCheck(null); setAmount(""); };
+  const post = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/water-billing/payment-message/post", { customerId: Number(customerId), message: sms, amount: Number(amount) })).json(),
+    onSuccess: (r: any) => { invalidateAll(); queryClient.invalidateQueries({ queryKey: ["/api/water-billing/payment-claims"] }); toast({ title: "Payment posted", description: `${r.reference} · ${formatKES(r.amount)} for ${chosen?.name}. ${r.balance > 0.5 ? `Balance ${formatKES(r.balance)}.` : "Account fully paid."} Receipt sent.` }); reset(); },
+    onError: (e) => toast({ title: "Couldn't post", description: errMsg(e), variant: "destructive" }),
+  });
+  const amt = Number(amount);
+  const over = check?.balance != null && amt > check.balance + 0.5;
+  return (
+    <Card className="p-4 space-y-3" data-testid="card-paste-payment">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div><div className="text-sm font-medium flex items-center gap-2"><Smartphone className="h-4 w-4" />Paste a payment message</div>
+          <p className="text-xs text-muted-foreground mt-0.5">Paste a customer's M-Pesa or bank message. It is checked, then posted to their oldest bills first and a receipt is sent.</p></div>
+        <Button size="sm" variant={open ? "ghost" : "outline"} onClick={() => setOpen(!open)} data-testid="button-toggle-paste-payment">{open ? "Close" : "Paste message"}</Button>
+      </div>
+      {open && <>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5"><Label htmlFor="pp-find">Find customer</Label><Input id="pp-find" placeholder="Name, account or meter no." value={find} onChange={(e) => setFind(e.target.value)} data-testid="input-paste-find" /></div>
+          <div className="space-y-1.5"><Label>Customer</Label>
+            <Select value={customerId} onValueChange={setCustomerId}><SelectTrigger data-testid="select-paste-customer"><SelectValue placeholder="Choose customer" /></SelectTrigger>
+              <SelectContent>{list.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.name} · {c.accountNo}</SelectItem>)}{list.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground">No match</div>}</SelectContent></Select></div>
+        </div>
+        {chosen && <p className="text-xs text-muted-foreground -mt-1" data-testid="text-paste-balance">{[chosen.accountNo, chosen.meterNumber && `Meter ${chosen.meterNumber}`, `Balance ${formatKES(chosen.balance)}`].filter(Boolean).join(" · ")}</p>}
+        <PaymentSmsPaste value={sms} onChange={setSms} onRead={() => {}} testId="paste-payment-sms" />
+        {check && <div className="rounded-md border p-3 space-y-2"><div className="text-sm font-medium">Checks</div><CheckList checks={check.checks} testId="list-paste-checks" /></div>}
+        {check && !check.blocked && <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="space-y-1.5"><Label htmlFor="pp-amount">Amount to post (KES)</Label><Input id="pp-amount" type="number" inputMode="decimal" className="w-40" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-paste-amount" />
+            {over && <p className="text-xs text-destructive">More than the balance of {formatKES(check.balance ?? 0)}.</p>}
+            {check.amount != null && check.balance != null && check.amount > check.balance + 0.5 && !over && <p className="text-xs text-muted-foreground">The message shows {formatKES(check.amount)}; only the balance is posted.</p>}</div>
+          <Button disabled={!customerId || !(amt > 0) || over || post.isPending} onClick={() => post.mutate()} data-testid="button-paste-post"><CheckCircle2 className="h-4 w-4 mr-1" />{post.isPending ? "Posting…" : `Post ${amt > 0 ? formatKES(amt) : "payment"}`}</Button>
+        </div>}
+      </>}
+    </Card>
+  );
+}
+
 /** M-Pesa messages pasted by meter readers. The office confirms (posts the payment) or rejects; reminders pause meanwhile. */
 function PaymentClaimsCard() {
   const { toast } = useToast();

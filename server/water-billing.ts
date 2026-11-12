@@ -1111,6 +1111,43 @@ export function registerWaterBillingRoutes(app: Express) {
     finally { inFlight.delete(key); }
   });
 
+  // Office: paste a customer's M-Pesa or bank message and post it straight away (same checks as meter readers' pastes).
+  app.post("/api/water-billing/payment-message/check", W, async (req, res) => {
+    try {
+      const [c] = await sql`SELECT * FROM water_customers WHERE id = ${Number(req.body?.customerId)}` as any[];
+      const r = await checkPaymentMessage(String(req.body?.message ?? "").slice(0, 1500), c ?? null);
+      res.json({ code: r.parsed.code, amount: r.parsed.amount, paidAtText: r.parsed.paidAtText, payer: r.parsed.counterpartyName, method: r.method,
+        balance: c ? await balanceOf(Number(c.id)) : null, checks: r.checks, blocked: r.blocked.length > 0 });
+    } catch (e) { fail(res, e); }
+  });
+  app.post("/api/water-billing/payment-message/post", W, async (req, res) => {
+    const text = String(req.body?.message ?? "").trim().slice(0, 1500);
+    const customerId = Number(req.body?.customerId);
+    let claimId: number | null = null;
+    try {
+      if (!text) return res.status(400).json({ error: "Paste the M-Pesa or bank message." });
+      const [c] = await sql`SELECT * FROM water_customers WHERE id = ${customerId}` as any[];
+      if (!c) return res.status(404).json({ error: "Choose the customer." });
+      const r = await checkPaymentMessage(text, c);
+      if (r.blocked.length) return res.status(400).json({ error: r.blocked.map((b) => `${b.label}: ${b.detail}`).join(". ") });
+      const p = r.parsed;
+      const amount = req.body?.amount !== undefined && req.body?.amount !== null ? Number(req.body.amount) : n(p.amount);
+      // Kept as a confirmed paste (message on record, reference reserved) so the same message can't be posted twice.
+      const [row] = await sql`INSERT INTO water_payment_claims (customer_id, raw_message, payment_reference, amount, paid_at, payer_name, recipient, account, checks_json, status, submitted_by, submitted_at)
+        VALUES (${customerId}, ${text}, ${p.code}, ${p.amount}, ${p.paidAt}, ${p.counterpartyName}, ${p.recipient}, ${p.account}, ${JSON.stringify(r.checks)}, 'posting', ${who(req)}, ${Date.now()})
+        ON CONFLICT (payment_reference) DO NOTHING RETURNING id` as any[];
+      if (!row) return res.status(409).json({ error: duplicateRefMessage(p.code, "a water payment already pasted") });
+      claimId = Number(row.id);
+      const out = await postWaterPayment({ customerId, amount, method: r.method, reference: p.code, by: who(req), claimId });
+      await sql`UPDATE water_payment_claims SET status = 'confirmed', reviewed_by = ${who(req)}, reviewed_at = ${Date.now()}, payment_id = ${out.paymentId}, posted_amount = ${out.amount},
+        review_note = ${"Pasted and posted by the office"} WHERE id = ${claimId}`;
+      res.status(201).json({ ...out, reference: p.code });
+    } catch (e: any) {
+      if (claimId) await sql`DELETE FROM water_payment_claims WHERE id = ${claimId} AND status = 'posting'`.catch(() => null);
+      res.status(e?.status ?? 400).json({ error: e?.message ?? "Failed" });
+    }
+  });
+
   // Payments — on the customer's account, applied oldest bill first.
   app.post("/api/water-billing/customers/:id/record-payment", W, async (req, res) => {
     try {
