@@ -953,6 +953,42 @@ export function registerWaterBillingRoutes(app: Express) {
     res.send(Buffer.from(await wb.xlsx.writeBuffer()));
   });
 
+  // Late payment penalties for a date range (Water Sales → Metered customers → Penalties → Excel)
+  app.get("/api/water-billing/penalties/excel", W, async (req, res) => {
+    const isDay = (v: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? ""));
+    const from = isDay(req.query.from) ? String(req.query.from) : "0000-01-01";
+    const to = isDay(req.query.to) ? String(req.query.to) : "9999-12-31";
+    const rows = await sql`SELECT b.*, c.name, c.account_no, c.phone FROM water_bills b JOIN water_customers c ON c.id = b.customer_id
+      WHERE b.kind = 'penalty' AND b.bill_date >= ${from} AND b.bill_date <= ${to} ORDER BY b.bill_date, b.id` as any[];
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet("Penalties");
+    ws.addRow([`Water late payment penalties — ${from === "0000-01-01" ? "all dates" : `${prettyDate(from)} to ${prettyDate(to)}`}`]).font = { bold: true, size: 13 };
+    ws.addRow([]);
+    const h = ws.addRow(["Date", "Penalty no.", "Account", "Customer", "Phone", "On bill", "Bill due", "Type", "Rate %", "Days late", "Unpaid base (KES)", "Penalty (KES)", "Paid (KES)", "Outstanding (KES)", "Status", "SMS", "Note"]);
+    h.font = { bold: true, color: { argb: "FFFFFFFF" } }; h.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF2A2118" } };
+    let tot = 0, paid = 0, out = 0, waived = 0;
+    for (const b of rows) {
+      const ch = (() => { try { return JSON.parse(b.charge_json); } catch { return {}; } })();
+      const cancelled = b.status === "cancelled";
+      const o = cancelled ? 0 : Math.max(0, n(b.current_charges) - n(b.amount_paid));
+      if (cancelled) waived += n(b.current_charges); else { tot += n(b.current_charges); paid += n(b.amount_paid); out += o; }
+      ws.addRow([b.bill_date, b.bill_number, b.account_no, b.name, b.phone || "", ch.forBillNumber || "", ch.forDueDate || "", ch.daily ? "Daily" : "First", n(ch.percent), ch.daysLate ?? null, n(ch.base),
+        n(b.current_charges), cancelled ? 0 : n(b.amount_paid), o, cancelled ? "Waived" : b.status === "paid" ? "Paid" : b.status === "partially_paid" ? "Part paid" : "Unpaid", b.sms_status || "",
+        cancelled ? (b.cancel_reason || "") : ch.catchUp ? "Held while a payment was checked, then rejected" : ""]);
+    }
+    ws.addRow([]);
+    ws.addRow(["", "", "", "Penalties charged", "", "", "", "", "", "", "", tot]).font = { bold: true };
+    ws.addRow(["", "", "", "Paid", "", "", "", "", "", "", "", null, paid]);
+    ws.addRow(["", "", "", "Outstanding", "", "", "", "", "", "", "", null, null, out]).font = { bold: true };
+    ws.addRow(["", "", "", "Waived", "", "", "", "", "", "", "", waived]);
+    const money = { numFmt: "#,##0.00" };
+    ws.columns = [{ width: 12 }, { width: 13 }, { width: 10 }, { width: 24 }, { width: 14 }, { width: 13 }, { width: 12 }, { width: 8 }, { width: 8 }, { width: 9 },
+      { width: 16, style: money }, { width: 14, style: money }, { width: 12, style: money }, { width: 16, style: money }, { width: 10 }, { width: 10 }, { width: 40 }];
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="water-penalties-${from === "0000-01-01" ? "all" : `${from}-to-${to}`}.xlsx"`);
+    res.send(Buffer.from(await wb.xlsx.writeBuffer()));
+  });
+
   // Readings for a month: every active customer (plus anyone already read that month)
   app.get("/api/water-billing/readings", W, async (req, res) => {
     const month = String(req.query.month ?? "");

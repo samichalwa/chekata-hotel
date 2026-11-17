@@ -720,6 +720,7 @@ export const MODULE_KEYS = [
   "integrity",
   "meter-readings",
   "kitchen",
+  "message-log",
 ] as const;
 export type ModuleKey = typeof MODULE_KEYS[number];
 
@@ -754,6 +755,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   integrity: "Integrity Checks",
   "meter-readings": "Meter Readings",
   kitchen: "Kitchen Screen",
+  "message-log": "Message Log",
 };
 
 // Cosmetic grouping used both by the Settings > Users module-access checkboxes
@@ -768,7 +770,7 @@ export const MODULE_CATEGORY_GROUPS: { label: string; keys: ModuleKey[] }[] = [
   { label: "Finance & Accounting", keys: ["finance-daily", "finance", "budgeting", "documents", "expenses"] },
   { label: "HR", keys: ["staff", "attendance", "leave", "payroll", "hr"] },
   { label: "Supply", keys: ["purchasing", "internal-requisitions", "inventory", "assets"] },
-  { label: "Administration", keys: ["lists", "reports", "tenants", "system-admin", "integrity"] },
+  { label: "Administration", keys: ["lists", "reports", "tenants", "system-admin", "integrity", "message-log"] },
 ];
 
 // Tables that can be individually write-restricted per user via the System

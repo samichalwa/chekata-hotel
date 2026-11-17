@@ -55,7 +55,7 @@ import chekataLogo from "@/assets/chekata-logo.jpg";
 import { useCurrentUser, useLogout, canAccess, useSetupStatus } from "@/hooks/use-auth";
 import type { ModuleKey, Settings } from "@shared/schema";
 import { MODULE_CATEGORY_GROUPS } from "@shared/schema";
-import { CheckSquare, FlaskConical, CookingPot, NotebookPen } from "lucide-react";
+import { CheckSquare, FlaskConical, CookingPot, NotebookPen, MessagesSquare } from "lucide-react";
 import { useDirectorSummary, hasAnyApprovalModule } from "@/lib/director";
 
 const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
@@ -88,6 +88,7 @@ const items: { title: string; url: string; icon: any; key: ModuleKey }[] = [
   { title: "Temporary Labor Requisitions", url: "/temporary-labor-requisitions", icon: UserCog, key: "hr" },
   { title: "System Administration", url: "/system-admin", icon: ShieldCheck, key: "system-admin" },
   { title: "Integrity Checks", url: "/integrity", icon: ListChecks, key: "integrity" },
+  { title: "Message Log", url: "/message-log", icon: MessagesSquare, key: "message-log" },
   { title: "Settings", url: "/settings", icon: SettingsIcon, key: "settings" },
 ];
 

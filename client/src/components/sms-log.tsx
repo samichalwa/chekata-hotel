@@ -1,4 +1,4 @@
-// Settings → SMS log: every SMS the system tried to send (bills, receipts, bookings, reminders, reports…).
+// Message Log → Texts: every SMS the system tried to send (bills, receipts, bookings, reminders, reports…).
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MessageSquare, RefreshCw } from "lucide-react";
@@ -20,12 +20,12 @@ const STATUS: Record<Row["status"], { label: string; variant: "secondary" | "des
 };
 
 export function SmsLogTab() {
-  const [from, setFrom] = useState(todayISO());
+  const [from, setFrom] = useState(todayISO().slice(0, 8) + "01");
   const [to, setTo] = useState(todayISO());
   const [status, setStatus] = useState("all");
   const [q, setQ] = useState("");
   const params = new URLSearchParams({ from, to, ...(status !== "all" ? { status } : {}), ...(q.trim() ? { q: q.trim() } : {}) });
-  const { data, isLoading, isFetching, error, refetch } = useQuery<Resp>({ queryKey: [`/api/settings/sms-log?${params.toString()}`] });
+  const { data, isLoading, isFetching, error, refetch } = useQuery<Resp>({ queryKey: [`/api/message-log/sms?${params.toString()}`] });
   const s = data?.summary;
   return (
     <div className="space-y-4">

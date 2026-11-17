@@ -1638,8 +1638,35 @@ export async function registerRoutes(
     } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to send test SMS" }); }
   });
 
-  // ---------- SMS log (Settings → SMS log): every SMS the system tried to send ----------
-  app.get("/api/settings/sms-log", requireAdmin, async (req, res) => {
+  // ---------- Message Log: every SMS the system tried to send, and every emailed document ----------
+  const dayRange = (req: any) => {
+    const isDay = (v: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? ""));
+    const from = isDay(req.query.from) ? String(req.query.from) : hotelToday();
+    const to = isDay(req.query.to) ? String(req.query.to) : from;
+    return { from, to, fromMs: Date.parse(`${from}T00:00:00+03:00`), toMs: Date.parse(`${to}T00:00:00+03:00`) + 86_400_000 };
+  };
+  app.get("/api/message-log/emails", requireModule("message-log"), async (req, res) => {
+    try {
+      const { from, to, fromMs, toMs } = dayRange(req);
+      if (to < from) return res.status(400).json({ error: "The end date is before the start date." });
+      const status = ["sent", "failed", "skipped"].includes(String(req.query.status)) ? String(req.query.status) : null;
+      const q = String(req.query.q ?? "").trim().toLowerCase();
+      const like = `%${q.replace(/[%_]/g, "")}%`;
+      const rows = await sql`SELECT id, created_at, doc_type, category, source_id, recipient_name, recipient_email, amount, status, error_message, public_token FROM documents
+        WHERE created_at >= ${fromMs} AND created_at < ${toMs}
+          ${status ? sql`AND status = ${status}` : sql``}
+          ${q ? sql`AND (LOWER(COALESCE(recipient_name, '')) LIKE ${like} OR LOWER(COALESCE(recipient_email, '')) LIKE ${like} OR LOWER(doc_type) LIKE ${like} OR LOWER(category) LIKE ${like})` : sql``}
+        ORDER BY created_at DESC LIMIT 2000` as any[];
+      res.json({
+        from, to,
+        summary: { total: rows.length, sent: rows.filter((r) => r.status === "sent").length, failed: rows.filter((r) => r.status === "failed").length, skipped: rows.filter((r) => r.status === "skipped").length },
+        rows: rows.map((r) => ({ id: r.id, createdAt: Number(r.created_at), docType: r.doc_type, category: r.category, sourceId: r.source_id, recipientName: r.recipient_name,
+          recipientEmail: r.recipient_email, amount: Number(r.amount), status: r.status, error: r.error_message, pdfUrl: r.public_token ? `/api/public/documents/${r.id}/pdf?token=${r.public_token}` : null })),
+        truncated: rows.length >= 2000,
+      });
+    } catch (err: any) { res.status(500).json({ error: err?.message ?? "Failed to load emails" }); }
+  });
+  app.get("/api/message-log/sms", requireModule("message-log"), async (req, res) => {
     try {
       const isDay = (v: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? ""));
       const from = isDay(req.query.from) ? String(req.query.from) : hotelToday();

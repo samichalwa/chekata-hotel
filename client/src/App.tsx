@@ -41,6 +41,7 @@ import SettingsPage from "@/pages/settings";
 import Finance, { FinanceDaily } from "@/pages/finance";
 import SystemAdmin from "@/pages/system-admin";
 import Integrity from "@/pages/integrity";
+import MessageLogPage from "@/pages/message-log";
 import Budgeting from "@/pages/budgeting";
 import AssetsPage from "@/pages/assets";
 import WaterSalesPage from "@/pages/water-sales";
@@ -145,6 +146,7 @@ function AppRouter() {
       <Route path="/meter-readings" component={() => <Guarded moduleKey="meter-readings" component={MeterReadingsPage} />} />
       <Route path="/system-admin" component={() => <Guarded moduleKey="system-admin" component={SystemAdmin} />} />
       <Route path="/integrity" component={() => <Guarded moduleKey="integrity" component={Integrity} />} />
+      <Route path="/message-log" component={() => <Guarded moduleKey="message-log" component={MessageLogPage} />} />
       <Route path="/settings" component={() => <Guarded moduleKey="settings" component={SettingsPage} requireAdminUsername />} />
       <Route component={NotFound} />
     </Switch>

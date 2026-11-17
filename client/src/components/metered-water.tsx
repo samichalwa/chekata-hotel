@@ -20,7 +20,7 @@ import { PaymentSmsPaste, bankFromSmsAccount } from "@/components/payment-sms-pa
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
-import { formatKES, todayISO } from "@/lib/format";
+import { formatKES, todayISO, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, buildDocumentPdfUrl } from "@/lib/whatsapp";
 import { calcWaterCharge, calcWaterChargeStep, consumptionOf, validateTariff, monthLabel, type WaterBand } from "@shared/water-billing";
 
@@ -64,12 +64,14 @@ export function MeteredWater() {
           <TabsList>
             <TabsTrigger value="readings" data-testid="tab-metered-readings">Readings</TabsTrigger>
             <TabsTrigger value="bills" data-testid="tab-metered-bills">Bills</TabsTrigger>
+            <TabsTrigger value="penalties" data-testid="tab-metered-penalties">Penalties</TabsTrigger>
             <TabsTrigger value="customers" data-testid="tab-metered-customers">Customers</TabsTrigger>
             <TabsTrigger value="tariffs" data-testid="tab-metered-tariffs">Tariffs</TabsTrigger>
           </TabsList>
         </div>
         <TabsContent value="readings" className="mt-4"><ReadingsTab onBilled={() => setTab("bills")} /></TabsContent>
         <TabsContent value="bills" className="mt-4"><BillsTab /></TabsContent>
+        <TabsContent value="penalties" className="mt-4"><PenaltiesTab /></TabsContent>
         <TabsContent value="customers" className="mt-4"><CustomersTab /></TabsContent>
         <TabsContent value="tariffs" className="mt-4"><TariffsTab /></TabsContent>
       </Tabs>
@@ -420,6 +422,76 @@ function BillsTab() {
 }
 
 /* ---------------- Customers ---------------- */
+/* ---------------- Late payment penalties ---------------- */
+function PenaltiesTab() {
+  const [from, setFrom] = useState(todayISO().slice(0, 8) + "01");
+  const [to, setTo] = useState(todayISO());
+  const [status, setStatus] = useState("all");
+  const [search, setSearch] = useState("");
+  const { data: bills = [], isLoading } = useQuery<Bill[]>({ queryKey: ["/api/water-billing/bills", ""], queryFn: async () => (await apiRequest("GET", "/api/water-billing/bills")).json() });
+  const label = (b: Bill) => b.status === "cancelled" ? "waived" : b.status;
+  const rows = bills.filter((b) => b.kind === "penalty" && b.billDate >= from && b.billDate <= to
+    && (status === "all" || (status === "open" ? b.status === "unpaid" || b.status === "partially_paid" : label(b) === status))
+    && (!search || `${b.customerName} ${b.accountNo} ${b.billNumber} ${b.charge?.forBillNumber ?? ""}`.toLowerCase().includes(search.toLowerCase())))
+    .sort((a, b) => (b.billDate.localeCompare(a.billDate)) || b.id - a.id);
+  const live = rows.filter((b) => b.status !== "cancelled");
+  const charged = live.reduce((t, b) => t + b.currentCharges, 0);
+  const paid = live.reduce((t, b) => t + b.amountPaid, 0);
+  const waived = rows.filter((b) => b.status === "cancelled").reduce((t, b) => t + b.currentCharges, 0);
+  const badge = (b: Bill) => b.status === "cancelled" ? <Badge variant="outline">Waived</Badge> : b.status === "paid" ? <Badge variant="secondary">Paid</Badge> : b.status === "partially_paid" ? <Badge variant="outline">Part paid</Badge> : <Badge variant="destructive">Unpaid</Badge>;
+  return (
+    <div className="space-y-4">
+      <Card className="p-4 space-y-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1.5"><Label htmlFor="pen-from">From</Label><Input id="pen-from" type="date" className="w-40" value={from} onChange={(e) => { setFrom(e.target.value); if (e.target.value > to) setTo(e.target.value); }} data-testid="input-penalty-list-from" /></div>
+          <div className="space-y-1.5"><Label htmlFor="pen-to">To</Label><Input id="pen-to" type="date" className="w-40" value={to} min={from} onChange={(e) => setTo(e.target.value)} data-testid="input-penalty-list-to" /></div>
+          <div className="space-y-1.5"><Label>Status</Label>
+            <Select value={status} onValueChange={setStatus}><SelectTrigger className="w-36" data-testid="select-penalty-status"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="open">Not paid</SelectItem><SelectItem value="paid">Paid</SelectItem><SelectItem value="waived">Waived</SelectItem></SelectContent></Select></div>
+          <div className="space-y-1.5 flex-1 min-w-[12rem]"><Label htmlFor="pen-q">Search</Label><Input id="pen-q" placeholder="Customer, account or bill no." value={search} onChange={(e) => setSearch(e.target.value)} data-testid="input-penalty-search" /></div>
+          <Button variant="outline" asChild><a href={`/api/water-billing/penalties/excel?from=${from}&to=${to}`} data-testid="button-penalties-excel"><FileSpreadsheet className="h-4 w-4 mr-1" />Excel</a></Button>
+        </div>
+        <div className="flex flex-wrap gap-2 text-sm" data-testid="text-penalty-summary">
+          <Badge variant="outline">{rows.length} penalt{rows.length === 1 ? "y" : "ies"}</Badge>
+          <Badge variant="outline">Charged {formatKES(charged)}</Badge>
+          <Badge variant="secondary">Paid {formatKES(paid)}</Badge>
+          <Badge variant={charged - paid > 0.5 ? "destructive" : "outline"}>Outstanding {formatKES(Math.max(0, charged - paid))}</Badge>
+          {waived > 0 && <Badge variant="outline">Waived {formatKES(waived)}</Badge>}
+        </div>
+        <p className="text-xs text-muted-foreground">Every late payment penalty charged on a water bill. The text sent for each one is in Message Log. To waive a penalty, use the cancel button on it in Bills.</p>
+      </Card>
+      {isLoading ? <Card className="p-8 text-center text-sm text-muted-foreground">Loading…</Card>
+        : !rows.length ? <Card className="p-8 text-center text-sm text-muted-foreground" data-testid="empty-penalties">No penalties {from === to ? `on ${prettyDate(from)}` : `from ${prettyDate(from)} to ${prettyDate(to)}`}{status !== "all" || search ? " match these filters" : ""}.</Card>
+        : (
+          <Card className="overflow-x-auto">
+            <Table>
+              <TableHeader><TableRow>
+                <TableHead>Date</TableHead><TableHead>Customer</TableHead><TableHead>Penalty</TableHead><TableHead>On bill</TableHead><TableHead>Charge</TableHead>
+                <TableHead className="text-right">Amount</TableHead><TableHead className="text-right">Paid</TableHead><TableHead>Status</TableHead><TableHead>SMS</TableHead><TableHead></TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {rows.map((b) => (
+                  <TableRow key={b.id} data-testid={`row-penalty-${b.id}`}>
+                    <TableCell className="whitespace-nowrap">{prettyDate(b.billDate)}</TableCell>
+                    <TableCell><div className="font-medium">{b.customerName}</div><div className="text-xs text-muted-foreground">{b.accountNo}</div></TableCell>
+                    <TableCell className="whitespace-nowrap">{b.billNumber}</TableCell>
+                    <TableCell className="whitespace-nowrap">{b.charge?.forBillNumber ?? "—"}{b.charge?.forDueDate && <div className="text-xs text-muted-foreground">due {prettyDate(b.charge.forDueDate)}</div>}</TableCell>
+                    <TableCell className="text-xs min-w-[12rem]">{b.charge?.daily ? "Daily" : "First"} {b.charge?.percent ?? 0}% of {formatKES(b.charge?.base ?? 0)}{b.charge?.daysLate ? ` · ${b.charge.daysLate} days late` : ""}{b.charge?.catchUp && <div className="text-muted-foreground">Held while a payment was checked, then rejected</div>}{b.status === "cancelled" && b.cancelReason && <div className="text-muted-foreground">Waived: {b.cancelReason}</div>}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatKES(b.currentCharges)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{b.status === "cancelled" ? "—" : formatKES(b.amountPaid)}</TableCell>
+                    <TableCell>{badge(b)}</TableCell>
+                    <TableCell className="text-xs">{b.smsStatus ? titleCase(b.smsStatus.split(":")[0]) : "—"}</TableCell>
+                    <TableCell>{b.documentId && b.documentToken && <a href={buildDocumentPdfUrl(b.documentId, b.documentToken)} target="_blank" rel="noreferrer" title="Penalty invoice (PDF)" data-testid={`link-penalty-pdf-${b.id}`}><FileText className="h-4 w-4 text-muted-foreground hover:text-foreground" /></a>}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        )}
+    </div>
+  );
+}
+
 function CustomersTab() {
   const { toast } = useToast();
   const [edit, setEdit] = useState<Customer | "new" | null>(null);
