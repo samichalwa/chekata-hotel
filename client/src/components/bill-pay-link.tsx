@@ -14,6 +14,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, titleCase } from "@/lib/format";
 import { buildWhatsAppLink } from "@/lib/whatsapp";
 import type { OnlinePayment, Order } from "@shared/schema";
+import { firstName } from "@shared/names";
 
 /** The guest's M-Pesa payment for this bill that is waiting for staff, if any. */
 export function usePendingBillPayment(orderId: number) {
@@ -32,7 +33,7 @@ export function BillPayLink({ order, phone, name, items = [] }: { order: Order; 
     onError: (e: any) => toast({ title: "Couldn't create the link", description: e?.message, variant: "destructive" }),
   });
   const waText = url
-    ? `Hi ${name || "there"}, here is your ${titleCase(order.outlet)} bill at The Chekata${order.reference ? ` (${order.reference})` : ""}: ${formatKES(order.totalAmount)}.\n\nView the bill and pay by M-Pesa, then paste your M-Pesa SMS here:\n${url}`
+    ? `Hi ${firstName(name)}, here is your ${titleCase(order.outlet)} bill at The Chekata${order.reference ? ` (${order.reference})` : ""}: ${formatKES(order.totalAmount)}.\n\nView the bill and pay by M-Pesa, then paste your M-Pesa SMS here:\n${url}`
     : "";
   const wa = url ? buildWhatsAppLink(phone, waText, currentUser?.environment) : null;
 

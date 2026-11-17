@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES } from "@/lib/format";
 import { buildWhatsAppLink, buildDocumentPdfUrl } from "@/lib/whatsapp";
+import { firstName } from "@shared/names";
 
 function extractErrorMessage(raw: string): string {
   const match = raw.match(/^\d+:\s*([\s\S]*)$/);
@@ -86,7 +87,7 @@ export function CreditNoteDialog({ endpoint, invalidateKeys, maxAmount, recipien
   const whatsappLink = pdfUrl
     ? buildWhatsAppLink(
         recipientPhone,
-        `Hi ${recipientName}, a credit note has been issued for your account at The Chekata. View/download it here: ${pdfUrl}`,
+        `Hi ${firstName(recipientName)}, a credit note has been issued for your account at The Chekata. View/download it here: ${pdfUrl}`,
         currentUser?.environment,
       )
     : null;

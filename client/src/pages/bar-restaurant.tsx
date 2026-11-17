@@ -29,6 +29,7 @@ import { MenuBuilder, ChoiceDialog, useMenuDishes } from "@/components/menu-buil
 import { orderRevenue } from "@shared/pos";
 import { Link } from "wouter";
 import type { MenuDish, Order, OrderItem, PosCustomer, TableRow as TableEntity } from "@shared/schema";
+import { firstName } from "@shared/names";
 
 const errMsg = (e: any) => { const m = String(e?.message ?? e); const body = m.replace(/^\d+:\s*/, ""); try { return JSON.parse(body).error ?? body; } catch { return body; } };
 const NO_TABLE = "__none__";
@@ -257,7 +258,7 @@ function CustomerDialog({ customerId, onClose }: { customerId: number; onClose: 
     if (!r) return;
     const pdf = buildDocumentPdfUrl(r.id, r.publicToken);
     const payPart = isOpen && c.payToken && c.balance > 0 ? `\n\nPay by M-Pesa here: ${window.location.origin}/#/pay/${c.payToken}` : "";
-    const msg = `Hi ${c.name || "there"}, here is your bill ${c.customerNo}${c.tableName ? ` (${c.tableName})` : ""}: total ${formatKES(c.total)}, paid ${formatKES(c.paid)}, balance ${formatKES(c.balance)}.\n\nBill (PDF): ${pdf}${payPart}`;
+    const msg = `Hi ${firstName(c.name)}, here is your bill ${c.customerNo}${c.tableName ? ` (${c.tableName})` : ""}: total ${formatKES(c.total)}, paid ${formatKES(c.paid)}, balance ${formatKES(c.balance)}.\n\nBill (PDF): ${pdf}${payPart}`;
     const link = buildWhatsAppLink(c.phone, msg, me?.environment);
     if (link) window.open(link, "_blank");
   };

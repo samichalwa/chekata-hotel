@@ -16,6 +16,7 @@ import { runWithEnvironment } from "./db-context";
 import { waterReadingRows, saveWaterReadings, scanMeterPhoto, takeScan, raiseWaterBills, UserError, checkPaymentMessage, submitWaterPaymentClaim, listWaterPaymentClaims } from "./water-billing";
 import { UploadValidationError } from "./uploads";
 import { monthLabel } from "@shared/water-billing";
+import { firstName } from "@shared/names";
 
 const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -188,7 +189,7 @@ export async function createElectricityInvoice(readingId: number, by: string, ba
     const pdf = doc?.id && doc?.publicToken ? ` Invoice: ${base}/api/public/documents/${doc.id}/pdf?token=${doc.publicToken}` : "";
     const s = cfg.raw;
     const pay = s.mpesaNumber ? (s.mpesaPaymentType === "paybill" ? ` Pay via M-Pesa Paybill ${s.mpesaNumber}, Acc ${s.mpesaAccountNumber || invoiceNumber}.` : s.mpesaPaymentType === "phone" ? ` Pay via M-Pesa to ${s.mpesaNumber}.` : ` Pay via M-Pesa Till ${s.mpesaNumber}.`) : "";
-    const msg = `Dear ${tenant.name}, your ${s.hotelName || "The Chekata"} electricity invoice ${invoiceNumber} for Shop ${shopNo}, ${monthLabel(m.period_month)}: ${units} kWh, ${kes(amount)}, due ${prettyDate(dueDate)}.${pay}${pdf}`;
+    const msg = `Dear ${firstName(tenant.name)}, your ${s.hotelName || "The Chekata"} electricity invoice ${invoiceNumber} for Shop ${shopNo}, ${monthLabel(m.period_month)}: ${units} kWh, ${kes(amount)}, due ${prettyDate(dueDate)}.${pay}${pdf}`;
     const r = await sendSms({ source: "Electricity invoice", settings: s, to: tenant.phone, message: msg }).catch((e: any) => ({ ok: false, error: e?.message }));
     sms = r.ok ? "sent" : `failed: ${(r as any).error ?? ""}`;
   }

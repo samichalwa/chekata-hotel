@@ -26,6 +26,7 @@ import { CreditNoteDialog } from "@/components/credit-note-dialog";
 import { ConfirmOverrideDialog } from "@/components/confirm-override-dialog";
 import { CameraCapture } from "@/components/camera-capture";
 import type { Room, AccommodationBooking, GuestIdentityDocument } from "@shared/schema";
+import { firstName } from "@shared/names";
 
 const roomFormSchema = z.object({
   name: z.string().min(1, "Room name is required"),
@@ -376,7 +377,7 @@ function BookingFormDialog({ booking, rooms, trigger }: { booking?: Accommodatio
                   const paymentDetail = Number(amountPaidWatch) > 0 && (paymentMethodWatch || paymentReferenceWatch)
                     ? ` Payment: ${[paymentMethodWatch, paymentReferenceWatch].filter(Boolean).join(" / ")}.`
                     : "";
-                  let message = `Hi ${guestName || "there"}, this confirms your stay at The Chekata in ${selectedRoom?.name || "your room"}${nights ? ` for ${nights} night${nights === 1 ? "" : "s"}` : ""}. Total: ${formatKES(total)}${status === "checked_out" ? " — Paid in full." : " — Balance may be due."}${paymentDetail} We look forward to hosting you.`;
+                  let message = `Hi ${firstName(guestName)}, this confirms your stay at The Chekata in ${selectedRoom?.name || "your room"}${nights ? ` for ${nights} night${nights === 1 ? "" : "s"}` : ""}. Total: ${formatKES(total)}${status === "checked_out" ? " — Paid in full." : " — Balance may be due."}${paymentDetail} We look forward to hosting you.`;
                   // Existing booking: a document may already exist (created on save) — embed its PDF link.
                   // New/unsaved booking has no document yet, so we skip the fetch and send text only.
                   if (booking) {

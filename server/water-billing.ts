@@ -18,6 +18,7 @@ import { companyDisplayName, drawCompanyHeaderName, LOGO_EXISTS, LOGO_PATH } fro
 import { saveBase64Upload, UploadValidationError } from "./uploads";
 import { readMeterPhoto, normSerial } from "./meter-vision";
 import { calcWaterCharge, calcWaterChargeStep, consumptionOf, validateTariff, normalizeBands, monthLabel, type WaterBand } from "@shared/water-billing";
+import { firstName } from "@shared/names";
 
 const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -115,10 +116,10 @@ function billSms(settings: any, bill: any, customer: any, pdfUrl: string | null)
   const pay = payText(settings, customer);
   if (bill.kind === "penalty") {
     const ch = JSON.parse(bill.charge_json);
-    return `Dear ${customer.name}, a late payment penalty of ${kes(n(bill.current_charges))} (${penaltyDetail(ch)}) has been added to your ${settings.hotelName || "The Chekata"} water account ${customer.account_no}. Total due ${kes(Math.max(0, n(bill.total_due)))}.${pay}${pdfUrl ? ` Invoice: ${pdfUrl}` : ""}`;
+    return `Dear ${firstName(customer.name)}, a late payment penalty of ${kes(n(bill.current_charges))} (${penaltyDetail(ch)}) has been added to your ${settings.hotelName || "The Chekata"} water account ${customer.account_no}. Total due ${kes(Math.max(0, n(bill.total_due)))}.${pay}${pdfUrl ? ` Invoice: ${pdfUrl}` : ""}`;
   }
   const bf = n(bill.balance_brought_forward);
-  return `Dear ${customer.name}, your ${settings.hotelName || "The Chekata"} water bill ${bill.bill_number} for ${monthLabel(bill.period_month)}${bill.reading_date ? ` (meter read ${prettyDate(bill.reading_date)})` : ""}: ${fmtM3(n(bill.consumption))}, ${kes(n(bill.current_charges))}.${Math.abs(bf) > 0.5 ? ` ${bf > 0 ? "Arrears" : "Credit"} ${kes(Math.abs(bf))}.` : ""} Total due ${kes(Math.max(0, n(bill.total_due)))} by ${prettyDate(bill.due_date)}.${pay}${pdfUrl ? ` Bill: ${pdfUrl}` : ""}`;
+  return `Dear ${firstName(customer.name)}, your ${settings.hotelName || "The Chekata"} water bill ${bill.bill_number} for ${monthLabel(bill.period_month)}${bill.reading_date ? ` (meter read ${prettyDate(bill.reading_date)})` : ""}: ${fmtM3(n(bill.consumption))}, ${kes(n(bill.current_charges))}.${Math.abs(bf) > 0.5 ? ` ${bf > 0 ? "Arrears" : "Credit"} ${kes(Math.abs(bf))}.` : ""} Total due ${kes(Math.max(0, n(bill.total_due)))} by ${prettyDate(bill.due_date)}.${pay}${pdfUrl ? ` Bill: ${pdfUrl}` : ""}`;
 }
 
 /** Applies payments oldest-bill-first and rewrites each bill's amount_paid/status. */
@@ -178,7 +179,7 @@ export async function postWaterPayment(o: { customerId: number; amount: number; 
     }).catch(() => null) : null;
     if (c.phone) {
       const settings = await storage.getSettings();
-      void sendSms({ source: "Water payment", settings, to: c.phone, message: `Hi ${c.name}, payment received for your water account ${c.account_no}: ${kes(amount)}${reference ? ` (${reference})` : ""}. ${balance > 0.5 ? `Balance: ${kes(balance)}.` : "Paid in full."} Thank you.` }).catch(() => null);
+      void sendSms({ source: "Water payment", settings, to: c.phone, message: `Hi ${firstName(c.name)}, payment received for your water account ${c.account_no}: ${kes(amount)}${reference ? ` (${reference})` : ""}. ${balance > 0.5 ? `Balance: ${kes(balance)}.` : "Paid in full."} Thank you.` }).catch(() => null);
     }
     return { ok: true, paymentId: Number(p.id), amount, balance, allocation: alloc, _document: doc ? { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } : null };
   } finally { if (lock) inFlight.delete(lock); }
@@ -772,7 +773,7 @@ export async function applyDisconnectNotices(base: string) {
     const required = await depositRequired(customerId, months);
     const topUp = Math.max(0, Math.round(required - left));
     const bf = bills.map((b) => b.bill_number).join(", ");
-    const message = `Dear ${c.name}, your ${hotel} water account ${c.account_no} is overdue (bill ${bf}, due ${prettyDate(bills[0].due_date)}).`
+    const message = `Dear ${firstName(c.name)}, your ${hotel} water account ${c.account_no} is overdue (bill ${bf}, due ${prettyDate(bills[0].due_date)}).`
       + (applied > 0.5 ? ` Your deposit of ${kes(applied)} has been applied to the unpaid bill.` : "")
       + (balance > 0.5 ? ` Balance still owing: ${kes(balance)}.` : " Your bill is now cleared.")
       + ` Your water supply is now due for disconnection. To stay connected${balance > 0.5 ? `, pay the balance and` : ","} reinstate your deposit${topUp > 0 ? ` of ${kes(topUp)}` : ""} (${months} months' average consumption${left > 0.5 && required > 0 ? ` is ${kes(required)}; you still hold ${kes(left)}` : ""}).${payText(s, c)}`;
@@ -786,7 +787,7 @@ export async function applyDisconnectNotices(base: string) {
         const st = await statement(customerId);
         const pdf = await statementPdf(st!);
         const r = await sendTransactionalEmail({ settings: s, to: c.email, toName: c.name, subject: `Water account ${c.account_no}: due for disconnection`,
-          html: `<p>Dear ${c.name},</p><p>Your ${hotel} water account <b>${c.account_no}</b> is overdue (bill ${bf}, due ${prettyDate(bills[0].due_date)}).</p>`
+          html: `<p>Dear ${firstName(c.name)},</p><p>Your ${hotel} water account <b>${c.account_no}</b> is overdue (bill ${bf}, due ${prettyDate(bills[0].due_date)}).</p>`
             + (applied > 0.5 ? `<p>Your deposit of <b>${kes(applied)}</b> has been applied to the unpaid bill.</p>` : "")
             + `<p>${balance > 0.5 ? `Balance still owing: <b>${kes(balance)}</b>.` : "Your bill is now cleared."}</p>`
             + `<p>Your water supply is now <b>due for disconnection</b>. To stay connected${balance > 0.5 ? ", pay the balance and" : ","} reinstate your deposit${topUp > 0 ? ` of <b>${kes(topUp)}</b>` : ""} (${months} months' average consumption${left > 0.5 && required > 0 ? ` is ${kes(required)}; you still hold ${kes(left)}` : ""}).</p>`
@@ -840,7 +841,7 @@ export async function sendWaterReminders(base: string, penalties: Awaited<Return
       + (escalating ? ` A further ${daily}% of the unpaid amount is added every day until the overdue bill is paid.` : "");
     const [notice] = await sql`SELECT x.top_up FROM water_disconnect_notices x JOIN water_bills b ON b.id = x.bill_id WHERE x.customer_id = ${customerId} AND b.status IN ('unpaid', 'partially_paid') ORDER BY x.id DESC LIMIT 1` as any[];
     const cutText = notice ? ` Your water supply is due for disconnection${n(notice.top_up) > 0 ? `; please also reinstate your deposit of ${kes(n(notice.top_up))}` : ""}.` : "";
-    const message = `Dear ${c.name}, reminder: your ${hotel} water account ${c.account_no} has ${kes(balance)} unpaid${overdue > 0.5 ? `, ${kes(overdue)} overdue since ${prettyDate(oldest.due_date)}` : `, due ${prettyDate(oldest.due_date)}`}.${penaltyText}${warn}${cutText}${payText(s, c)}${link ? ` Bill: ${link}` : ""}`;
+    const message = `Dear ${firstName(c.name)}, reminder: your ${hotel} water account ${c.account_no} has ${kes(balance)} unpaid${overdue > 0.5 ? `, ${kes(overdue)} overdue since ${prettyDate(oldest.due_date)}` : `, due ${prettyDate(oldest.due_date)}`}.${penaltyText}${warn}${cutText}${payText(s, c)}${link ? ` Bill: ${link}` : ""}`;
     let sms = "skipped", email = "skipped";
     if (Number(s.waterReminderSms ?? 1) === 1 && c.phone) {
       const r = await sendSms({ source: "Water reminder", settings: s, to: c.phone, message }).catch((e: any) => ({ ok: false, error: e?.message }));
@@ -852,7 +853,7 @@ export async function sendWaterReminders(base: string, penalties: Awaited<Return
         const pdf = await statementPdf(st!);
         const rows = bills.map((b) => `<tr><td style="padding:4px 10px 4px 0">${b.bill_number}</td><td style="padding:4px 10px 4px 0">${b.kind === "penalty" ? "Late payment penalty" : `Water bill ${monthLabel(b.period_month)}`}</td><td style="padding:4px 10px 4px 0">Due ${prettyDate(b.due_date)}</td><td style="padding:4px 0;text-align:right">${kes(unpaid(b))}</td></tr>`).join("");
         const r = await sendTransactionalEmail({ settings: s, to: c.email, toName: c.name, subject: `Water account ${c.account_no}: ${kes(balance)} unpaid`,
-          html: `<p>Dear ${c.name},</p><p>This is a reminder that your ${hotel} water account <b>${c.account_no}</b> has <b>${kes(balance)}</b> unpaid${overdue > 0.5 ? `, of which ${kes(overdue)} is overdue` : ""}.</p>${penaltyText ? `<p>${penaltyText.trim()}</p>` : ""}${warn ? `<p>${warn.trim()}</p>` : ""}<table style="border-collapse:collapse;font-size:14px">${rows}</table><p>${payText(s, c).trim()}</p><p>Your statement is attached.</p><p>${hotel}</p>`,
+          html: `<p>Dear ${firstName(c.name)},</p><p>This is a reminder that your ${hotel} water account <b>${c.account_no}</b> has <b>${kes(balance)}</b> unpaid${overdue > 0.5 ? `, of which ${kes(overdue)} is overdue` : ""}.</p>${penaltyText ? `<p>${penaltyText.trim()}</p>` : ""}${warn ? `<p>${warn.trim()}</p>` : ""}<table style="border-collapse:collapse;font-size:14px">${rows}</table><p>${payText(s, c).trim()}</p><p>Your statement is attached.</p><p>${hotel}</p>`,
           attachment: { filename: `Water-statement-${c.account_no}-${date}.pdf`, content: pdf } });
         email = r.ok ? "sent" : `failed: ${(r as any).error ?? ""}`;
       } catch (e: any) { email = `failed: ${e?.message ?? e}`; }
@@ -883,7 +884,7 @@ export async function runWaterDaily(base: string, opts: { reminders: boolean }) 
       const days = list.map((p) => p.forDay).sort();
       const [bal] = await sql`SELECT total_due FROM water_bills WHERE id = ${last.bill.id}` as any[];
       const message = list.length === 1 ? billSms(s, last.bill, c, last.pdfUrl)
-        : `Dear ${c.name}, late payment penalties of ${kes(total)} (${new Set(days).size === 1 ? `for ${prettyDate(days[0])}` : `${new Set(days).size} days, ${prettyDate(days[0])} to ${prettyDate(days[days.length - 1])}`}, on bill${new Set(list.map((p) => p.forBillNumber)).size > 1 ? "s" : ""} ${Array.from(new Set(list.map((p) => p.forBillNumber))).join(", ")}) have been added to your ${s.hotelName || "The Chekata"} water account ${c.account_no}${list.some((p) => p.catchUp) ? ", including days held while your payment was checked and then rejected" : ""}. Total due ${kes(Math.max(0, n(bal?.total_due ?? last.bill.total_due)))}.${payText(s, c)}${last.pdfUrl ? ` Invoice: ${last.pdfUrl}` : ""}`;
+        : `Dear ${firstName(c.name)}, late payment penalties of ${kes(total)} (${new Set(days).size === 1 ? `for ${prettyDate(days[0])}` : `${new Set(days).size} days, ${prettyDate(days[0])} to ${prettyDate(days[days.length - 1])}`}, on bill${new Set(list.map((p) => p.forBillNumber)).size > 1 ? "s" : ""} ${Array.from(new Set(list.map((p) => p.forBillNumber))).join(", ")}) have been added to your ${s.hotelName || "The Chekata"} water account ${c.account_no}${list.some((p) => p.catchUp) ? ", including days held while your payment was checked and then rejected" : ""}. Total due ${kes(Math.max(0, n(bal?.total_due ?? last.bill.total_due)))}.${payText(s, c)}${last.pdfUrl ? ` Invoice: ${last.pdfUrl}` : ""}`;
       const r = await sendSms({ source: "Water bill", settings: s, to: c.phone, message }).catch((e: any) => ({ ok: false, error: e?.message }));
       sms = r.ok ? "sent" : `failed: ${(r as any).error ?? ""}`;
     }

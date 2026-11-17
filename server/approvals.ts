@@ -3,6 +3,7 @@ import { sendTransactionalEmail } from "./email";
 import { parsePermissions } from "./auth";
 import { notifyModuleUsers, notifyUserByFullName } from "./director";
 import type { ModuleKey, Settings } from "@shared/schema";
+import { firstName } from "@shared/names";
 
 // Same pattern used for username-as-email validation elsewhere (see the password
 // reset flow in routes.ts) — an account only receives workflow emails if its
@@ -101,7 +102,7 @@ export async function notifyRequesterOfDecision(ctx: NotifyContext, input: Decis
   const link = `${ctx.origin}/#${input.linkPath}`;
   const verb = input.decision === "approved" ? "approved" : "declined";
   const html = `
-    <p>Hello ${input.requestedBy},</p>
+    <p>Hello ${firstName(input.requestedBy)},</p>
     <p>Your ${input.docType} <strong>${input.docNumber}</strong> has been <strong>${verb}</strong> by ${input.decidedBy}.</p>
     ${input.reason ? `<p>Reason: ${input.reason}</p>` : ""}
     <p><a href="${link}" style="display:inline-block;background:#0f172a;color:#ffffff;padding:10px 18px;border-radius:6px;text-decoration:none;">View in ${hotelName}</a></p>

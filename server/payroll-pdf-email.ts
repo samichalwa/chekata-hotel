@@ -2,6 +2,7 @@ import type { IStorage } from "./storage";
 import { buildPayslipPdf } from "./pdf";
 import { sendTransactionalEmail } from "./email";
 import type { PayrollRun, PayrollLine, Staff, Settings } from "@shared/schema";
+import { firstName } from "@shared/names";
 
 // Payslips are deliberately kept OUT of the generic documents/public-token/WhatsApp
 // system used everywhere else in the app — payroll data is sensitive, so this flow
@@ -64,7 +65,7 @@ export async function emailPayslipForLine(
   const hotelName = settings.hotelName || "The Chekata";
   const html = `
     <div style="font-family:Arial,sans-serif;color:#2a2118;line-height:1.5;">
-      <p>Dear ${escapeHtml(staff.name)},</p>
+      <p>Dear ${escapeHtml(firstName(staff.name))},</p>
       <p>Please find attached your payslip for <strong>${escapeHtml(periodLabel(run.periodMonth))}</strong> from ${escapeHtml(hotelName)}.</p>
       <p><strong>Net pay:</strong> KES ${Math.round(line.netPay).toLocaleString("en-KE")}</p>
       <p>This payslip is confidential and intended solely for you. If you have any questions, please contact HR.</p>

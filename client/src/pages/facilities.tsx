@@ -25,6 +25,7 @@ import { CreditNoteDialog } from "@/components/credit-note-dialog";
 import { RecordPaymentButton } from "@/components/record-payment-button";
 import { ConfirmOverrideDialog } from "@/components/confirm-override-dialog";
 import type { Facility, FacilityBooking } from "@shared/schema";
+import { firstName } from "@shared/names";
 
 const facilityFormSchema = z.object({
   name: z.string().min(1, "Facility name is required"),
@@ -349,7 +350,7 @@ function FacilityBookingFormDialog({ booking, facilities, trigger }: { booking?:
                   const paymentDetail = Number(amountPaidWatch) > 0 && (paymentMethodWatch || paymentReferenceWatch)
                     ? ` Payment: ${[paymentMethodWatch, paymentReferenceWatch].filter(Boolean).join(" / ")}.`
                     : "";
-                  let message = `Hi ${clientName || "there"}, this confirms your booking for ${facility?.name || "the facility"} at The Chekata. Total: ${formatKES(total)}${status === "completed" ? " — Paid in full." : " — Balance may be due."}${paymentDetail} We look forward to hosting you.`;
+                  let message = `Hi ${firstName(clientName)}, this confirms your booking for ${facility?.name || "the facility"} at The Chekata. Total: ${formatKES(total)}${status === "completed" ? " — Paid in full." : " — Balance may be due."}${paymentDetail} We look forward to hosting you.`;
                   if (booking) {
                     const pdfUrl = await fetchLatestDocumentPdfUrl("facility", booking.id);
                     if (pdfUrl) message += `\n\nView/download your invoice/receipt: ${pdfUrl}`;

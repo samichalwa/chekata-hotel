@@ -23,6 +23,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import { formatKES, todayISO, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, buildDocumentPdfUrl } from "@/lib/whatsapp";
 import { calcWaterCharge, calcWaterChargeStep, consumptionOf, validateTariff, monthLabel, type WaterBand } from "@shared/water-billing";
+import { firstName } from "@shared/names";
 
 type Tariff = { id: number; name: string; bands: WaterBand[]; serviceCharge: number; minimumCharge: number; active: number; notes: string | null; customers?: number };
 type Customer = { id: number; accountNo: string; name: string; phone: string | null; email: string | null; location: string | null; meterNumber: string | null; tariffId: number; tariffName: string | null; openingReading: number; connectionDate: string | null; status: "active" | "disconnected"; depositAmount: number; depositPosted?: number; disconnectNotice?: { date: string; topUp: number } | null; depositToReinstate?: number; depositReference: string | null; depositDate: string | null; notes: string | null; lastReading: number | null; lastMonth: string | null; balance: number };
@@ -348,7 +349,7 @@ function BillsTab() {
     onError: (e) => toast({ title: "Couldn't cancel", description: errMsg(e), variant: "destructive" }),
   });
   const whatsapp = (b: Bill) => {
-    let msg = b.kind === "penalty" ? `Dear ${b.customerName}, a late payment penalty of ${formatKES(b.currentCharges)} (${penaltyText(b)}) has been added to your water account ${b.accountNo}.` : `Dear ${b.customerName}, your water bill ${b.billNumber} for ${monthLabel(b.periodMonth)}: ${m3(b.consumption)} (meter ${b.previousReading} → ${b.currentReading}), ${formatKES(b.currentCharges)}.`;
+    let msg = b.kind === "penalty" ? `Dear ${firstName(b.customerName)}, a late payment penalty of ${formatKES(b.currentCharges)} (${penaltyText(b)}) has been added to your water account ${b.accountNo}.` : `Dear ${firstName(b.customerName)}, your water bill ${b.billNumber} for ${monthLabel(b.periodMonth)}: ${m3(b.consumption)} (meter ${b.previousReading} → ${b.currentReading}), ${formatKES(b.currentCharges)}.`;
     if (b.kind !== "penalty" && Math.abs(b.balanceBroughtForward) > 0.5) msg += ` ${b.balanceBroughtForward > 0 ? "Arrears" : "Credit"} brought forward ${formatKES(Math.abs(b.balanceBroughtForward))}.`;
     msg += b.kind === "penalty" ? ` Total due ${formatKES(Math.max(0, b.totalDue))}.` : ` Total due ${formatKES(Math.max(0, b.totalDue))} by ${prettyDate(b.dueDate)}.`;
     if (b.documentId && b.documentToken) msg += `\n\nView/download your bill (PDF): ${buildDocumentPdfUrl(b.documentId, b.documentToken)}`;

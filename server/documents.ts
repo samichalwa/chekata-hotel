@@ -5,6 +5,7 @@ import { buildDocumentPdf, type DocLineItem } from "./pdf";
 import { sendTransactionalEmail } from "./email";
 import { computeInclusiveTaxBreakdown } from "./tax";
 import type { DocumentRecord, TaxCategory } from "@shared/schema";
+import { firstName } from "@shared/names";
 
 export const DOC_CATEGORY_TO_TAX_CATEGORY: Record<string, TaxCategory> = {
   accommodation: "accommodation",
@@ -178,7 +179,7 @@ async function issueDocumentCore(storage: IStorage, input: IssueDocumentInput): 
   const filename = `${title.replace(/\s+/g, "")}-${input.sourceId}.pdf`;
   const html = input.docType === "credit_note" ? `
     <div style="font-family:Arial,sans-serif;color:#2a2118;line-height:1.5;">
-      <p>Dear ${escapeHtml(input.recipientName)},</p>
+      <p>Dear ${escapeHtml(firstName(input.recipientName))},</p>
       <p>Please find attached a credit note from ${escapeHtml(settings.hotelName || "The Chekata")}${input.relatedDocNumber ? ` against invoice ${escapeHtml(input.relatedDocNumber)}` : ""}.</p>
       <p><strong>Credit amount:</strong> KES ${Math.round(input.totalAmount).toLocaleString("en-KE")}</p>
       ${input.reason ? `<p><strong>Reason:</strong> ${escapeHtml(input.reason)}</p>` : ""}
@@ -187,7 +188,7 @@ async function issueDocumentCore(storage: IStorage, input: IssueDocumentInput): 
       <p>${escapeHtml(settings.hotelName || "The Chekata")}</p>
     </div>` : `
     <div style="font-family:Arial,sans-serif;color:#2a2118;line-height:1.5;">
-      <p>Dear ${escapeHtml(input.recipientName)},</p>
+      <p>Dear ${escapeHtml(firstName(input.recipientName))},</p>
       <p>Please find attached your ${title.toLowerCase()} from ${escapeHtml(settings.hotelName || "The Chekata")}.</p>
       <p><strong>Total:</strong> KES ${Math.round(input.totalAmount).toLocaleString("en-KE")}<br/>
       <strong>Balance:</strong> KES ${Math.round(Math.max(0, input.balance)).toLocaleString("en-KE")}</p>

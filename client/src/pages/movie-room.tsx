@@ -26,6 +26,7 @@ import { formatKES, formatDate, todayISO, titleCase } from "@/lib/format";
 import { buildWhatsAppLink, buildDocumentPdfUrl, fetchLatestDocumentPdfUrl } from "@/lib/whatsapp";
 import { CreditNoteDialog } from "@/components/credit-note-dialog";
 import { MOVIE_SEAT_ROWS, MOVIE_SEAT_NUMBERS, type MovieShow, type MovieSeatBooking } from "@shared/schema";
+import { firstName } from "@shared/names";
 
 // ---------- Shared helpers ----------
 
@@ -315,7 +316,7 @@ function BookSeatsPanel({ shows, bookings }: { shows: MovieShow[]; bookings: Mov
 
       const seatList1 = Array.from(seats1).sort().join(", ");
       const seatList2 = Array.from(seats2).sort().join(", ");
-      let message = `Hi ${guestName || "there"}, this confirms your Movie Room booking at The Chekata.\n\n${show1?.name ?? ""} — ${show1 ? showTimeLabel(show1) : ""} — Seat(s): ${seatList1}`;
+      let message = `Hi ${firstName(guestName)}, this confirms your Movie Room booking at The Chekata.\n\n${show1?.name ?? ""} — ${show1 ? showTimeLabel(show1) : ""} — Seat(s): ${seatList1}`;
       if (addSecond && show2) {
         message += `\n${show2.name} — ${showTimeLabel(show2)} — Seat(s): ${seatList2}`;
       }
@@ -580,7 +581,7 @@ function EditBookingDialog({ booking, show, trigger }: { booking: MovieSeatBooki
                   const pr = form.watch("paymentReference");
                   const paid = form.watch("amountPaid");
                   const paymentDetail = (pm || pr) ? ` Payment: ${[pm, pr].filter(Boolean).join(" / ")}.` : "";
-                  let message = `Hi ${form.watch("guestName") || booking.guestName}, payment received for your Movie Room booking at The Chekata \u2014 Seat ${booking.seatRow}${booking.seatNumber}. Paid KES ${Number(paid || 0).toLocaleString()}.${paymentDetail} Enjoy the show!`;
+                  let message = `Hi ${firstName(form.watch("guestName") || booking.guestName)}, payment received for your Movie Room booking at The Chekata \u2014 Seat ${booking.seatRow}${booking.seatNumber}. Paid KES ${Number(paid || 0).toLocaleString()}.${paymentDetail} Enjoy the show!`;
                   const pdfUrl = await fetchLatestDocumentPdfUrl("movie", booking.id);
                   if (pdfUrl) message += `\n\nView/download your invoice/receipt: ${pdfUrl}`;
                   const link = buildWhatsAppLink(form.watch("guestPhone"), message, currentUser?.environment);

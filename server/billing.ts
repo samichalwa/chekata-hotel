@@ -2,6 +2,7 @@ import type { IStorage } from "./storage";
 import { issueDocument } from "./documents";
 import { sendSms } from "./sms";
 import { sendTransactionalEmail } from "./email";
+import { firstName } from "@shared/names";
 
 function currentPeriodMonth(): string {
   return new Date().toISOString().slice(0, 7); // YYYY-MM
@@ -87,7 +88,7 @@ export async function runTenantBillingCycle(storage: IStorage, createdBy = "syst
       try {
         const balance = inv.totalAmount - inv.amountPaid;
         const kindWord = (inv as any).invoiceKind === "electricity" ? "electricity" : "rent";
-        const message = `Dear ${inv.tenantName}, your ${kindWord} invoice ${inv.invoiceNumber} for KES ${Math.round(balance).toLocaleString("en-KE")} is due ${inv.dueDate}. Please check your email for the invoice.`;
+        const message = `Dear ${firstName(inv.tenantName)}, your ${kindWord} invoice ${inv.invoiceNumber} for KES ${Math.round(balance).toLocaleString("en-KE")} is due ${inv.dueDate}. Please check your email for the invoice.`;
         if (inv.tenantPhone) {
           await sendSms({ source: "Rent reminder", settings, to: inv.tenantPhone, message });
         }
@@ -98,7 +99,7 @@ export async function runTenantBillingCycle(storage: IStorage, createdBy = "syst
             toName: inv.tenantName,
             subject: `${kindWord === "electricity" ? "Electricity" : "Rent"} invoice ${inv.invoiceNumber} due ${inv.dueDate}`,
             html: `<div style="font-family:Arial,sans-serif;color:#2a2118;line-height:1.5;">
-              <p>Dear ${escapeHtml(inv.tenantName)},</p>
+              <p>Dear ${escapeHtml(firstName(inv.tenantName))},</p>
               <p>This is a reminder that ${kindWord} invoice <strong>${escapeHtml(inv.invoiceNumber)}</strong> for
               KES ${Math.round(balance).toLocaleString("en-KE")} is due on ${escapeHtml(inv.dueDate)}.</p>
               <p>Please refer to the invoice previously emailed to you, or contact us if you need it resent.</p>

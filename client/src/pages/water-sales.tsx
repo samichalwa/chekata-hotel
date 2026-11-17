@@ -25,6 +25,7 @@ import { WATER_SALE_TYPES } from "@shared/schema";
 import type { WaterBucketPrice, WaterSale } from "@shared/schema";
 import { MeteredWater } from "@/components/metered-water";
 import { PaymentSmsPaste } from "@/components/payment-sms-paste";
+import { firstName } from "@shared/names";
 
 function extractErrorMessage(raw: string): string {
   const match = raw.match(/^\d+:\s*([\s\S]*)$/);
@@ -330,7 +331,7 @@ function NewSaleDialog({ bucketPrices }: { bucketPrices: WaterBucketPrice[] }) {
                 variant="outline"
                 disabled={!buildWhatsAppLink(customerPhone, "x")}
                 onClick={() => {
-                  const message = `Hi ${customerName || "there"}, thank you for your water purchase at The Chekata. We'll send your receipt once the sale is saved.`;
+                  const message = `Hi ${firstName(customerName)}, thank you for your water purchase at The Chekata. We'll send your receipt once the sale is saved.`;
                   const link = buildWhatsAppLink(customerPhone, message, currentUser?.environment);
                   if (link) window.open(link, "_blank");
                 }}
@@ -476,7 +477,7 @@ export default function WaterSales() {
                               variant="ghost"
                               disabled={!buildWhatsAppLink(s.customerPhone, "x")}
                               onClick={async () => {
-                                let message = `Hi ${s.customerName}, thank you for your water purchase at The Chekata. Sale ${s.saleNumber} — ${formatKES(s.totalAmount)}, paid in full.`;
+                                let message = `Hi ${firstName(s.customerName)}, thank you for your water purchase at The Chekata. Sale ${s.saleNumber} — ${formatKES(s.totalAmount)}, paid in full.`;
                                 const pdfUrl = await fetchLatestDocumentPdfUrl("water", s.id);
                                 if (pdfUrl) message += `\n\nView/download your receipt: ${pdfUrl}`;
                                 const link = buildWhatsAppLink(s.customerPhone, message, currentUser?.environment);

@@ -69,6 +69,7 @@ import {
 import { isTestDbConfigured } from "./storage";
 import { runWithEnvironment, getCurrentEnvironment, type DbEnvironment } from "./db-context";
 import { startCopyLiveToTest, getLatestCopyRun } from "./copy-live-to-test";
+import { firstName } from "@shared/names";
 
 const STAFF_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@thechekata\.com$/i;
 
@@ -209,7 +210,7 @@ export async function registerRoutes(
         const resetLink = `${origin}/#/reset-password?token=${token}`;
         const hotelName = settings.hotelName || "The Chekata";
         const html = `
-          <p>Hello ${user.fullName || ""},</p>
+          <p>Hello ${firstName(user.fullName)},</p>
           <p>We received a request to reset the password for your ${hotelName} account.</p>
           <p><a href="${resetLink}" style="display:inline-block;background:#0f172a;color:#ffffff;padding:10px 18px;border-radius:6px;text-decoration:none;">Reset your password</a></p>
           <p>Or copy and paste this link into your browser:<br/>${resetLink}</p>
@@ -988,7 +989,7 @@ export async function registerRoutes(
         const paymentDetailLine = (body.paymentMethod || body.paymentReference)
           ? `\nPayment: ${[body.paymentMethod, body.paymentReference].filter(Boolean).join(" / ")}`
           : "";
-        const message = `Hi ${guestName}, your Movie Room booking at The Chekata is confirmed:\n${smsLegLines.join("\n")}\nTotal paid: KES ${amountPaid.toLocaleString()}.${paymentDetailLine}\nEnjoy the show!`;
+        const message = `Hi ${firstName(guestName)}, your Movie Room booking at The Chekata is confirmed:\n${smsLegLines.join("\n")}\nTotal paid: KES ${amountPaid.toLocaleString()}.${paymentDetailLine}\nEnjoy the show!`;
         const sms = await sendSms({ source: "Movie booking", settings: await storage.getSettings(), to: body.guestPhone, message });
         smsResult = sms.ok ? { status: "sent" } : { status: "skipped", errorMessage: sms.error };
       }
@@ -1043,7 +1044,7 @@ export async function registerRoutes(
           const paymentDetailLine = (updated.paymentMethod || updated.paymentReference)
             ? ` Payment: ${[updated.paymentMethod, updated.paymentReference].filter(Boolean).join(" / ")}.`
             : "";
-          const message = `Hi ${updated.guestName}, payment received for your Movie Room booking at The Chekata: ${show?.name ?? "Movie Room"} \u2014 Seat ${updated.seatRow}${updated.seatNumber}. Paid KES ${paymentDelta.toLocaleString()}${balance > 0 ? `, balance KES ${balance.toLocaleString()}` : ""}.${paymentDetailLine} Enjoy the show!`;
+          const message = `Hi ${firstName(updated.guestName)}, payment received for your Movie Room booking at The Chekata: ${show?.name ?? "Movie Room"} \u2014 Seat ${updated.seatRow}${updated.seatNumber}. Paid KES ${paymentDelta.toLocaleString()}${balance > 0 ? `, balance KES ${balance.toLocaleString()}` : ""}.${paymentDetailLine} Enjoy the show!`;
           await sendSms({ source: "Movie payment", settings: await storage.getSettings(), to: updated.guestPhone, message });
         }
       }
@@ -1082,7 +1083,7 @@ export async function registerRoutes(
     return { amount, method, reference, lock } as const;
   }
   const paidSms = (name: string, what: string, amount: number, reference: string | null, balance: number) =>
-    `Hi ${name}, payment received for your ${what} at The Chekata: KES ${amount.toLocaleString("en-KE")}${reference ? ` (${reference})` : ""}. ${balance > 0.5 ? `Balance: KES ${Math.round(balance).toLocaleString("en-KE")}.` : "Paid in full."} Thank you!`;
+    `Hi ${firstName(name)}, payment received for your ${what} at The Chekata: KES ${amount.toLocaleString("en-KE")}${reference ? ` (${reference})` : ""}. ${balance > 0.5 ? `Balance: KES ${Math.round(balance).toLocaleString("en-KE")}.` : "Paid in full."} Thank you!`;
 
   app.post("/api/accommodation-bookings/:id/record-payment", requireModule("accommodation"), async (req, res) => {
     let lock: string | null = null;
@@ -1185,7 +1186,7 @@ export async function registerRoutes(
       });
       if (primary.guestPhone) {
         const bal = total - paid;
-        const msg = `Hi ${primary.guestName}, payment received for your Movie Room booking at The Chekata: KES ${amount.toLocaleString("en-KE")}${reference ? ` (${reference})` : ""}. ${bal > 0.5 ? `Balance: KES ${Math.round(bal).toLocaleString("en-KE")}.` : "Paid in full."} Thank you!`;
+        const msg = `Hi ${firstName(primary.guestName)}, payment received for your Movie Room booking at The Chekata: KES ${amount.toLocaleString("en-KE")}${reference ? ` (${reference})` : ""}. ${bal > 0.5 ? `Balance: KES ${Math.round(bal).toLocaleString("en-KE")}.` : "Paid in full."} Thank you!`;
         void sendSms({ source: "Movie payment", settings: await storage.getSettings(), to: primary.guestPhone, message: msg }).catch(() => {});
       }
       res.json({ ok: true, amount, balance: total - paid, _document: { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } });
