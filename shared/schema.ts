@@ -614,6 +614,9 @@ export const settings = pgTable("settings", {
   waterPenaltyFrom: text("water_penalty_from"), // only bills due on/after this date attract penalties
   waterPenaltyTime: text("water_penalty_time").notNull().default("00:01"), // Nairobi time new penalties are charged and sent
   waterPenaltyDailyPercent: real("water_penalty_daily_percent").notNull().default(1), // % of the unpaid amount added each further day
+  waterDisconnectEnabled: integer("water_disconnect_enabled").notNull().default(1), // deposit applied + disconnection notice
+  waterDisconnectDay: integer("water_disconnect_day").notNull().default(25), // day of the month after the bill month
+  waterDepositMonths: integer("water_deposit_months").notNull().default(3), // deposit to reinstate = this many months' average bill
   waterDepositAccountId: integer("water_deposit_account_id"), // liability: water connection deposits held
   waterDepositBankAccountId: integer("water_deposit_bank_account_id"), // default bank deposits are paid into
   meterVisionProvider: text("meter_vision_provider"), // "gemini" | "openai" | null — reads meter photos

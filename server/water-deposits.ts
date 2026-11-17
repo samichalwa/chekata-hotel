@@ -151,6 +151,7 @@ export function registerWaterDepositRoutes(app: Express) {
       const [d] = await sql`SELECT * FROM water_deposits WHERE id = ${Number(req.params.id)}` as any[];
       if (!d) throw new DepositError("Deposit not found", 404);
       if (d.status !== "posted") throw new DepositError("This deposit is already cancelled.", 409);
+      if (d.payment_method === "applied") throw new DepositError("This is the deposit applied to unpaid bills. Reverse that payment on the customer's statement instead.", 409);
       const date = today();
       const period = await storage.findOpenPeriodForDate(date);
       if (period && period.status === "closed") throw new DepositError(`Accounting period "${period.name}" covering ${date} is closed. Reopen it to cancel this deposit.`, 409);

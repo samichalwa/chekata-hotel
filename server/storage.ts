@@ -1390,6 +1390,15 @@ CREATE TABLE IF NOT EXISTS water_bill_payments (
     recorded_by TEXT, created_at BIGINT NOT NULL, cancelled_by TEXT, cancelled_at BIGINT)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_water_deposits_customer ON water_deposits(customer_id)`;
   await ensureColumn("settings", "water_deposit_account_id", "INTEGER");
+  await ensureColumn("settings", "water_disconnect_enabled", "INTEGER NOT NULL DEFAULT 1");
+  await ensureColumn("settings", "water_disconnect_day", "INTEGER NOT NULL DEFAULT 25");
+  await ensureColumn("settings", "water_deposit_months", "INTEGER NOT NULL DEFAULT 3");
+  await ensureColumn("water_bill_payments", "journal_entry_id", "INTEGER");
+  await sql`CREATE TABLE IF NOT EXISTS water_disconnect_notices (
+    id SERIAL PRIMARY KEY, customer_id INTEGER NOT NULL, bill_id INTEGER NOT NULL UNIQUE, run_date TEXT NOT NULL,
+    deposit_applied REAL NOT NULL DEFAULT 0, deposit_left REAL NOT NULL DEFAULT 0, deposit_required REAL NOT NULL DEFAULT 0,
+    top_up REAL NOT NULL DEFAULT 0, balance_after REAL NOT NULL DEFAULT 0, payment_id INTEGER, journal_entry_id INTEGER,
+    sms_status TEXT, email_status TEXT, created_at BIGINT NOT NULL)`;
   await sql`CREATE TABLE IF NOT EXISTS sms_log (
     id SERIAL PRIMARY KEY, created_at BIGINT NOT NULL, recipient TEXT, phone TEXT, message TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'Other',
     status TEXT NOT NULL, error TEXT, provider_status TEXT, cost TEXT, message_id TEXT)`;

@@ -25,6 +25,8 @@ const kes = (v: number) => `KES ${Math.round(v).toLocaleString("en-KE")}`;
 const TZ = 3 * 3600_000;
 const today = () => new Date(Date.now() + TZ).toISOString().slice(0, 10);
 const addDays = (iso: string, d: number) => new Date(Date.parse(`${iso}T12:00:00Z`) + d * 86400_000).toISOString().slice(0, 10);
+/** "2026-10" → "2026-11-01": metered water bills are due on the 1st of the following month. */
+const firstOfNextMonth = (month: string) => { const [y, m] = month.split("-").map(Number); return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`; };
 const prettyDate = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 const isMonth = (m: unknown): m is string => typeof m === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(m);
 const who = (req: Request) => (req as any).user?.fullName ?? (req as any).user?.username ?? "staff";
@@ -272,7 +274,7 @@ async function statement(customerId: number) {
   const dayOf = (ms: number) => new Date(ms + TZ).toISOString().slice(0, 10);
   const events: { t: number; date: string; ref: string; description: string; charges: number; payments: number; paymentId?: number; reversed?: boolean }[] = [
     ...bills.map((b) => ({ t: Number(b.created_at), date: b.bill_date, ref: b.bill_number, description: b.kind === "penalty" ? `Late payment penalty · ${penaltyDetail(JSON.parse(b.charge_json))}` : `Water bill ${monthLabel(b.period_month)}${b.reading_date ? ` (read ${prettyDate(b.reading_date)})` : ""} · ${fmtM3(n(b.consumption))}`, charges: n(b.current_charges), payments: 0 })),
-    ...pays.map((p) => ({ t: Number(p.paid_at), date: dayOf(Number(p.paid_at)), ref: p.payment_reference || p.void_reference || `${c.account_no}-P${p.id}`, description: `Payment · ${String(p.payment_method).replace("_", " ")}${p.status === "reversed" ? " (reversed)" : ""}`, charges: 0, payments: n(p.amount), paymentId: Number(p.id), reversed: p.status === "reversed" })),
+    ...pays.map((p) => ({ t: Number(p.paid_at), date: dayOf(Number(p.paid_at)), ref: p.payment_reference || p.void_reference || `${c.account_no}-P${p.id}`, description: `${p.payment_method === "deposit" ? "Deposit applied" : `Payment · ${String(p.payment_method).replace("_", " ")}`}${p.status === "reversed" ? " (reversed)" : ""}`, charges: 0, payments: n(p.amount), paymentId: Number(p.id), reversed: p.status === "reversed" })),
     // A reversed payment shows twice: the original payment, then the reversal adding the amount back.
     ...pays.filter((p) => p.status === "reversed").map((p) => ({ t: Number(p.reversed_at), date: dayOf(Number(p.reversed_at)), ref: `${c.account_no}-P${p.id}`, description: `Payment reversed${p.reverse_reason ? ` · ${p.reverse_reason}` : ""}`, charges: n(p.amount), payments: 0 })),
   ].sort((a, b) => a.t - b.t);
@@ -593,7 +595,7 @@ export async function raiseWaterBills(body: { month?: string; billDate?: string;
 
       const settings = await storage.getSettings() as any;
       const billDate = body.billDate || today();
-      const dueDate = addDays(billDate, Number(settings.waterBillDueDays ?? 14));
+      // Water bills fall due on the 1st of the month after the reading month (or the bill date, if billed later).
       const pending = body.readingIds
         ? await sql`SELECT r.*, c.tariff_id FROM water_readings r JOIN water_customers c ON c.id = r.customer_id WHERE r.id = ANY(${body.readingIds}) AND r.bill_id IS NULL ORDER BY r.reading_date, r.id` as any[]
         : await sql`SELECT r.*, c.tariff_id FROM water_readings r JOIN water_customers c ON c.id = r.customer_id
@@ -607,6 +609,7 @@ export async function raiseWaterBills(body: { month?: string; billDate?: string;
         const mb = await monthBilled(Number(c.id), r.period_month);
         const charge = calcWaterChargeStep(mb.used, mb.charged, n(r.consumption), tariff, mb.bills === 0);
         const bf = await balanceOf(Number(c.id));
+        const dueDate = [firstOfNextMonth(r.period_month), billDate].sort()[1];
         // Skip any number already used (a counter behind existing bills must never clash).
         let number = await storage.getNextSequenceNumber("water_bill");
         for (let i = 0; i < 200 && (await sql`SELECT 1 FROM water_bills WHERE bill_number = ${number}` as any[]).length; i++) number = await storage.getNextSequenceNumber("water_bill");
@@ -623,9 +626,9 @@ export async function raiseWaterBills(body: { month?: string; billDate?: string;
           sms = s.ok ? "sent" : `failed: ${(s as any).error ?? ""}`;
         }
         await sql`UPDATE water_bills SET sms_status = ${sms} WHERE id = ${bill.id}`;
-        results.push({ billNumber: number, customer: c.name, amount: charge.total, totalDue: r2(charge.total + bf), email: doc?.status ?? "failed", sms });
+        results.push({ billNumber: number, dueDate, customer: c.name, amount: charge.total, totalDue: r2(charge.total + bf), email: doc?.status ?? "failed", sms });
       }
-      return { raised: results.filter((x) => x.billNumber).length, results, dueDate };
+      return { raised: results.filter((x) => x.billNumber).length, results, dueDate: results.find((x) => x.dueDate)?.dueDate ?? null };
 }
 
 // ---------- late payment penalties and daily reminders ----------
@@ -647,15 +650,15 @@ export async function applyWaterPenalties(base: string) {
   const pct = n(s.waterPenaltyPercent ?? 5), daily = n(s.waterPenaltyDailyPercent ?? 1);
   if (Number(s.waterPenaltyEnabled ?? 1) !== 1 || pct <= 0) return [];
   const date = today(), grace = Number(s.waterPenaltyGraceDays ?? 10);
-  const cutoff = addDays(date, -grace); // due before cutoff = more than the grace days late
+  const cutoff = addDays(date, -grace); // due on or before cutoff = grace days used up (due 1st + 12 days → penalty on the 13th)
   const over = await sql`SELECT b.* FROM water_bills b WHERE b.kind = 'water' AND b.status IN ('unpaid', 'partially_paid')
-    AND b.due_date >= ${s.waterPenaltyFrom || date} AND b.due_date < ${cutoff}
+    AND b.due_date >= ${s.waterPenaltyFrom || date} AND b.due_date <= ${cutoff}
     AND NOT EXISTS (SELECT 1 FROM water_bills p WHERE p.penalty_for_bill_id = b.id AND p.status = 'cancelled')
     AND NOT EXISTS (SELECT 1 FROM water_payment_claims w WHERE w.customer_id = b.customer_id AND w.status IN ('pending', 'posting')) ORDER BY b.customer_id, b.id` as any[]; // paused while a pasted payment awaits the office
   const out: { customerId: number; billNumber: string; forBillNumber: string; amount: number; percent: number; daily: boolean; forDay: string; catchUp: boolean; bill: any; pdfUrl: string | null; email: string }[] = [];
   const dayOf = (ms: number) => new Date(Number(ms) + TZ).toISOString().slice(0, 10);
   for (const w of over) {
-    const firstDay = addDays(w.due_date, grace + 1);
+    const firstDay = addDays(w.due_date, grace);
     const done = new Set((await sql`SELECT penalty_day FROM water_bills WHERE penalty_for_bill_id = ${w.id}` as any[]).map((r) => String(r.penalty_day)));
     // Days skipped while a since-rejected payment was waiting for the office.
     const rejected = await sql`SELECT submitted_at, reviewed_at FROM water_payment_claims WHERE customer_id = ${w.customer_id} AND status = 'rejected' AND reviewed_at IS NOT NULL` as any[];
@@ -692,6 +695,113 @@ export async function applyWaterPenalties(base: string) {
   return out;
 }
 
+/** Deposit to reinstate: the customer's average water bill over the last N months × N. */
+async function depositRequired(customerId: number, months: number) {
+  const rows = await sql`SELECT current_charges FROM water_bills WHERE customer_id = ${customerId} AND kind = 'water' AND status <> 'cancelled' ORDER BY period_month DESC, id DESC LIMIT ${months}` as any[];
+  if (!rows.length) return 0;
+  return Math.round(rows.reduce((t, r) => t + n(r.current_charges), 0) / rows.length * months);
+}
+
+/**
+ * On the disconnection day (default the 25th of the month after the bill month) a still-unpaid bill
+ * triggers, once per bill: the deposit held is applied to the unpaid balance (Dr deposits held, Cr water
+ * income), the customer is told the supply is due for disconnection and asked to reinstate the deposit
+ * at N months' average consumption. Paused while a pasted payment awaits the office.
+ */
+export async function applyDisconnectNotices(base: string) {
+  const s = await storage.getSettings() as any;
+  if (Number(s.waterDisconnectEnabled ?? 1) !== 1) return [];
+  const day = Math.max(1, Number(s.waterDisconnectDay ?? 25)), months = Math.max(1, Number(s.waterDepositMonths ?? 3));
+  const date = today();
+  const late = await sql`SELECT b.* FROM water_bills b WHERE b.kind = 'water' AND b.status IN ('unpaid', 'partially_paid')
+    AND b.due_date >= ${s.waterPenaltyFrom || date} AND b.due_date <= ${addDays(date, -(day - 1))}
+    AND NOT EXISTS (SELECT 1 FROM water_disconnect_notices x WHERE x.bill_id = b.id)
+    AND NOT EXISTS (SELECT 1 FROM water_payment_claims w WHERE w.customer_id = b.customer_id AND w.status IN ('pending', 'posting')) ORDER BY b.customer_id, b.id` as any[];
+  const byCustomer = new Map<number, any[]>();
+  for (const b of late) { const k = Number(b.customer_id); byCustomer.set(k, [...(byCustomer.get(k) ?? []), b]); }
+  const cfg = (() => { try { return JSON.parse(s.receiptPosting || "{}"); } catch { return {}; } })();
+  const incomeId = Number(cfg?.income?.water_bill || cfg?.income?.water || cfg?.income?.default) || null;
+  const liabilityId = Number(s.waterDepositAccountId) || null;
+  const hotel = s.hotelName || "The Chekata";
+  const out: { customerId: number; customer: string; applied: number; balance: number; required: number; topUp: number; sms: string; email: string; note?: string }[] = [];
+  for (const [customerId, bills] of Array.from(byCustomer)) {
+    const [c] = await sql`SELECT * FROM water_customers WHERE id = ${customerId}` as any[];
+    if (!c) continue;
+    // Claim the bills first so a second run can never apply the deposit twice.
+    const claimed: number[] = [];
+    for (const b of bills) {
+      const [x] = await sql`INSERT INTO water_disconnect_notices (customer_id, bill_id, run_date, created_at) VALUES (${customerId}, ${b.id}, ${date}, ${Date.now()}) ON CONFLICT (bill_id) DO NOTHING RETURNING id` as any[];
+      if (x) claimed.push(Number(x.id));
+    }
+    if (!claimed.length) continue;
+    const before = await balanceOf(customerId);
+    const held = r2(Math.max(0, n(c.deposit_amount)));
+    const applied = r2(Math.min(held, Math.max(0, before)));
+    let paymentId: number | null = null, journalId: number | null = null;
+    if (applied > 0.5) {
+      try {
+        if (liabilityId && incomeId) {
+          const label = `Water deposit applied to unpaid bills — ${c.account_no} ${c.name}`;
+          const entry = await storage.postJournalEntry(
+            { entryDate: date, description: label, sourceModule: "water-deposits", sourceId: customerId, createdBy: "Automatic (disconnection day)", createdAt: Date.now() } as any,
+            [{ accountId: liabilityId, debit: applied, credit: 0, description: `Deposit held for ${c.account_no} applied` },
+              { accountId: incomeId, debit: 0, credit: applied, description: `Water bills ${bills.map((b) => b.bill_number).join(", ")} paid from deposit` }] as any,
+          );
+          journalId = entry.id;
+        }
+        const open = await sql`SELECT id, bill_number, current_charges - amount_paid AS owing FROM water_bills WHERE customer_id = ${customerId} AND status IN ('unpaid','partially_paid') ORDER BY period_month, id` as any[];
+        let left = applied; const alloc: { billId: number; billNumber: string; amount: number }[] = [];
+        for (const b of open) { if (left <= 0.004) break; const a = r2(Math.min(left, n(b.owing))); if (a > 0) { alloc.push({ billId: b.id, billNumber: b.bill_number, amount: a }); left = r2(left - a); } }
+        const [p] = await sql`INSERT INTO water_bill_payments (customer_id, bill_id, amount, payment_method, payment_reference, allocation_json, paid_at, recorded_by, journal_entry_id)
+          VALUES (${customerId}, ${alloc[0]?.billId ?? bills[0].id}, ${applied}, 'deposit', ${null}, ${JSON.stringify(alloc)}, ${Date.now()}, ${"Automatic: deposit applied"}, ${journalId}) RETURNING id` as any[];
+        paymentId = Number(p.id);
+        const [lastDep] = await sql`SELECT bank_account_id FROM water_deposits WHERE customer_id = ${customerId} AND status = 'posted' ORDER BY id DESC LIMIT 1` as any[];
+        await sql`INSERT INTO water_deposits (customer_id, amount, paid_on, payment_method, payment_reference, bank_account_id, journal_entry_id, recorded_by, created_at)
+          VALUES (${customerId}, ${-applied}, ${date}, 'applied', ${null}, ${Number(lastDep?.bank_account_id ?? s.waterDepositBankAccountId ?? 0)}, ${journalId}, ${"Automatic: applied to unpaid bills"}, ${Date.now()})`;
+        await sql`UPDATE water_customers SET deposit_amount = ${r2(held - applied)} WHERE id = ${customerId}`;
+        await reallocate(customerId);
+      } catch (e: any) {
+        // Nothing sent: release the bills so the next run tries again (e.g. once the accounting period is reopened).
+        for (const id of claimed) await sql`DELETE FROM water_disconnect_notices WHERE id = ${id}`;
+        out.push({ customerId, customer: c.name, applied: 0, balance: before, required: 0, topUp: 0, sms: "skipped", email: "skipped", note: `Deposit not applied, will retry: ${e?.message ?? e}` });
+        continue;
+      }
+    }
+    const balance = await balanceOf(customerId);
+    const left = r2(held - applied);
+    const required = await depositRequired(customerId, months);
+    const topUp = Math.max(0, Math.round(required - left));
+    const bf = bills.map((b) => b.bill_number).join(", ");
+    const message = `Dear ${c.name}, your ${hotel} water account ${c.account_no} is overdue (bill ${bf}, due ${prettyDate(bills[0].due_date)}).`
+      + (applied > 0.5 ? ` Your deposit of ${kes(applied)} has been applied to the unpaid bill.` : "")
+      + (balance > 0.5 ? ` Balance still owing: ${kes(balance)}.` : " Your bill is now cleared.")
+      + ` Your water supply is now due for disconnection. To stay connected${balance > 0.5 ? `, pay the balance and` : ","} reinstate your deposit${topUp > 0 ? ` of ${kes(topUp)}` : ""} (${months} months' average consumption${left > 0.5 && required > 0 ? ` is ${kes(required)}; you still hold ${kes(left)}` : ""}).${payText(s, c)}`;
+    let sms = "skipped", email = "skipped";
+    if (c.phone) {
+      const r = await sendSms({ source: "Water disconnection notice", settings: s, to: c.phone, message }).catch((e: any) => ({ ok: false, error: e?.message }));
+      sms = r.ok ? "sent" : `failed: ${(r as any).error ?? ""}`;
+    }
+    if (c.email) {
+      try {
+        const st = await statement(customerId);
+        const pdf = await statementPdf(st!);
+        const r = await sendTransactionalEmail({ settings: s, to: c.email, toName: c.name, subject: `Water account ${c.account_no}: due for disconnection`,
+          html: `<p>Dear ${c.name},</p><p>Your ${hotel} water account <b>${c.account_no}</b> is overdue (bill ${bf}, due ${prettyDate(bills[0].due_date)}).</p>`
+            + (applied > 0.5 ? `<p>Your deposit of <b>${kes(applied)}</b> has been applied to the unpaid bill.</p>` : "")
+            + `<p>${balance > 0.5 ? `Balance still owing: <b>${kes(balance)}</b>.` : "Your bill is now cleared."}</p>`
+            + `<p>Your water supply is now <b>due for disconnection</b>. To stay connected${balance > 0.5 ? ", pay the balance and" : ","} reinstate your deposit${topUp > 0 ? ` of <b>${kes(topUp)}</b>` : ""} (${months} months' average consumption${left > 0.5 && required > 0 ? ` is ${kes(required)}; you still hold ${kes(left)}` : ""}).</p>`
+            + `${payText(s, c) ? `<p>${payText(s, c).trim()}</p>` : ""}<p>Your statement is attached.</p><p>${hotel}</p>`,
+          attachment: { filename: `Water-statement-${c.account_no}-${date}.pdf`, content: pdf } });
+        email = r.ok ? "sent" : `failed: ${(r as any).error ?? ""}`;
+      } catch (e: any) { email = `failed: ${e?.message ?? e}`; }
+    }
+    for (const id of claimed) await sql`UPDATE water_disconnect_notices SET deposit_applied = ${applied}, deposit_left = ${left}, deposit_required = ${required}, top_up = ${topUp},
+      balance_after = ${balance}, payment_id = ${paymentId}, journal_entry_id = ${journalId}, sms_status = ${sms}, email_status = ${email} WHERE id = ${id}`;
+    out.push({ customerId, customer: c.name, applied, balance, required, topUp, sms, email });
+  }
+  return out;
+}
+
 /** Sends one reminder a day (SMS, and email with the statement PDF) to every customer with an unpaid water balance. */
 export async function sendWaterReminders(base: string, penalties: Awaited<ReturnType<typeof applyWaterPenalties>> = []) {
   const s = await storage.getSettings() as any;
@@ -719,16 +829,18 @@ export async function sendWaterReminders(base: string, penalties: Awaited<Return
     const unpaid = (b: any) => r2(n(b.current_charges) - n(b.amount_paid));
     const overdue = r2(bills.filter((b) => b.due_date < date).reduce((t, b) => t + unpaid(b), 0));
     const oldest = bills[0];
-    const nextPenalty = penaltyOn ? bills.find((b) => b.kind === "water" && b.due_date >= (s.waterPenaltyFrom || date) && addDays(b.due_date, grace) >= date && !newToday.some((p) => p.forBillNumber === b.bill_number)) : null;
+    const nextPenalty = penaltyOn ? bills.find((b) => b.kind === "water" && b.due_date >= (s.waterPenaltyFrom || date) && addDays(b.due_date, grace) > date && !newToday.some((p) => p.forBillNumber === b.bill_number)) : null;
     const latest = [...bills].reverse().find((b) => b.doc_id && b.doc_token);
     const link = latest ? `${base}/api/public/documents/${latest.doc_id}/pdf?token=${latest.doc_token}` : null;
     const hotel = s.hotelName || "The Chekata";
     const penaltyText = newToday.length ? ` A late payment penalty of ${kes(newToday.reduce((t, p) => t + p.amount, 0))} (${newToday.map((p) => `${p.daily ? "daily " : ""}${p.percent}% of the unpaid amount on ${p.forBillNumber}`).join(", ")}) was added today.` : "";
     const daily = n(s.waterPenaltyDailyPercent ?? 1);
-    const escalating = penaltyOn && daily > 0 && bills.some((b) => b.kind === "water" && b.due_date >= (s.waterPenaltyFrom || date) && addDays(b.due_date, grace) < date);
-    const warn = (nextPenalty ? ` Pay by ${prettyDate(addDays(nextPenalty.due_date, grace))} to avoid a ${pct}% late payment penalty on ${nextPenalty.bill_number}${daily > 0 ? `, then ${daily}% more every day it stays unpaid` : ""}.` : "")
+    const escalating = penaltyOn && daily > 0 && bills.some((b) => b.kind === "water" && b.due_date >= (s.waterPenaltyFrom || date) && addDays(b.due_date, grace) <= date);
+    const warn = (nextPenalty ? ` Pay by ${prettyDate(addDays(nextPenalty.due_date, grace - 1))} to avoid a ${pct}% late payment penalty on ${nextPenalty.bill_number}${daily > 0 ? `, then ${daily}% more every day it stays unpaid` : ""}.` : "")
       + (escalating ? ` A further ${daily}% of the unpaid amount is added every day until the overdue bill is paid.` : "");
-    const message = `Dear ${c.name}, reminder: your ${hotel} water account ${c.account_no} has ${kes(balance)} unpaid${overdue > 0.5 ? `, ${kes(overdue)} overdue since ${prettyDate(oldest.due_date)}` : `, due ${prettyDate(oldest.due_date)}`}.${penaltyText}${warn}${payText(s, c)}${link ? ` Bill: ${link}` : ""}`;
+    const [notice] = await sql`SELECT x.top_up FROM water_disconnect_notices x JOIN water_bills b ON b.id = x.bill_id WHERE x.customer_id = ${customerId} AND b.status IN ('unpaid', 'partially_paid') ORDER BY x.id DESC LIMIT 1` as any[];
+    const cutText = notice ? ` Your water supply is due for disconnection${n(notice.top_up) > 0 ? `; please also reinstate your deposit of ${kes(n(notice.top_up))}` : ""}.` : "";
+    const message = `Dear ${c.name}, reminder: your ${hotel} water account ${c.account_no} has ${kes(balance)} unpaid${overdue > 0.5 ? `, ${kes(overdue)} overdue since ${prettyDate(oldest.due_date)}` : `, due ${prettyDate(oldest.due_date)}`}.${penaltyText}${warn}${cutText}${payText(s, c)}${link ? ` Bill: ${link}` : ""}`;
     let sms = "skipped", email = "skipped";
     if (Number(s.waterReminderSms ?? 1) === 1 && c.phone) {
       const r = await sendSms({ source: "Water reminder", settings: s, to: c.phone, message }).catch((e: any) => ({ ok: false, error: e?.message }));
@@ -754,6 +866,7 @@ export async function sendWaterReminders(base: string, penalties: Awaited<Return
 /** The daily run: penalties first, then reminders. If reminders are off, each new penalty gets its own SMS. */
 export async function runWaterDaily(base: string, opts: { reminders: boolean }) {
   const s = await storage.getSettings() as any;
+  const notices = await applyDisconnectNotices(base); // deposit applied first, so today's penalty is on what is still unpaid
   const penalties = await applyWaterPenalties(base);
   const remindersOn = opts.reminders && Number(s.waterReminderEnabled ?? 0) === 1;
   const reminders = remindersOn ? await sendWaterReminders(base, penalties) : [];
@@ -776,7 +889,7 @@ export async function runWaterDaily(base: string, opts: { reminders: boolean }) 
     }
     for (const p of list) await sql`UPDATE water_bills SET sms_status = ${sms} WHERE id = ${p.bill.id}`;
   }
-  return { penalties: penalties.map(({ bill, ...p }) => p), reminders };
+  return { penalties: penalties.map(({ bill, ...p }) => p), reminders, notices };
 }
 
 const nairobiTime = () => new Date(Date.now() + TZ).toISOString().slice(11, 16);
@@ -794,7 +907,7 @@ export function startWaterReminderSchedule(log: (m: string) => void) {
           const now = nairobiTime();
           if (now < (s.waterPenaltyTime || "00:01")) return; // penalties are charged (and sent) from the penalty time
           const r = await runWaterDaily(base, { reminders: now >= (s.waterReminderTime || "09:00") }); // reminders from the reminder time
-          if (r.penalties.length || r.reminders.length) log(`water daily (${env}): ${r.penalties.length} penalt${r.penalties.length === 1 ? "y" : "ies"}, ${r.reminders.length} reminder(s)`);
+          if (r.penalties.length || r.reminders.length || r.notices.length) log(`water daily (${env}): ${r.penalties.length} penalt${r.penalties.length === 1 ? "y" : "ies"}, ${r.notices.length} disconnection notice(s), ${r.reminders.length} reminder(s)`);
         } catch (e: any) { log(`water daily (${env}) failed: ${e?.message ?? e}`); }
       }).finally(() => waterDailyBusy.delete(env));
     }
@@ -806,6 +919,7 @@ export function startWaterReminderSchedule(log: (m: string) => void) {
 const visionInfo = (s: any) => ({ waterBillDueDays: Number(s.waterBillDueDays ?? 14), waterBillSms: Number(s.waterBillSms ?? 1), smsEnabled: !!s.smsEnabled,
   waterReminderEnabled: Number(s.waterReminderEnabled ?? 0), waterReminderTime: s.waterReminderTime || "09:00", waterPenaltyTime: s.waterPenaltyTime || "00:01", waterReminderSms: Number(s.waterReminderSms ?? 1), waterReminderEmail: Number(s.waterReminderEmail ?? 1),
   waterPenaltyEnabled: Number(s.waterPenaltyEnabled ?? 1), waterPenaltyPercent: n(s.waterPenaltyPercent ?? 5), waterPenaltyGraceDays: Number(s.waterPenaltyGraceDays ?? 10), waterPenaltyDailyPercent: n(s.waterPenaltyDailyPercent ?? 1), waterPenaltyFrom: s.waterPenaltyFrom || today(),
+  waterDisconnectEnabled: Number(s.waterDisconnectEnabled ?? 1), waterDisconnectDay: Number(s.waterDisconnectDay ?? 25), waterDepositMonths: Number(s.waterDepositMonths ?? 3),
   visionProvider: s.meterVisionProvider || "", visionModel: s.meterVisionModel || "", visionKeySet: !!s.meterVisionApiKey,
   visionReady: !!(s.meterVisionProvider && s.meterVisionApiKey), visionKeyHint: s.meterVisionApiKey ? `…${String(s.meterVisionApiKey).slice(-4)}` : "" });
 
@@ -856,11 +970,13 @@ export function registerWaterBillingRoutes(app: Express) {
         waterReminderSms: z.number().int().min(0).max(1).optional(), waterReminderEmail: z.number().int().min(0).max(1).optional(),
         waterPenaltyEnabled: z.number().int().min(0).max(1).optional(), waterPenaltyPercent: z.number().min(0, "Penalty can't be negative").max(100, "Penalty can't be over 100%").optional(),
         waterPenaltyGraceDays: z.number().int().min(0).max(365).optional(), waterPenaltyDailyPercent: z.number().min(0, "Daily increase can't be negative").max(100, "Daily increase can't be over 100%").optional(), waterPenaltyFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a date").optional(),
+        waterDisconnectEnabled: z.number().int().min(0).max(1).optional(), waterDisconnectDay: z.number().int().min(1, "Choose a day from 1 to 28").max(28, "Choose a day from 1 to 28").optional(),
+        waterDepositMonths: z.number().int().min(1, "At least 1 month").max(12, "At most 12 months").optional(),
         visionProvider: z.enum(["gemini", "openai", ""]).optional(), visionModel: z.string().max(80).optional(), visionApiKey: z.string().max(400).optional(), clearVisionKey: z.boolean().optional() }).parse(req.body);
       const patch: any = {};
       if (b.waterBillDueDays !== undefined) patch.waterBillDueDays = b.waterBillDueDays;
       if (b.waterBillSms !== undefined) patch.waterBillSms = b.waterBillSms;
-      for (const k of ["waterReminderEnabled", "waterReminderTime", "waterPenaltyTime", "waterReminderSms", "waterReminderEmail", "waterPenaltyEnabled", "waterPenaltyPercent", "waterPenaltyGraceDays", "waterPenaltyDailyPercent", "waterPenaltyFrom"] as const)
+      for (const k of ["waterReminderEnabled", "waterReminderTime", "waterPenaltyTime", "waterReminderSms", "waterReminderEmail", "waterPenaltyEnabled", "waterPenaltyPercent", "waterPenaltyGraceDays", "waterPenaltyDailyPercent", "waterPenaltyFrom", "waterDisconnectEnabled", "waterDisconnectDay", "waterDepositMonths"] as const)
         if (b[k] !== undefined) patch[k] = b[k];
       const touchesVision = b.visionProvider !== undefined || b.visionModel !== undefined || !!b.visionApiKey || b.clearVisionKey;
       if (touchesVision && !(req as any).user?.isAdmin) return res.status(403).json({ error: "Only an admin can change photo reading." });
@@ -878,12 +994,16 @@ export function registerWaterBillingRoutes(app: Express) {
     const rows = await sql`SELECT c.*, t.name AS tariff_name,
         (SELECT r.current_reading FROM water_readings r WHERE r.customer_id = c.id ORDER BY r.period_month DESC LIMIT 1) AS last_reading,
         (SELECT r.period_month FROM water_readings r WHERE r.customer_id = c.id ORDER BY r.period_month DESC LIMIT 1) AS last_month,
-        (SELECT COALESCE(SUM(d.amount), 0) FROM water_deposits d WHERE d.customer_id = c.id AND d.status = 'posted') AS deposit_posted
+        (SELECT COALESCE(SUM(d.amount), 0) FROM water_deposits d WHERE d.customer_id = c.id AND d.status = 'posted') AS deposit_posted,
+        (SELECT row_to_json(x) FROM (SELECT n.run_date, n.top_up, n.deposit_applied FROM water_disconnect_notices n JOIN water_bills nb ON nb.id = n.bill_id
+          WHERE n.customer_id = c.id AND nb.status IN ('unpaid', 'partially_paid') ORDER BY n.id DESC LIMIT 1) x) AS cut_notice,
+        (SELECT row_to_json(x) FROM (SELECT n.run_date, n.top_up, n.deposit_required FROM water_disconnect_notices n WHERE n.customer_id = c.id ORDER BY n.id DESC LIMIT 1) x) AS last_notice
       FROM water_customers c LEFT JOIN water_tariffs t ON t.id = c.tariff_id ORDER BY c.status, c.name` as any[];
     const bal = await customerBalances();
     res.json(rows.map((c) => ({ id: c.id, accountNo: c.account_no, name: c.name, phone: c.phone, email: c.email, location: c.location, meterNumber: c.meter_number,
       tariffId: c.tariff_id, tariffName: c.tariff_name, openingReading: n(c.opening_reading), connectionDate: c.connection_date, status: c.status,
-      depositAmount: n(c.deposit_amount), depositPosted: n(c.deposit_posted), depositReference: c.deposit_reference, depositDate: c.deposit_date, notes: c.notes,
+      depositAmount: n(c.deposit_amount), depositPosted: n(c.deposit_posted), disconnectNotice: c.cut_notice ? { date: c.cut_notice.run_date, topUp: n(c.cut_notice.top_up) } : null,
+      depositToReinstate: c.last_notice && n(c.last_notice.deposit_required) > n(c.deposit_amount) + 0.5 ? r2(n(c.last_notice.deposit_required) - n(c.deposit_amount)) : 0, depositReference: c.deposit_reference, depositDate: c.deposit_date, notes: c.notes,
       lastReading: c.last_reading === null ? null : n(c.last_reading), lastMonth: c.last_month, balance: bal.get(Number(c.id))?.balance ?? 0 })));
   });
   app.post("/api/water-billing/customers", W, async (req, res) => {
@@ -1211,8 +1331,20 @@ export function registerWaterBillingRoutes(app: Express) {
         const period = e?.periodId ? await storage.getAccountingPeriod(e.periodId) : null;
         if (period && period.status === "closed") return res.status(409).json({ error: `This payment is already in Finance, in the closed period "${period.name}". Reopen that period (Finance → Accounting periods) to reverse it.` });
       }
+      if (p.journal_entry_id) {
+        const e = await storage.getJournalEntry(Number(p.journal_entry_id));
+        const period = e?.periodId ? await storage.getAccountingPeriod(e.periodId) : null;
+        if (period && period.status === "closed") return res.status(409).json({ error: `This deposit use is already in Finance, in the closed period "${period.name}". Reopen that period (Finance → Accounting periods) to reverse it.` });
+      }
       const by = who(req);
       for (const j of jes) await storage.cancelJournalEntry(Number(j.id), by, `Water payment ${receiptNo} reversed: ${reason}`);
+      if (p.payment_method === "deposit") { // deposit applied on the disconnection day: the deposit is held again
+        if (p.journal_entry_id) await storage.cancelJournalEntry(Number(p.journal_entry_id), by, `Deposit use ${receiptNo} reversed: ${reason}`);
+        const [d] = await sql`SELECT id FROM water_deposits WHERE customer_id = ${p.customer_id} AND payment_method = 'applied' AND status = 'posted' AND ABS(amount + ${n(p.amount)}) < 0.01
+          AND (journal_entry_id IS NOT DISTINCT FROM ${p.journal_entry_id ?? null}) ORDER BY id DESC LIMIT 1` as any[];
+        if (d) await sql`UPDATE water_deposits SET status = 'cancelled', cancel_reason = ${`Deposit use reversed: ${reason}`}, cancelled_by = ${by}, cancelled_at = ${Date.now()} WHERE id = ${d.id}`;
+        await sql`UPDATE water_customers SET deposit_amount = deposit_amount + ${n(p.amount)} WHERE id = ${p.customer_id}`;
+      }
       for (const id of docIds) await sql`UPDATE documents SET payload_json = (payload_json::jsonb || ${JSON.stringify({ reversed: true, reversedReason: reason })}::jsonb)::text WHERE id = ${id}`;
       await sql`UPDATE water_bill_payments SET status = 'reversed', reverse_reason = ${reason}, reversed_by = ${by}, reversed_at = ${Date.now()},
         void_reference = payment_reference, payment_reference = NULL WHERE id = ${p.id}`;
