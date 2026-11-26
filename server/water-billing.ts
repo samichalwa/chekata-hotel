@@ -23,6 +23,8 @@ import { firstName } from "@shared/names";
 const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const kes = (v: number) => `KES ${Math.round(v).toLocaleString("en-KE")}`;
+/** Exact amount: shows cents only when there are any (KES 77.50, KES 50). */
+const kesExact = (v: number) => `KES ${(Math.round(v * 100) / 100).toLocaleString("en-KE", { minimumFractionDigits: Number.isInteger(Math.round(v * 100) / 100) ? 0 : 2, maximumFractionDigits: 2 })}`;
 const TZ = 3 * 3600_000;
 const today = () => new Date(Date.now() + TZ).toISOString().slice(0, 10);
 const addDays = (iso: string, d: number) => new Date(Date.parse(`${iso}T12:00:00Z`) + d * 86400_000).toISOString().slice(0, 10);
@@ -830,18 +832,18 @@ export async function sendWaterReminders(base: string, penalties: Awaited<Return
     const unpaid = (b: any) => r2(n(b.current_charges) - n(b.amount_paid));
     const overdue = r2(bills.filter((b) => b.due_date < date).reduce((t, b) => t + unpaid(b), 0));
     const oldest = bills[0];
-    const nextPenalty = penaltyOn ? bills.find((b) => b.kind === "water" && b.due_date >= (s.waterPenaltyFrom || date) && addDays(b.due_date, grace) > date && !newToday.some((p) => p.forBillNumber === b.bill_number)) : null;
     const latest = [...bills].reverse().find((b) => b.doc_id && b.doc_token);
     const link = latest ? `${base}/api/public/documents/${latest.doc_id}/pdf?token=${latest.doc_token}` : null;
     const hotel = s.hotelName || "The Chekata";
-    const penaltyText = newToday.length ? ` A late payment penalty of ${kes(newToday.reduce((t, p) => t + p.amount, 0))} (${newToday.map((p) => `${p.daily ? "daily " : ""}${p.percent}% of the unpaid amount on ${p.forBillNumber}`).join(", ")}) was added today.` : "";
-    const daily = n(s.waterPenaltyDailyPercent ?? 1);
-    const escalating = penaltyOn && daily > 0 && bills.some((b) => b.kind === "water" && b.due_date >= (s.waterPenaltyFrom || date) && addDays(b.due_date, grace) <= date);
-    const warn = (nextPenalty ? ` Pay by ${prettyDate(addDays(nextPenalty.due_date, grace - 1))} to avoid a ${pct}% late payment penalty on ${nextPenalty.bill_number}${daily > 0 ? `, then ${daily}% more every day it stays unpaid` : ""}.` : "")
-      + (escalating ? ` A further ${daily}% of the unpaid amount is added every day until the overdue bill is paid.` : "");
-    const [notice] = await sql`SELECT x.top_up FROM water_disconnect_notices x JOIN water_bills b ON b.id = x.bill_id WHERE x.customer_id = ${customerId} AND b.status IN ('unpaid', 'partially_paid') ORDER BY x.id DESC LIMIT 1` as any[];
-    const cutText = notice ? ` Your water supply is due for disconnection${n(notice.top_up) > 0 ? `; please also reinstate your deposit of ${kes(n(notice.top_up))}` : ""}.` : "";
-    const message = `Dear ${firstName(c.name)}, reminder: your ${hotel} water account ${c.account_no} has ${kes(balance)} unpaid${overdue > 0.5 ? `, ${kes(overdue)} overdue since ${prettyDate(oldest.due_date)}` : `, due ${prettyDate(oldest.due_date)}`}.${penaltyText}${warn}${cutText}${payText(s, c)}${link ? ` Bill: ${link}` : ""}`;
+    // Plain reminder: what is owed on the bill, plus any penalty, and the total. Nothing else.
+    const billOwed = r2(bills.filter((b) => b.kind !== "penalty").reduce((t, b) => t + unpaid(b), 0));
+    const penaltyOwed = r2(bills.filter((b) => b.kind === "penalty").reduce((t, b) => t + unpaid(b), 0));
+    const owedText = penaltyOwed > 0.005
+      ? `${kesExact(billOwed)} + late payment penalty ${kesExact(penaltyOwed)} = ${kesExact(balance)} owed`
+      : `${kesExact(balance)} owed${overdue > 0.5 ? "" : `, due ${prettyDate(oldest.due_date)}`}`;
+    const [dn] = await sql`SELECT x.deposit_applied, x.top_up FROM water_disconnect_notices x JOIN water_bills b ON b.id = x.bill_id WHERE x.customer_id = ${customerId} AND b.status IN ('unpaid', 'partially_paid') ORDER BY x.id DESC LIMIT 1` as any[];
+    const depositText = dn ? `${n(dn.deposit_applied) > 0.5 ? ` Your deposit of ${kesExact(n(dn.deposit_applied))} has been used to clear your pending bill.` : ""}${n(dn.top_up) > 0.5 ? ` Please reinstate your deposit of ${kesExact(n(dn.top_up))}.` : ""}` : "";
+    const message = `Dear ${firstName(c.name)}, your ${hotel} water account ${c.account_no}: ${owedText}.${depositText}${payText(s, c)}${link ? ` Bill: ${link}` : ""}`;
     let sms = "skipped", email = "skipped";
     if (Number(s.waterReminderSms ?? 1) === 1 && c.phone) {
       const r = await sendSms({ source: "Water reminder", settings: s, to: c.phone, message }).catch((e: any) => ({ ok: false, error: e?.message }));
@@ -852,8 +854,8 @@ export async function sendWaterReminders(base: string, penalties: Awaited<Return
         const st = await statement(customerId);
         const pdf = await statementPdf(st!);
         const rows = bills.map((b) => `<tr><td style="padding:4px 10px 4px 0">${b.bill_number}</td><td style="padding:4px 10px 4px 0">${b.kind === "penalty" ? "Late payment penalty" : `Water bill ${monthLabel(b.period_month)}`}</td><td style="padding:4px 10px 4px 0">Due ${prettyDate(b.due_date)}</td><td style="padding:4px 0;text-align:right">${kes(unpaid(b))}</td></tr>`).join("");
-        const r = await sendTransactionalEmail({ settings: s, to: c.email, toName: c.name, subject: `Water account ${c.account_no}: ${kes(balance)} unpaid`,
-          html: `<p>Dear ${firstName(c.name)},</p><p>This is a reminder that your ${hotel} water account <b>${c.account_no}</b> has <b>${kes(balance)}</b> unpaid${overdue > 0.5 ? `, of which ${kes(overdue)} is overdue` : ""}.</p>${penaltyText ? `<p>${penaltyText.trim()}</p>` : ""}${warn ? `<p>${warn.trim()}</p>` : ""}<table style="border-collapse:collapse;font-size:14px">${rows}</table><p>${payText(s, c).trim()}</p><p>Your statement is attached.</p><p>${hotel}</p>`,
+        const r = await sendTransactionalEmail({ settings: s, to: c.email, toName: c.name, subject: `Water account ${c.account_no}: ${kesExact(balance)} owed`,
+          html: `<p>Dear ${firstName(c.name)},</p><p>Your ${hotel} water account <b>${c.account_no}</b>: <b>${owedText}</b>.</p>${depositText ? `<p>${depositText.trim()}</p>` : ""}<table style="border-collapse:collapse;font-size:14px">${rows}</table><p>${payText(s, c).trim()}</p><p>Your statement is attached.</p><p>${hotel}</p>`,
           attachment: { filename: `Water-statement-${c.account_no}-${date}.pdf`, content: pdf } });
         email = r.ok ? "sent" : `failed: ${(r as any).error ?? ""}`;
       } catch (e: any) { email = `failed: ${e?.message ?? e}`; }
