@@ -31,6 +31,84 @@ async function postedTotal(customerId: number): Promise<number> {
   return r2(n(r?.t));
 }
 
+/** Records a deposit payment: journal Dr bank / Cr deposits held, receipt, SMS. `sharedReference` = the same
+ *  M-Pesa code was just used on this customer's bill payment from the same message (the excess goes to the deposit). */
+export async function recordWaterDeposit(input: any, by: string, base: string) {
+    let lock: string | null = null;
+    try {
+      const id = Number(input.customerId);
+      const [c] = await sql`SELECT * FROM water_customers WHERE id = ${id}` as any[];
+      if (!c) throw new DepositError("Customer not found", 404);
+      const b = z.object({
+        amount: z.coerce.number().positive("Enter the deposit amount."),
+        paymentMethod: z.enum(["cash", "mpesa", "card", "bank_transfer"], { message: "Choose how the customer paid." }),
+        paymentReference: z.string().trim().max(60).nullable().optional(),
+        paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        bankAccountId: z.coerce.number().int().positive().nullable().optional(),
+        replacesHandEntered: z.boolean().optional(),
+      }).parse(input);
+      const amount = r2(b.amount);
+      const paidOn = b.paidOn ?? today();
+      if (paidOn > today()) throw new DepositError("The payment date can't be in the future.");
+      const reference = (b.paymentReference || "").toUpperCase() || null;
+      if (b.paymentMethod === "mpesa" && !reference) throw new DepositError("Enter the M-Pesa code.");
+      const s = await storage.getSettings() as any;
+      const liability = Number(s.waterDepositAccountId) || null;
+      if (!liability) throw new DepositError("Choose the deposits held account first (Water sales → Metered → Tariffs → Deposits).", 409);
+      const bankId = b.bankAccountId ?? (Number(s.waterDepositBankAccountId) || null);
+      if (!bankId) throw new DepositError("Choose the bank account the deposit was paid into.");
+      const bank = await storage.getBankAccount(bankId);
+      if (!bank) throw new DepositError("That bank account no longer exists.");
+      const period = await storage.findOpenPeriodForDate(paidOn);
+      if (period && period.status === "closed") throw new DepositError(`Accounting period "${period.name}" covering ${paidOn} is closed. Reopen it in Finance → Accounting periods, then record the deposit.`, 409);
+      if (reference && !input.sharedReference) {
+        const k = normalizeRef(reference);
+        if (isRealRef(k)) {
+          if (inFlight.has(k)) throw new DepositError(duplicateRefMessage(reference, "another payment being saved right now"), 409);
+          const used = await findReferenceUse(reference);
+          if (used) throw new DepositError(duplicateRefMessage(reference, used), 409);
+          lock = k; inFlight.add(k);
+        }
+      }
+      const postedBefore = await postedTotal(id);
+      const handEntered = r2(Math.max(0, n(c.deposit_amount) - postedBefore));
+      const replaced = b.replacesHandEntered ? handEntered : 0;
+      const label = `Water deposit — ${c.account_no} ${c.name}${reference ? ` (${reference})` : ""}`;
+      const entry = await storage.postJournalEntry(
+        { entryDate: paidOn, description: label, sourceModule: "water-deposits", sourceId: id, createdBy: by, createdAt: Date.now() } as any,
+        [{ accountId: bank.glAccountId, debit: amount, credit: 0, description: `${label} → ${bank.name}` },
+          { accountId: liability, debit: 0, credit: amount, description: `Deposit held for ${c.account_no}` }] as any,
+      );
+      const [d] = await sql`INSERT INTO water_deposits (customer_id, amount, paid_on, payment_method, payment_reference, bank_account_id, journal_entry_id, replaces_hand_entered, recorded_by, created_at)
+        VALUES (${id}, ${amount}, ${paidOn}, ${b.paymentMethod}, ${reference}, ${bank.id}, ${entry.id}, ${replaced}, ${by}, ${Date.now()}) RETURNING *` as any[];
+      await sql`UPDATE journal_entries SET source_id = ${d.id} WHERE id = ${entry.id}`;
+      const newTotal = r2(n(c.deposit_amount) - replaced + amount);
+      await sql`UPDATE water_customers SET deposit_amount = ${newTotal}, deposit_reference = ${reference ?? c.deposit_reference}, deposit_date = ${paidOn} WHERE id = ${id}`;
+      const doc = await issueDocument(storage, {
+        docType: "receipt", category: "water_deposit", sourceId: d.id, customDocNumber: `${c.account_no}-D${d.id}`,
+        recipientName: c.name, recipientEmail: c.email || null, issueDate: prettyDate(paidOn),
+        lineItems: [{ label: `Water meter deposit — account ${c.account_no}`, amount }],
+        totalAmount: amount, amountPaid: amount, balance: 0, paymentAmount: amount, paymentMethod: b.paymentMethod, paymentReference: reference,
+        notes: `Refundable deposit held for water account ${c.account_no}${c.meter_number ? ` · Meter ${c.meter_number}` : ""}. Total deposit held: ${kes(newTotal)}.`,
+      } as any).catch(() => null);
+      if (doc?.id) await sql`UPDATE water_deposits SET document_id = ${doc.id} WHERE id = ${d.id}`;
+      let sms = "skipped";
+      if (c.phone) {
+        const link = doc?.id && (doc as any).publicToken ? ` Receipt: ${base}/api/public/documents/${doc.id}/pdf?token=${(doc as any).publicToken}` : "";
+        const r = await sendSms({ source: "Water deposit", settings: s, to: c.phone, message: `Hi ${firstName(c.name)}, we have received your water deposit of ${kes(amount)}${reference ? ` (${reference})` : ""} for account ${c.account_no}. Total deposit held: ${kes(newTotal)}. Thank you, The Chekata.${link}` }).catch((e: any) => ({ ok: false, error: e?.message }));
+        sms = r.ok ? "sent" : `failed: ${(r as any).error ?? ""}`;
+      }
+      return ({ ok: true, id: d.id, amount, total: newTotal, entryNumber: entry.entryNumber, receiptNo: `${c.account_no}-D${d.id}`, email: doc?.status ?? null, sms,
+        _document: doc ? { status: doc.status, errorMessage: (doc as any).errorMessage, id: doc.id, publicToken: (doc as any).publicToken } : null });
+    } finally { if (lock) inFlight.delete(lock); }
+}
+
+/** Deposit still to reinstate after a disconnection notice (0 when none). */
+export async function depositShortfall(customerId: number): Promise<number> {
+  const [x] = await sql`SELECT n.deposit_required, c.deposit_amount FROM water_disconnect_notices n JOIN water_customers c ON c.id = n.customer_id WHERE n.customer_id = ${customerId} ORDER BY n.id DESC LIMIT 1` as any[];
+  return x ? r2(Math.max(0, n(x.deposit_required) - n(x.deposit_amount))) : 0;
+}
+
 export function registerWaterDepositRoutes(app: Express) {
   const W = requireModule("water-sales");
   const fail = (res: any, err: any) => res.status(err?.issues ? 400 : err instanceof DepositError ? err.status : 500)
@@ -74,74 +152,10 @@ export function registerWaterDepositRoutes(app: Express) {
   });
 
   app.post("/api/water-billing/customers/:id/deposits", W, async (req, res) => {
-    let lock: string | null = null;
     try {
-      const id = Number(req.params.id);
-      const [c] = await sql`SELECT * FROM water_customers WHERE id = ${id}` as any[];
-      if (!c) throw new DepositError("Customer not found", 404);
-      const b = z.object({
-        amount: z.coerce.number().positive("Enter the deposit amount."),
-        paymentMethod: z.enum(["cash", "mpesa", "card", "bank_transfer"], { message: "Choose how the customer paid." }),
-        paymentReference: z.string().trim().max(60).nullable().optional(),
-        paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-        bankAccountId: z.coerce.number().int().positive().nullable().optional(),
-        replacesHandEntered: z.boolean().optional(),
-      }).parse(req.body);
-      const amount = r2(b.amount);
-      const paidOn = b.paidOn ?? today();
-      if (paidOn > today()) throw new DepositError("The payment date can't be in the future.");
-      const reference = (b.paymentReference || "").toUpperCase() || null;
-      if (b.paymentMethod === "mpesa" && !reference) throw new DepositError("Enter the M-Pesa code.");
-      const s = await storage.getSettings() as any;
-      const liability = Number(s.waterDepositAccountId) || null;
-      if (!liability) throw new DepositError("Choose the deposits held account first (Water sales → Metered → Tariffs → Deposits).", 409);
-      const bankId = b.bankAccountId ?? (Number(s.waterDepositBankAccountId) || null);
-      if (!bankId) throw new DepositError("Choose the bank account the deposit was paid into.");
-      const bank = await storage.getBankAccount(bankId);
-      if (!bank) throw new DepositError("That bank account no longer exists.");
-      const period = await storage.findOpenPeriodForDate(paidOn);
-      if (period && period.status === "closed") throw new DepositError(`Accounting period "${period.name}" covering ${paidOn} is closed. Reopen it in Finance → Accounting periods, then record the deposit.`, 409);
-      if (reference) {
-        const k = normalizeRef(reference);
-        if (isRealRef(k)) {
-          if (inFlight.has(k)) throw new DepositError(duplicateRefMessage(reference, "another payment being saved right now"), 409);
-          const used = await findReferenceUse(reference);
-          if (used) throw new DepositError(duplicateRefMessage(reference, used), 409);
-          lock = k; inFlight.add(k);
-        }
-      }
-      const postedBefore = await postedTotal(id);
-      const handEntered = r2(Math.max(0, n(c.deposit_amount) - postedBefore));
-      const replaced = b.replacesHandEntered ? handEntered : 0;
-      const label = `Water deposit — ${c.account_no} ${c.name}${reference ? ` (${reference})` : ""}`;
-      const entry = await storage.postJournalEntry(
-        { entryDate: paidOn, description: label, sourceModule: "water-deposits", sourceId: id, createdBy: who(req), createdAt: Date.now() } as any,
-        [{ accountId: bank.glAccountId, debit: amount, credit: 0, description: `${label} → ${bank.name}` },
-          { accountId: liability, debit: 0, credit: amount, description: `Deposit held for ${c.account_no}` }] as any,
-      );
-      const [d] = await sql`INSERT INTO water_deposits (customer_id, amount, paid_on, payment_method, payment_reference, bank_account_id, journal_entry_id, replaces_hand_entered, recorded_by, created_at)
-        VALUES (${id}, ${amount}, ${paidOn}, ${b.paymentMethod}, ${reference}, ${bank.id}, ${entry.id}, ${replaced}, ${who(req)}, ${Date.now()}) RETURNING *` as any[];
-      await sql`UPDATE journal_entries SET source_id = ${d.id} WHERE id = ${entry.id}`;
-      const newTotal = r2(n(c.deposit_amount) - replaced + amount);
-      await sql`UPDATE water_customers SET deposit_amount = ${newTotal}, deposit_reference = ${reference ?? c.deposit_reference}, deposit_date = ${paidOn} WHERE id = ${id}`;
-      const doc = await issueDocument(storage, {
-        docType: "receipt", category: "water_deposit", sourceId: d.id, customDocNumber: `${c.account_no}-D${d.id}`,
-        recipientName: c.name, recipientEmail: c.email || null, issueDate: prettyDate(paidOn),
-        lineItems: [{ label: `Water meter deposit — account ${c.account_no}`, amount }],
-        totalAmount: amount, amountPaid: amount, balance: 0, paymentAmount: amount, paymentMethod: b.paymentMethod, paymentReference: reference,
-        notes: `Refundable deposit held for water account ${c.account_no}${c.meter_number ? ` · Meter ${c.meter_number}` : ""}. Total deposit held: ${kes(newTotal)}.`,
-      } as any).catch(() => null);
-      if (doc?.id) await sql`UPDATE water_deposits SET document_id = ${doc.id} WHERE id = ${d.id}`;
-      let sms = "skipped";
-      if (c.phone) {
-        const link = doc?.id && (doc as any).publicToken ? ` Receipt: ${baseUrl(req)}/api/public/documents/${doc.id}/pdf?token=${(doc as any).publicToken}` : "";
-        const r = await sendSms({ source: "Water deposit", settings: s, to: c.phone, message: `Hi ${firstName(c.name)}, we have received your water deposit of ${kes(amount)}${reference ? ` (${reference})` : ""} for account ${c.account_no}. Total deposit held: ${kes(newTotal)}. Thank you, The Chekata.${link}` }).catch((e: any) => ({ ok: false, error: e?.message }));
-        sms = r.ok ? "sent" : `failed: ${(r as any).error ?? ""}`;
-      }
-      res.status(201).json({ ok: true, id: d.id, amount, total: newTotal, entryNumber: entry.entryNumber, receiptNo: `${c.account_no}-D${d.id}`, email: doc?.status ?? null, sms,
-        _document: doc ? { status: doc.status, errorMessage: (doc as any).errorMessage, id: doc.id, publicToken: (doc as any).publicToken } : null });
+      const out = await recordWaterDeposit({ ...req.body, customerId: Number(req.params.id) }, who(req), baseUrl(req));
+      res.status(201).json(out);
     } catch (e) { fail(res, e); }
-    finally { if (lock) inFlight.delete(lock); }
   });
 
   // Cancel a deposit recorded by mistake: reverses the journal, frees the reference, lowers the total.

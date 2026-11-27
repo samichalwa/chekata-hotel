@@ -19,6 +19,7 @@ import { saveBase64Upload, UploadValidationError } from "./uploads";
 import { readMeterPhoto, normSerial } from "./meter-vision";
 import { calcWaterCharge, calcWaterChargeStep, consumptionOf, validateTariff, normalizeBands, monthLabel, type WaterBand } from "@shared/water-billing";
 import { firstName } from "@shared/names";
+import { recordWaterDeposit, depositShortfall } from "./water-deposits";
 
 const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -1276,7 +1277,7 @@ export function registerWaterBillingRoutes(app: Express) {
       const [c] = await sql`SELECT * FROM water_customers WHERE id = ${Number(req.body?.customerId)}` as any[];
       const r = await checkPaymentMessage(String(req.body?.message ?? "").slice(0, 1500), c ?? null);
       res.json({ code: r.parsed.code, amount: r.parsed.amount, paidAtText: r.parsed.paidAtText, payer: r.parsed.counterpartyName, method: r.method,
-        balance: c ? await balanceOf(Number(c.id)) : null, checks: r.checks, blocked: r.blocked.length > 0 });
+        balance: c ? await balanceOf(Number(c.id)) : null, depositToReinstate: c ? await depositShortfall(Number(c.id)) : 0, checks: r.checks, blocked: r.blocked.length > 0 });
     } catch (e) { fail(res, e); }
   });
   app.post("/api/water-billing/payment-message/post", W, async (req, res) => {
@@ -1297,10 +1298,22 @@ export function registerWaterBillingRoutes(app: Express) {
         ON CONFLICT (payment_reference) DO NOTHING RETURNING id` as any[];
       if (!row) return res.status(409).json({ error: duplicateRefMessage(p.code, "a water payment already pasted") });
       claimId = Number(row.id);
-      const out = await postWaterPayment({ customerId, amount, method: r.method, reference: p.code, by: who(req), claimId });
-      await sql`UPDATE water_payment_claims SET status = 'confirmed', reviewed_by = ${who(req)}, reviewed_at = ${Date.now()}, payment_id = ${out.paymentId}, posted_amount = ${out.amount},
-        review_note = ${"Pasted and posted by the office"} WHERE id = ${claimId}`;
-      res.status(201).json({ ...out, reference: p.code });
+      // Anything above the balance goes to the deposit the customer has been asked to reinstate (never more than the message shows).
+      const due = await balanceOf(customerId);
+      const shortfall = await depositShortfall(customerId);
+      const billPart = r2(Math.min(amount, Math.max(0, due)));
+      const depositPart = r2(amount - billPart);
+      if (depositPart > 0.5 && (depositPart > shortfall + 0.5 || amount > n(p.amount) + 0.5))
+        throw new HttpError(400, `That is more than the balance of ${kes(due)}${shortfall > 0.5 ? ` plus the deposit to reinstate of ${kes(shortfall)}` : ""}.`);
+      const out = billPart > 0.004 ? await postWaterPayment({ customerId, amount: billPart, method: r.method, reference: p.code, by: who(req), claimId }) : null;
+      let deposit: any = null;
+      if (depositPart > 0.5) {
+        const paidOn = p.paidAt ? new Date(Number(p.paidAt) + TZ).toISOString().slice(0, 10) : today();
+        deposit = await recordWaterDeposit({ customerId, amount: depositPart, paymentMethod: r.method, paymentReference: p.code, paidOn: paidOn > today() ? today() : paidOn, sharedReference: true }, who(req), baseUrl(req));
+      }
+      await sql`UPDATE water_payment_claims SET status = 'confirmed', reviewed_by = ${who(req)}, reviewed_at = ${Date.now()}, payment_id = ${out?.paymentId ?? null}, posted_amount = ${r2((out?.amount ?? 0) + (deposit?.amount ?? 0))},
+        review_note = ${deposit ? `Pasted and posted by the office · ${kes(deposit.amount)} to deposit` : "Pasted and posted by the office"} WHERE id = ${claimId}`;
+      res.status(201).json({ ...(out ?? { ok: true, amount: 0, balance: due }), reference: p.code, depositAmount: deposit?.amount ?? 0, depositTotal: deposit?.total ?? null });
     } catch (e: any) {
       if (claimId) await sql`DELETE FROM water_payment_claims WHERE id = ${claimId} AND status = 'posting'`.catch(() => null);
       res.status(e?.status ?? 400).json({ error: e?.message ?? "Failed" });

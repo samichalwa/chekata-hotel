@@ -1057,7 +1057,7 @@ function PastePaymentCard() {
   const [find, setFind] = useState("");
   const [sms, setSms] = useState("");
   const [amount, setAmount] = useState("");
-  const [check, setCheck] = useState<{ code: string | null; amount: number | null; balance: number | null; method: string; checks: any[]; blocked: boolean } | null>(null);
+  const [check, setCheck] = useState<{ code: string | null; amount: number | null; balance: number | null; depositToReinstate?: number; method: string; checks: any[]; blocked: boolean } | null>(null);
   const { data: customers = [] } = useQuery<Customer[]>({ queryKey: ["/api/water-billing/customers"] });
   const list = [...customers].sort((a, b) => a.name.localeCompare(b.name)).filter((c) => !find || `${c.name} ${c.accountNo} ${c.meterNumber ?? ""} ${c.location ?? ""}`.toLowerCase().includes(find.toLowerCase()));
   const chosen = customers.find((c) => String(c.id) === customerId);
@@ -1067,7 +1067,7 @@ function PastePaymentCard() {
       try {
         const r = await (await apiRequest("POST", "/api/water-billing/payment-message/check", { customerId: Number(customerId) || null, message: sms })).json();
         setCheck(r);
-        if (r.amount != null) setAmount(String(r.balance != null ? Math.min(r.amount, Math.max(0, r.balance)) : r.amount));
+        if (r.amount != null) setAmount(String(r.balance != null ? Math.min(r.amount, Math.max(0, r.balance) + (r.depositToReinstate ?? 0)) : r.amount));
       } catch { setCheck(null); }
     }, 400);
     return () => clearTimeout(t);
@@ -1075,11 +1075,13 @@ function PastePaymentCard() {
   const reset = () => { setSms(""); setCheck(null); setAmount(""); };
   const post = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/water-billing/payment-message/post", { customerId: Number(customerId), message: sms, amount: Number(amount) })).json(),
-    onSuccess: (r: any) => { invalidateAll(); queryClient.invalidateQueries({ queryKey: ["/api/water-billing/payment-claims"] }); toast({ title: "Payment posted", description: `${r.reference} · ${formatKES(r.amount)} for ${chosen?.name}. ${r.balance > 0.5 ? `Balance ${formatKES(r.balance)}.` : "Account fully paid."} Receipt sent.` }); reset(); },
+    onSuccess: (r: any) => { invalidateAll(); queryClient.invalidateQueries({ queryKey: ["/api/water-billing/payment-claims"] }); toast({ title: "Payment posted", description: `${r.reference} for ${chosen?.name}: ${r.amount > 0 ? `${formatKES(r.amount)} to bills` : ""}${r.amount > 0 && r.depositAmount > 0 ? ", " : ""}${r.depositAmount > 0 ? `${formatKES(r.depositAmount)} to deposit (now ${formatKES(r.depositTotal ?? 0)})` : ""}. ${r.balance > 0.5 ? `Balance ${formatKES(r.balance)}.` : "Account fully paid."} Receipt sent.` }); reset(); },
     onError: (e) => toast({ title: "Couldn't post", description: errMsg(e), variant: "destructive" }),
   });
   const amt = Number(amount);
-  const over = check?.balance != null && amt > check.balance + 0.5;
+  const bal = Math.max(0, check?.balance ?? 0), dep = check?.depositToReinstate ?? 0;
+  const toBills = Math.min(amt || 0, bal), toDeposit = Math.max(0, (amt || 0) - bal);
+  const over = check?.balance != null && (amt > bal + dep + 0.5 || (check.amount != null && amt > check.amount + 0.5));
   return (
     <Card className="p-4 space-y-3" data-testid="card-paste-payment">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1099,8 +1101,9 @@ function PastePaymentCard() {
         {check && <div className="rounded-md border p-3 space-y-2"><div className="text-sm font-medium">Checks</div><CheckList checks={check.checks} testId="list-paste-checks" /></div>}
         {check && !check.blocked && <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="space-y-1.5"><Label htmlFor="pp-amount">Amount to post (KES)</Label><Input id="pp-amount" type="number" inputMode="decimal" className="w-40" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-paste-amount" />
-            {over && <p className="text-xs text-destructive">More than the balance of {formatKES(check.balance ?? 0)}.</p>}
-            {check.amount != null && check.balance != null && check.amount > check.balance + 0.5 && !over && <p className="text-xs text-muted-foreground">The message shows {formatKES(check.amount)}; only the balance is posted.</p>}</div>
+            {over && <p className="text-xs text-destructive">More than {check.amount != null && amt > check.amount + 0.5 ? `the message amount of ${formatKES(check.amount)}` : `the balance of ${formatKES(bal)}${dep > 0.5 ? ` plus the deposit to reinstate of ${formatKES(dep)}` : ""}`}.</p>}
+            {!over && toDeposit > 0.5 && <p className="text-xs text-muted-foreground" data-testid="text-paste-split">{formatKES(toBills)} to bills · {formatKES(toDeposit)} to deposit</p>}
+            {check.amount != null && check.balance != null && check.amount > bal + dep + 0.5 && !over && <p className="text-xs text-muted-foreground">The message shows {formatKES(check.amount)}; only {dep > 0.5 ? "the balance and deposit to reinstate are" : "the balance is"} posted.</p>}</div>
           <Button disabled={!customerId || !(amt > 0) || over || post.isPending} onClick={() => post.mutate()} data-testid="button-paste-post"><CheckCircle2 className="h-4 w-4 mr-1" />{post.isPending ? "Posting…" : `Post ${amt > 0 ? formatKES(amt) : "payment"}`}</Button>
         </div>}
       </>}
