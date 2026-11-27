@@ -1048,7 +1048,13 @@ export function CheckList({ checks, testId }: { checks: Check[]; testId?: string
   );
 }
 
-type PaymentClaim = { id: number; customerId: number; customerName: string; accountNo: string; message: string; reference: string; amount: number; paidAt: number | null; payerName: string | null; status: string; submittedBy: string; submittedAt: number; balance: number; checks: Check[] };
+/** How a payment is applied: pending bills first, then the deposit still to reinstate, then the rest as an advance. */
+function paymentSplit(amount: number, balance: number, deposit: number) {
+  const bills = Math.min(Math.max(0, amount), Math.max(0, balance)), dep = Math.min(amount - bills, Math.max(0, deposit)), adv = Math.max(0, amount - bills - dep);
+  return [bills > 0.004 && `${formatKES(bills)} to bills`, dep > 0.004 && `${formatKES(dep)} to deposit`, adv > 0.004 && `${formatKES(adv)} advance`].filter(Boolean).join(" · ");
+}
+const postedText = (r: any) => [r.amount - (r.advance ?? 0) > 0.004 && `${formatKES(r.amount - (r.advance ?? 0))} to bills`, r.depositAmount > 0.004 && `${formatKES(r.depositAmount)} to deposit`, r.advance > 0.004 && `${formatKES(r.advance)} advance`].filter(Boolean).join(" · ");
+type PaymentClaim = { id: number; customerId: number; customerName: string; accountNo: string; message: string; reference: string; amount: number; paidAt: number | null; payerName: string | null; status: string; submittedBy: string; submittedAt: number; balance: number; depositToReinstate?: number; checks: Check[] };
 /** Office: paste a customer's M-Pesa or bank message; it is checked and posted straight away (oldest bill first). */
 function PastePaymentCard() {
   const { toast } = useToast();
@@ -1067,7 +1073,7 @@ function PastePaymentCard() {
       try {
         const r = await (await apiRequest("POST", "/api/water-billing/payment-message/check", { customerId: Number(customerId) || null, message: sms })).json();
         setCheck(r);
-        if (r.amount != null) setAmount(String(r.balance != null ? Math.min(r.amount, Math.max(0, r.balance) + (r.depositToReinstate ?? 0)) : r.amount));
+        if (r.amount != null) setAmount(String(r.amount));
       } catch { setCheck(null); }
     }, 400);
     return () => clearTimeout(t);
@@ -1075,13 +1081,12 @@ function PastePaymentCard() {
   const reset = () => { setSms(""); setCheck(null); setAmount(""); };
   const post = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/water-billing/payment-message/post", { customerId: Number(customerId), message: sms, amount: Number(amount) })).json(),
-    onSuccess: (r: any) => { invalidateAll(); queryClient.invalidateQueries({ queryKey: ["/api/water-billing/payment-claims"] }); toast({ title: "Payment posted", description: `${r.reference} for ${chosen?.name}: ${r.amount > 0 ? `${formatKES(r.amount)} to bills` : ""}${r.amount > 0 && r.depositAmount > 0 ? ", " : ""}${r.depositAmount > 0 ? `${formatKES(r.depositAmount)} to deposit (now ${formatKES(r.depositTotal ?? 0)})` : ""}. ${r.balance > 0.5 ? `Balance ${formatKES(r.balance)}.` : "Account fully paid."} Receipt sent.` }); reset(); },
+    onSuccess: (r: any) => { invalidateAll(); queryClient.invalidateQueries({ queryKey: ["/api/water-billing/payment-claims"] }); toast({ title: "Payment posted", description: `${r.reference} for ${chosen?.name}: ${postedText(r)}. ${r.balance > 0.5 ? `Balance ${formatKES(r.balance)}.` : r.balance < -0.5 ? `Credit ${formatKES(-r.balance)}.` : "Account fully paid."} Receipt sent.` }); reset(); },
     onError: (e) => toast({ title: "Couldn't post", description: errMsg(e), variant: "destructive" }),
   });
   const amt = Number(amount);
   const bal = Math.max(0, check?.balance ?? 0), dep = check?.depositToReinstate ?? 0;
-  const toBills = Math.min(amt || 0, bal), toDeposit = Math.max(0, (amt || 0) - bal);
-  const over = check?.balance != null && (amt > bal + dep + 0.5 || (check.amount != null && amt > check.amount + 0.5));
+  const over = check?.amount != null && amt > check.amount + 0.5;
   return (
     <Card className="p-4 space-y-3" data-testid="card-paste-payment">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1101,9 +1106,8 @@ function PastePaymentCard() {
         {check && <div className="rounded-md border p-3 space-y-2"><div className="text-sm font-medium">Checks</div><CheckList checks={check.checks} testId="list-paste-checks" /></div>}
         {check && !check.blocked && <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="space-y-1.5"><Label htmlFor="pp-amount">Amount to post (KES)</Label><Input id="pp-amount" type="number" inputMode="decimal" className="w-40" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-paste-amount" />
-            {over && <p className="text-xs text-destructive">More than {check.amount != null && amt > check.amount + 0.5 ? `the message amount of ${formatKES(check.amount)}` : `the balance of ${formatKES(bal)}${dep > 0.5 ? ` plus the deposit to reinstate of ${formatKES(dep)}` : ""}`}.</p>}
-            {!over && toDeposit > 0.5 && <p className="text-xs text-muted-foreground" data-testid="text-paste-split">{formatKES(toBills)} to bills · {formatKES(toDeposit)} to deposit</p>}
-            {check.amount != null && check.balance != null && check.amount > bal + dep + 0.5 && !over && <p className="text-xs text-muted-foreground">The message shows {formatKES(check.amount)}; only {dep > 0.5 ? "the balance and deposit to reinstate are" : "the balance is"} posted.</p>}</div>
+            {over && <p className="text-xs text-destructive">More than the message amount of {formatKES(check.amount!)}.</p>}
+            {!over && amt > 0 && check.balance != null && <p className="text-xs text-muted-foreground" data-testid="text-paste-split">{paymentSplit(amt, bal, dep)}</p>}</div>
           <Button disabled={!customerId || !(amt > 0) || over || post.isPending} onClick={() => post.mutate()} data-testid="button-paste-post"><CheckCircle2 className="h-4 w-4 mr-1" />{post.isPending ? "Posting…" : `Post ${amt > 0 ? formatKES(amt) : "payment"}`}</Button>
         </div>}
       </>}
@@ -1121,7 +1125,7 @@ function PaymentClaimsCard() {
   const refresh = () => { invalidateAll(); queryClient.invalidateQueries({ queryKey: ["/api/water-billing/payment-claims"] }); };
   const doConfirm = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/water-billing/payment-claims/${confirm!.id}/confirm`, { amount: Number(amount) })).json(),
-    onSuccess: (r: any) => { refresh(); toast({ title: "Payment posted", description: `${formatKES(r.amount)} received. ${r.balance > 0.5 ? `Balance ${formatKES(r.balance)}.` : "Account fully paid."} Receipt sent.` }); setConfirm(null); },
+    onSuccess: (r: any) => { refresh(); toast({ title: "Payment posted", description: `${postedText(r)}. ${r.balance > 0.5 ? `Balance ${formatKES(r.balance)}.` : r.balance < -0.5 ? `Credit ${formatKES(-r.balance)}.` : "Account fully paid."} Receipt sent.` }); setConfirm(null); },
     onError: (e) => toast({ title: "Couldn't post", description: errMsg(e), variant: "destructive" }),
   });
   const doReject = useMutation({
@@ -1146,13 +1150,13 @@ function PaymentClaimsCard() {
             <div className="min-w-0 text-sm">
               <div className="font-medium truncate">{c.customerName} <span className="text-xs text-muted-foreground font-normal">{c.accountNo}</span></div>
               <div><span className="font-medium">{formatKES(c.amount)}</span> · {c.reference}</div>
-              <div className="text-xs text-muted-foreground">Balance {formatKES(c.balance)} · pasted by {c.submittedBy}, {new Date(c.submittedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
+              <div className="text-xs text-muted-foreground">Balance {formatKES(c.balance)}{(c.depositToReinstate ?? 0) > 0.5 ? ` · deposit to reinstate ${formatKES(c.depositToReinstate!)}` : ""} · pasted by {c.submittedBy}, {new Date(c.submittedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</div>
               <Badge variant={warn ? "default" : "secondary"} className="mt-1">{warn ? `${warn} check${warn === 1 ? "" : "s"} need attention` : "All checks passed"}</Badge>
             </div>
             <div className="space-y-2 min-w-0"><CheckList checks={c.checks} testId={`list-payment-claim-checks-${c.id}`} />
               <details className="text-xs"><summary className="cursor-pointer text-muted-foreground">Pasted message</summary><p className="mt-1 whitespace-pre-wrap break-words">{c.message}</p></details></div>
             <div className="flex gap-2 md:flex-col">
-              <Button size="sm" onClick={() => { setConfirm(c); setAmount(String(Math.min(c.amount, Math.max(0, c.balance)))); }} data-testid={`button-confirm-claim-${c.id}`}><CheckCircle2 className="h-4 w-4 mr-1" />Confirm &amp; post</Button>
+              <Button size="sm" onClick={() => { setConfirm(c); setAmount(String(c.amount)); }} data-testid={`button-confirm-claim-${c.id}`}><CheckCircle2 className="h-4 w-4 mr-1" />Confirm &amp; post</Button>
               <Button size="sm" variant="outline" onClick={() => { setReject(c); setReason(""); }} data-testid={`button-reject-claim-${c.id}`}><XCircle className="h-4 w-4 mr-1" />Reject</Button>
             </div>
           </div>
@@ -1161,10 +1165,11 @@ function PaymentClaimsCard() {
       <Dialog open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Post {confirm?.reference}?</DialogTitle>
-            <DialogDescription>Only confirm once you have seen this payment on the M-Pesa or bank statement. The payment is applied to {confirm?.customerName}'s oldest bills first and a receipt is sent.</DialogDescription></DialogHeader>
+            <DialogDescription>Only confirm once you have seen this payment on the M-Pesa or bank statement. It clears {confirm?.customerName}'s pending bills first, then any deposit to reinstate; the rest is kept as an advance. A receipt is sent.</DialogDescription></DialogHeader>
           <div className="space-y-1.5"><Label htmlFor="pc-amount">Amount to post (KES)</Label><Input id="pc-amount" type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="input-claim-amount" />
-            {confirm && confirm.amount > confirm.balance + 0.5 && <p className="text-xs text-muted-foreground">The message shows {formatKES(confirm.amount)} but the balance is {formatKES(confirm.balance)}.</p>}</div>
-          <DialogFooter><Button variant="outline" onClick={() => setConfirm(null)}>Back</Button><Button disabled={!(Number(amount) > 0) || doConfirm.isPending} onClick={() => doConfirm.mutate()} data-testid="button-confirm-claim-post">{doConfirm.isPending ? "Posting…" : "Confirm & post"}</Button></DialogFooter>
+            {confirm && (Number(amount) > confirm.amount + 0.5 ? <p className="text-xs text-destructive">More than the message amount of {formatKES(confirm.amount)}.</p>
+              : Number(amount) > 0 && <p className="text-xs text-muted-foreground" data-testid="text-claim-split">{paymentSplit(Number(amount), confirm.balance, confirm.depositToReinstate ?? 0)}</p>)}</div>
+          <DialogFooter><Button variant="outline" onClick={() => setConfirm(null)}>Back</Button><Button disabled={!(Number(amount) > 0) || (!!confirm && Number(amount) > confirm.amount + 0.5) || doConfirm.isPending} onClick={() => doConfirm.mutate()} data-testid="button-confirm-claim-post">{doConfirm.isPending ? "Posting…" : "Confirm & post"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
       <Dialog open={!!reject} onOpenChange={(o) => !o && setReject(null)}>

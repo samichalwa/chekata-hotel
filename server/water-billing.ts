@@ -141,7 +141,7 @@ async function reallocate(customerId: number) {
 // ---------- payments ----------
 class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
 /** Posts a payment to a water account (oldest bill first), issues the receipt and texts the customer. */
-export async function postWaterPayment(o: { customerId: number; amount: number; method: string; reference?: unknown; by: string; claimId?: number }) {
+export async function postWaterPayment(o: { customerId: number; amount: number; method: string; reference?: unknown; by: string; claimId?: number; allowAdvance?: boolean }) {
   let lock: string | null = null;
   try {
     const id = o.customerId;
@@ -151,9 +151,9 @@ export async function postWaterPayment(o: { customerId: number; amount: number; 
     const amount = r2(Number(o.amount));
     const method = String(o.method ?? "").trim();
     const reference = String(o.reference ?? "").trim().toUpperCase() || null;
-    if (!(due > 0.004)) throw new HttpError(409, "This account has nothing to pay.");
+    if (!o.allowAdvance && !(due > 0.004)) throw new HttpError(409, "This account has nothing to pay.");
     if (!(amount > 0)) throw new HttpError(400, "Enter the amount received.");
-    if (amount > due + 0.5) throw new HttpError(400, `That is more than the balance of ${kes(due)}.`);
+    if (!o.allowAdvance && amount > due + 0.5) throw new HttpError(400, `That is more than the balance of ${kes(due)}.`);
     if (!["cash", "mpesa", "card", "bank_transfer"].includes(method)) throw new HttpError(400, "Choose how the customer paid.");
     if (method === "mpesa" && !reference) throw new HttpError(400, "Enter the M-Pesa code.");
     if (reference) {
@@ -168,7 +168,9 @@ export async function postWaterPayment(o: { customerId: number; amount: number; 
     const open = await sql`SELECT id, bill_number, current_charges - amount_paid AS owing FROM water_bills WHERE customer_id = ${id} AND status IN ('unpaid','partially_paid') ORDER BY period_month, id` as any[];
     let left = amount; const alloc: { billId: number; billNumber: string; amount: number }[] = [];
     for (const b of open) { if (left <= 0.004) break; const a = r2(Math.min(left, n(b.owing))); if (a > 0) { alloc.push({ billId: b.id, billNumber: b.bill_number, amount: a }); left = r2(left - a); } }
-    const firstBill = alloc[0]?.billId ?? open[0]?.id ?? null;
+    const advance = r2(left);
+    const [lastBill] = alloc.length || open.length ? [] : await sql`SELECT id FROM water_bills WHERE customer_id = ${id} AND status <> 'cancelled' ORDER BY period_month DESC, id DESC LIMIT 1` as any[];
+    const firstBill = alloc[0]?.billId ?? open[0]?.id ?? lastBill?.id ?? null;
     const [p] = await sql`INSERT INTO water_bill_payments (customer_id, bill_id, amount, payment_method, payment_reference, allocation_json, paid_at, recorded_by)
       VALUES (${id}, ${firstBill}, ${amount}, ${method}, ${reference}, ${JSON.stringify(alloc)}, ${Date.now()}, ${o.by}) RETURNING *` as any[];
     await reallocate(id);
@@ -176,13 +178,13 @@ export async function postWaterPayment(o: { customerId: number; amount: number; 
     const doc = firstBill ? await issueDocument(storage, {
       docType: "receipt", category: "water_bill", sourceId: firstBill, customDocNumber: `${c.account_no}-P${p.id}`,
       recipientName: c.name, recipientEmail: c.email || null, issueDate: prettyDate(today()),
-      lineItems: alloc.length ? alloc.map((a) => ({ label: `Payment towards water bill ${a.billNumber}`, amount: a.amount })) : [{ label: "Water account payment", amount }],
-      totalAmount: due, amountPaid: amount, balance, paymentAmount: amount, paymentMethod: method, paymentReference: reference,
-      notes: `Account ${c.account_no}${c.meter_number ? ` · Meter ${c.meter_number}` : ""}. ${balance > 0.5 ? `Remaining balance: ${kes(balance)}.` : "Account fully paid."}`,
+      lineItems: [...alloc.map((a) => ({ label: `Payment towards water bill ${a.billNumber}`, amount: a.amount })), ...(advance > 0.004 ? [{ label: "Advance payment (credit on account)", amount: advance }] : [])],
+      totalAmount: Math.max(0, due), amountPaid: amount, balance: Math.max(0, balance), paymentAmount: amount, paymentMethod: method, paymentReference: reference,
+      notes: `Account ${c.account_no}${c.meter_number ? ` · Meter ${c.meter_number}` : ""}. ${balance > 0.5 ? `Remaining balance: ${kes(balance)}.` : balance < -0.5 ? `Credit on account: ${kes(-balance)}, used on your next bill.` : "Account fully paid."}`,
     }).catch(() => null) : null;
     if (c.phone) {
       const settings = await storage.getSettings();
-      void sendSms({ source: "Water payment", settings, to: c.phone, message: `Hi ${firstName(c.name)}, payment received for your water account ${c.account_no}: ${kes(amount)}${reference ? ` (${reference})` : ""}. ${balance > 0.5 ? `Balance: ${kes(balance)}.` : "Paid in full."} Thank you.` }).catch(() => null);
+      void sendSms({ source: "Water payment", settings, to: c.phone, message: `Hi ${firstName(c.name)}, payment received for your water account ${c.account_no}: ${kes(amount)}${reference ? ` (${reference})` : ""}. ${balance > 0.5 ? `Balance: ${kes(balance)}.` : balance < -0.5 ? `Credit on account: ${kes(-balance)}.` : "Paid in full."} Thank you.` }).catch(() => null);
     }
     return { ok: true, paymentId: Number(p.id), amount, balance, allocation: alloc, _document: doc ? { status: doc.status, errorMessage: doc.errorMessage, id: doc.id, publicToken: doc.publicToken } : null };
   } finally { if (lock) inFlight.delete(lock); }
@@ -1216,12 +1218,33 @@ export function registerWaterBillingRoutes(app: Express) {
     } catch (e) { fail(res, e); }
   });
 
+  // A pasted payment clears the pending consumption bills first; anything left goes to the deposit the customer
+  // has been asked to reinstate (e.g. after the deposit was used on a bill). Never more than the message shows.
+  async function postBillsThenDeposit(a: { customerId: number; amount: number; cap: number; method: string; reference: string; by: string; claimId: number; paidAt: any; base: string }) {
+    const due = await balanceOf(a.customerId);
+    const shortfall = await depositShortfall(a.customerId);
+    if (!(a.amount > 0)) throw new HttpError(400, "Enter the amount received.");
+    if (a.cap > 0 && a.amount > a.cap + 0.5) throw new HttpError(400, `That is more than the message amount of ${kes(a.cap)}.`);
+    // 1) pending bills, 2) deposit still to reinstate, 3) the rest stays on the account as an advance.
+    const billPart = r2(Math.min(a.amount, Math.max(0, due)));
+    const depositPart = r2(Math.min(a.amount - billPart, Math.max(0, shortfall)));
+    const accountPart = r2(a.amount - depositPart);
+    const out = accountPart > 0.004 ? await postWaterPayment({ customerId: a.customerId, amount: accountPart, method: a.method, reference: a.reference, by: a.by, claimId: a.claimId, allowAdvance: true }) : null;
+    let deposit: any = null;
+    if (depositPart > 0.004) {
+      const paidOn = a.paidAt ? new Date(Number(a.paidAt) + TZ).toISOString().slice(0, 10) : today();
+      deposit = await recordWaterDeposit({ customerId: a.customerId, amount: depositPart, paymentMethod: a.method, paymentReference: a.reference, paidOn: paidOn > today() ? today() : paidOn, sharedReference: true }, a.by, a.base);
+    }
+    return { due, out, deposit, advance: r2(accountPart - billPart) };
+  }
   // Pasted M-Pesa messages waiting for the office
   app.get("/api/water-billing/payment-claims", W, async (req, res) => {
     const status = ["pending", "confirmed", "rejected"].includes(String(req.query.status)) ? String(req.query.status) : null;
     const rows = await listWaterPaymentClaims({ status, limit: 200 });
     const bal = await customerBalances();
-    res.json(rows.map((r) => ({ ...r, balance: bal.get(Number(r.customerId))?.balance ?? 0 })));
+    const dep = new Map<number, number>();
+    for (const r of rows) if (r.status === "pending" && !dep.has(Number(r.customerId))) dep.set(Number(r.customerId), await depositShortfall(Number(r.customerId)));
+    res.json(rows.map((r) => ({ ...r, balance: bal.get(Number(r.customerId))?.balance ?? 0, depositToReinstate: dep.get(Number(r.customerId)) ?? 0 })));
   });
   app.post("/api/water-billing/payment-claims/:id/confirm", W, async (req, res) => {
     try {
@@ -1235,10 +1258,11 @@ export function registerWaterBillingRoutes(app: Express) {
       const [mine] = await sql`UPDATE water_payment_claims SET status = 'posting' WHERE id = ${id} AND status = 'pending' RETURNING id` as any[];
       if (!mine) return res.status(409).json({ error: "Someone else is confirming this payment." });
       try {
-        const r = await postWaterPayment({ customerId, amount, method: isMpesaMessage(cl.raw_message) ? "mpesa" : "bank_transfer", reference: cl.payment_reference, by: who(req), claimId: id });
-        await sql`UPDATE water_payment_claims SET status = 'confirmed', customer_id = ${customerId}, reviewed_by = ${who(req)}, reviewed_at = ${Date.now()}, payment_id = ${r.paymentId}, posted_amount = ${r.amount},
-          review_note = ${String(req.body?.note ?? "").trim() || null} WHERE id = ${id}`;
-        res.json(r);
+        const { due, out, deposit, advance } = await postBillsThenDeposit({ customerId, amount, cap: n(cl.amount), method: isMpesaMessage(cl.raw_message) ? "mpesa" : "bank_transfer", reference: cl.payment_reference, by: who(req), claimId: id, paidAt: cl.paid_at, base: baseUrl(req) });
+        const note = [String(req.body?.note ?? "").trim(), deposit ? `${kes(deposit.amount)} to deposit` : ""].filter(Boolean).join(" · ") || null;
+        await sql`UPDATE water_payment_claims SET status = 'confirmed', customer_id = ${customerId}, reviewed_by = ${who(req)}, reviewed_at = ${Date.now()}, payment_id = ${out?.paymentId ?? null}, posted_amount = ${r2((out?.amount ?? 0) + (deposit?.amount ?? 0))},
+          review_note = ${note} WHERE id = ${id}`;
+        res.json({ ...(out ?? { ok: true, amount: 0, balance: due }), depositAmount: deposit?.amount ?? 0, depositTotal: deposit?.total ?? null, advance });
       } catch (e: any) {
         await sql`UPDATE water_payment_claims SET status = 'pending' WHERE id = ${id} AND status = 'posting'`;
         res.status(e?.status ?? 400).json({ error: e?.message ?? "Failed" });
@@ -1298,22 +1322,10 @@ export function registerWaterBillingRoutes(app: Express) {
         ON CONFLICT (payment_reference) DO NOTHING RETURNING id` as any[];
       if (!row) return res.status(409).json({ error: duplicateRefMessage(p.code, "a water payment already pasted") });
       claimId = Number(row.id);
-      // Anything above the balance goes to the deposit the customer has been asked to reinstate (never more than the message shows).
-      const due = await balanceOf(customerId);
-      const shortfall = await depositShortfall(customerId);
-      const billPart = r2(Math.min(amount, Math.max(0, due)));
-      const depositPart = r2(amount - billPart);
-      if (depositPart > 0.5 && (depositPart > shortfall + 0.5 || amount > n(p.amount) + 0.5))
-        throw new HttpError(400, `That is more than the balance of ${kes(due)}${shortfall > 0.5 ? ` plus the deposit to reinstate of ${kes(shortfall)}` : ""}.`);
-      const out = billPart > 0.004 ? await postWaterPayment({ customerId, amount: billPart, method: r.method, reference: p.code, by: who(req), claimId }) : null;
-      let deposit: any = null;
-      if (depositPart > 0.5) {
-        const paidOn = p.paidAt ? new Date(Number(p.paidAt) + TZ).toISOString().slice(0, 10) : today();
-        deposit = await recordWaterDeposit({ customerId, amount: depositPart, paymentMethod: r.method, paymentReference: p.code, paidOn: paidOn > today() ? today() : paidOn, sharedReference: true }, who(req), baseUrl(req));
-      }
+      const { due, out, deposit, advance } = await postBillsThenDeposit({ customerId, amount, cap: n(p.amount), method: r.method, reference: p.code!, by: who(req), claimId, paidAt: p.paidAt, base: baseUrl(req) });
       await sql`UPDATE water_payment_claims SET status = 'confirmed', reviewed_by = ${who(req)}, reviewed_at = ${Date.now()}, payment_id = ${out?.paymentId ?? null}, posted_amount = ${r2((out?.amount ?? 0) + (deposit?.amount ?? 0))},
         review_note = ${deposit ? `Pasted and posted by the office · ${kes(deposit.amount)} to deposit` : "Pasted and posted by the office"} WHERE id = ${claimId}`;
-      res.status(201).json({ ...(out ?? { ok: true, amount: 0, balance: due }), reference: p.code, depositAmount: deposit?.amount ?? 0, depositTotal: deposit?.total ?? null });
+      res.status(201).json({ ...(out ?? { ok: true, amount: 0, balance: due }), reference: p.code, depositAmount: deposit?.amount ?? 0, depositTotal: deposit?.total ?? null, advance });
     } catch (e: any) {
       if (claimId) await sql`DELETE FROM water_payment_claims WHERE id = ${claimId} AND status = 'posting'`.catch(() => null);
       res.status(e?.status ?? 400).json({ error: e?.message ?? "Failed" });
